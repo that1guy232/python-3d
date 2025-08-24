@@ -7,18 +7,25 @@ controls. The scene exposes its own render() and handle_event() hooks.
 
 from __future__ import annotations
 
+from config import *
+
+import math
 import random
 from typing import Tuple, Optional
+
 from pygame.math import Vector3
-import time
 
 from core.scene import Scene
 from camera import Camera
 from world.sprite import WorldSprite
 from world.objects.fence import build_textured_fence_ring
+from world.world_spawner import spawn_world_sprites
 from world.objects.ground import TexturedGroundGridBuilder
 from world.objects import Road
 from world.objects.building import Building
+from world.world_hud import WorldHUD
+from world.decal import Decal
+from world.decal_batch import DecalBatch
 from textures.texture_utils import (
     load_texture,
     create_shadow_texture,
@@ -26,23 +33,23 @@ from textures.texture_utils import (
 )
 from textures.texture_manager import load_world_textures
 from textures.resoucepath import *
+
 from sound.sound_utils import Sounds
 from render.sky_renderer import SkyRenderer
-from world.world_hud import WorldHUD
-from config import *
 from camera.headbob import HeadBob
-import math
-from world.decal import Decal
-from world.decal_batch import DecalBatch
-from world.world_spawner import spawn_world_sprites
+
 from camera.sway_controller import SwayController
 from camera.cameracontroller import CameraController
 from OpenGL.GL import (
     glEnable,
     glFogf,
-    glFogfv,
     glFogi,
     glHint,
+    glClear,
+    glMatrixMode,
+    glLoadIdentity,
+    glRotatef,
+    glTranslatef,
     GL_FOG,
     GL_FOG_MODE,
     GL_FOG_COLOR,
@@ -50,15 +57,11 @@ from OpenGL.GL import (
     GL_FOG_HINT,
     GL_EXP2,
     GL_FASTEST,
-    glClear,
-    glMatrixMode,
-    glLoadIdentity,
-    glRotatef,
-    glTranslatef,
     GL_COLOR_BUFFER_BIT,
     GL_DEPTH_BUFFER_BIT,
     GL_PROJECTION,
     GL_MODELVIEW,
+    glFogfv,
 )
 from OpenGL.GLU import gluPerspective
 
@@ -340,14 +343,7 @@ class WorldScene(Scene):
         )
         print(f"Spawned {len(rocks)} rocks.")
 
-        test_texture = create_test_texture()
-        debug_world_sprites = [
-            # add debugs to each cornor of the building
-            WorldSprite(
-                position=corner, texture=test_texture, size=(10, 10), camera=self.camera
-            )
-            for corner in building.get_corners()
-        ]
+
 
         # Build fence ring just outside ground bounds so it sits at the edge
         min_x, max_x, min_z, max_z = self.ground_bounds
