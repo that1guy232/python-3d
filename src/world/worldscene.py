@@ -16,16 +16,20 @@ from typing import Tuple, Optional
 from pygame.math import Vector3
 
 from core.scene import Scene
-from camera import Camera
+
 from world.sprite import WorldSprite
+
 from world.objects.fence import build_textured_fence_ring
 from world.world_spawner import spawn_world_sprites
+
 from world.objects.ground import TexturedGroundGridBuilder
 from world.objects import Road
 from world.objects.building import Building
 from world.world_hud import WorldHUD
+
 from world.decal import Decal
 from world.decal_batch import DecalBatch
+
 from textures.texture_utils import (
     load_texture,
     create_shadow_texture,
@@ -36,10 +40,12 @@ from textures.resoucepath import *
 
 from sound.sound_utils import Sounds
 from render.sky_renderer import SkyRenderer
-from camera.headbob import HeadBob
 
+from camera import Camera
+from camera.headbob import HeadBob
 from camera.sway_controller import SwayController
 from camera.cameracontroller import CameraController
+
 from OpenGL.GL import (
     glEnable,
     glFogf,
