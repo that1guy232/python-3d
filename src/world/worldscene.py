@@ -10,16 +10,19 @@ from __future__ import annotations
 import random
 from typing import Tuple, Optional
 from pygame.math import Vector3
+import time
 
 from core.scene import Scene
 from camera import Camera
 from world.sprite import WorldSprite
-from core.renderer import build_textured_ground_grid, build_textured_fence_ring
+from world.objects.fence import build_textured_fence_ring
+from world.objects.ground import TexturedGroundGridBuilder
 from world.objects import Road
+from world.objects.building import Building
 from textures.texture_utils import (
     load_texture,
-    get_texture_size,
     create_shadow_texture,
+    create_test_texture,
 )
 from textures.texture_manager import load_world_textures
 from textures.resoucepath import *
@@ -31,10 +34,33 @@ from camera.headbob import HeadBob
 import math
 from world.decal import Decal
 from world.decal_batch import DecalBatch
-from world.objects import WallTile
 from world.world_spawner import spawn_world_sprites
 from camera.sway_controller import SwayController
 from camera.cameracontroller import CameraController
+from OpenGL.GL import (
+    glEnable,
+    glFogf,
+    glFogfv,
+    glFogi,
+    glHint,
+    GL_FOG,
+    GL_FOG_MODE,
+    GL_FOG_COLOR,
+    GL_FOG_DENSITY,
+    GL_FOG_HINT,
+    GL_EXP2,
+    GL_FASTEST,
+    glClear,
+    glMatrixMode,
+    glLoadIdentity,
+    glRotatef,
+    glTranslatef,
+    GL_COLOR_BUFFER_BIT,
+    GL_DEPTH_BUFFER_BIT,
+    GL_PROJECTION,
+    GL_MODELVIEW,
+)
+from OpenGL.GLU import gluPerspective
 
 
 # It will be a sprite on the screen floating acting as if in the player hands
@@ -56,9 +82,7 @@ class test_sword(WorldSprite):
         super().__init__(position=position, size=size, camera=camera, texture=texture)
 
 
-
 class WorldScene(Scene):
-
 
     def __init__(
         self,
@@ -73,14 +97,15 @@ class WorldScene(Scene):
         area_offset: Optional[Tuple[float, float]] = None,
         spawn_limits: Optional[Tuple[float, float]] = None,
     ) -> None:
-        
+
+        print("World Scene Initialized")
+
         # If no camera provided (default), create one suitable for this scene
         cam = camera or Camera(
             position=Vector3(STARTING_POS), width=WIDTH, height=HEIGHT, fov=FOV
         )
+
         super().__init__(camera=cam)
-
-
 
         # Create head-bob instance directly and wire up footstep handler
         def _headbob_on_footstep(intensity, sprinting, phase, foot):
@@ -89,7 +114,10 @@ class WorldScene(Scene):
                 if hasattr(self, "on_footstep"):
                     try:
                         self.on_footstep(
-                            intensity=intensity, sprinting=sprinting, phase=phase, foot=foot
+                            intensity=intensity,
+                            sprinting=sprinting,
+                            phase=phase,
+                            foot=foot,
                         )
                         return
                     except Exception:
@@ -135,20 +163,17 @@ class WorldScene(Scene):
 
         self._camera_controller = CameraController(self, self.camera, rot_smooth_hz=4)
 
-
-        from OpenGL.GL import (
-            glEnable,
-            glFogf,
-            glFogfv,
-            glFogi,
-            glHint,
-            GL_FOG,
-            GL_FOG_MODE,
-            GL_FOG_COLOR,
-            GL_FOG_DENSITY,
-            GL_FOG_HINT,
-            GL_EXP2,
-            GL_FASTEST,
+        spacing = grid_tile_size + grid_gap
+        half = grid_tile_size / 2.0
+        # calculate using gap, tile_size and grid_count
+        self.world_center = Vector3(
+            (grid_count * spacing) / 2, 0, (grid_count * spacing) / 2
+        )
+        self.ground_bounds = (
+            0 + half,
+            grid_count * spacing - half,
+            0 + half,
+            grid_count * spacing - half,
         )
 
         glEnable(GL_FOG)
@@ -169,7 +194,7 @@ class WorldScene(Scene):
             _sd = _sd / sd_len
         self.sun_direction = _sd
 
-
+        print("Beginning asset loading...")
         tex = load_world_textures()
         ground_tex = tex.get("ground_tex")
         road_tex = tex.get("road_tex")
@@ -177,33 +202,39 @@ class WorldScene(Scene):
         grasses_textures = tex.get("grasses_textures", [])
         rock_textures = tex.get("rock_textures", [])
         fence_textures = tex.get("fence_textures", [])
-        item_textures = tex.get("item_textures", {})
 
         # Prepare sounds (safe if file missing / mixer unavailable)
         Sounds.ensure_init()
         Sounds.load_optional("footstep", LEAVES02_SOUND_PATH)
         Sounds.load_optional("ambient_birds", BIRDS_SOUND_PATH)
         Sounds.load_optional("step", STEP1_SOUND_PATH)
+        print("Asset loading complete.")
 
-        ground_mesh = build_textured_ground_grid(
+        print("Creating buildings...")
+        self.buildings: list[Building] = []
+
+        building_height = 0
+        building = Building(
+            position=self.world_center,
+            target_height=building_height,
+        )
+        self.buildings.append(building)
+
+        builder = TexturedGroundGridBuilder(
             count=grid_count,
             tile_size=grid_tile_size,
             gap=grid_gap,
             texture=ground_tex,
+            height_modifiers=None,
         )
+
+        print("Generating ground mesh...")
+        self.ground_mesh = builder.build()
 
         # If ground mesh exposes a height sampler, use it for precise ground queries
-        self._ground_height_sampler = getattr(ground_mesh, "height_sampler", None)
+        self._ground_height_sampler = getattr(self.ground_mesh, "height_sampler", None)
 
-        spacing = grid_tile_size + grid_gap
-        half = grid_tile_size / 2.0
-        self.ground_bounds = (
-            -half,
-            (grid_count - 1) * spacing + half,
-            -half,
-            (grid_count - 1) * spacing + half,
-        )
-
+        print("Spawning world objects...")
         # Example road from west edge toward east edge across center
         center_x = (self.ground_bounds[0] + self.ground_bounds[1]) * 0.5
         center_z = (self.ground_bounds[2] + self.ground_bounds[3]) * 0.5
@@ -234,7 +265,8 @@ class WorldScene(Scene):
         sx = max(min_x + margin, min(max_x - margin, sx))
         sz = max(min_z + margin, min(max_z - margin, sz))
 
-        self.camera.position = Vector3(sx, road_y + 15.0, sz)
+        self.camera.position = building.center
+
         self.road = Road(
             points=road_points,
             ground_y=road_y,
@@ -246,7 +278,7 @@ class WorldScene(Scene):
             elevation=3.0,
             segment_length=8.0,
         )
-
+        print("Road created.")
         lil_buffer = 15
         # Center spawns around the middle of the ground, not shifted to +X/+Z
         min_x, max_x, min_z, max_z = self.ground_bounds
@@ -276,8 +308,9 @@ class WorldScene(Scene):
             max_spawn_x=max_spawn_x,
             max_spawn_z=max_spawn_z,
             avoid_roads=[self.road],
+            avoid_areas=self.buildings,
         )
-
+        print(f"Spawned {len(trees)} trees.")
         grasses = spawn_world_sprites(
             self,
             count=grass_count,
@@ -289,8 +322,9 @@ class WorldScene(Scene):
             max_spawn_x=max_spawn_x,
             max_spawn_z=max_spawn_z,
             avoid_roads=[self.road],
+            avoid_areas=self.buildings,
         )
-
+        print(f"Spawned {len(grasses)} grasses.")
         rocks = spawn_world_sprites(
             self,
             count=rock_count,
@@ -302,7 +336,18 @@ class WorldScene(Scene):
             max_spawn_x=max_spawn_x,
             max_spawn_z=max_spawn_z,
             avoid_roads=[self.road],
+            avoid_areas=self.buildings,
         )
+        print(f"Spawned {len(rocks)} rocks.")
+
+        test_texture = create_test_texture()
+        debug_world_sprites = [
+            # add debugs to each cornor of the building
+            WorldSprite(
+                position=corner, texture=test_texture, size=(10, 10), camera=self.camera
+            )
+            for corner in building.get_corners()
+        ]
 
         # Build fence ring just outside ground bounds so it sits at the edge
         min_x, max_x, min_z, max_z = self.ground_bounds
@@ -319,49 +364,40 @@ class WorldScene(Scene):
             min_z=fence_min_z,
             max_z=fence_max_z,
             ground_y=self.ground_height_at(0, 0),
-            height_sampler=getattr(ground_mesh, "height_sampler", None),
+            height_sampler=getattr(self.ground_mesh, "height_sampler", None),
             textures=[t for t in fence_textures if t is not None],
             px_to_world=1.0,
             wave_amp=0.5,
             wave_freq=0.02,
             wave_phase=0.3,
         )
+        print(f"Built {len(fence_meshes)} fence segments.")
 
-        meshes = [ground_mesh, self.road]
+        meshes = [self.road]
         meshes.extend(fence_meshes)
 
-        # Add a simple vertical wall at the center of the world
-        # Use width=0 so the wall plane sits exactly at position.x
-        
-        wall_half_height = 20.0
-            # span depth roughly across the ground bounds
-        wall_depth = (fence_max_z - fence_min_z) * 0.5 + 5.0
-        wall_x = center_x
-        wall_z = center_z
-        wall_ground_y = self.ground_height_at(wall_x, wall_z)
-
-            # Load the wall texture and compute UV repeat so it tiles instead of stretching.
+        # Create perimeter walls for any buildings and add them to the scene meshes
+        # so they are rendered. We load the shared wall texture and pass it into
+        # the building helper; WallTile will compute sensible UV repeats at draw
+        # time when uv_repeat is left at the default (1.0,1.0).
         wall_tex = load_texture(WALL1_TEXTURE_PATH)
-        size = get_texture_size(wall_tex) if wall_tex is not None else None
-        if size:
-                tex_w_px, tex_h_px = size
-                wall_world_w = wall_depth * 2.0
-                wall_world_h = wall_half_height * 2.0
-                repeat_u = max(1.0, wall_world_w / max(1.0, float(tex_w_px)))
-                repeat_v = max(1.0, wall_world_h / max(1.0, float(tex_h_px)))
-                uv_repeat = (repeat_u, repeat_v)
-        else:
-                uv_repeat = (1.0, 1.0)
 
-        wall = WallTile(
-                position=Vector3(wall_x, wall_ground_y + wall_half_height, wall_z),
-                width=0,
-                height=wall_half_height,
-                depth=wall_depth,
+        for b in self.buildings:
+            base_y = None
+            default_wall_height = 50
+
+            walls = b.create_perimeter_walls(
+                wall_height=default_wall_height,
+                wall_thickness=2.5,
+                width=500,
                 texture=wall_tex,
-                uv_repeat=uv_repeat,
-        )
-        meshes.append(wall)
+                uv_repeat=(1.0, 1.0),
+                base_y=base_y,
+            )
+
+            meshes.extend(walls)
+
+        print(f"Built {len(walls)} building walls.")
 
         self.static_meshes = meshes + trees + grasses + rocks
 
@@ -375,44 +411,47 @@ class WorldScene(Scene):
             outer_ratio=0.96,
             falloff_exp=2.2,
         )
+        print("Created shadow texture.")
 
-        
         decals: list[Decal] = []
         rng = random.Random()
 
         def make_decal_for_sprite(s: WorldSprite) -> Decal:
-                # Base oval shaped shadow scaled to sprite width/height in world units
-                w, h = s.size
-                # Slightly smaller than footprint, with variability
-                size_w = max(14.0, min(200.0, float(w) * rng.uniform(0.35, 0.55)))
-                size_h = max(10.0, min(160.0, float(h) * rng.uniform(0.25, 0.45)))
-                rot = rng.uniform(0.0, 360.0)
-                return Decal(
-                    center=Vector3(s.position.x, 0.0, s.position.z),
-                    size=(size_w, size_h),
-                    texture=shadow_texture,
-                    rotation_deg=rot,
-                    subdiv_u=8,
-                    subdiv_v=8,
-                    height_fn=self.ground_height_at,
-                    elevation=random.uniform(0.15, 0.35),
-                    uv_repeat=(1.0, 1.0),
-                    color=(1.0, 1.0, 1.0),
-                    build_vbo=True,  # we'll batch into one VBO per texture
-                )
+            # Base oval shaped shadow scaled to sprite width/height in world units
+            w, h = s.size
+            # Slightly smaller than footprint, with variability
+            size_w = max(14.0, min(200.0, float(w) * rng.uniform(0.35, 0.55)))
+            size_h = max(10.0, min(160.0, float(h) * rng.uniform(0.25, 0.45)))
+            rot = rng.uniform(0.0, 360.0)
+            return Decal(
+                center=Vector3(s.position.x, 0.0, s.position.z),
+                size=(size_w, size_h),
+                texture=shadow_texture,
+                rotation_deg=rot,
+                subdiv_u=8,
+                subdiv_v=8,
+                height_fn=self.ground_height_at,
+                elevation=random.uniform(0.15, 0.35),
+                uv_repeat=(1.0, 1.0),
+                color=(1.0, 1.0, 1.0),
+                build_vbo=True,  # we'll batch into one VBO per texture
+            )
 
         for s in trees:
-                decals.append(make_decal_for_sprite(s))
+            decals.append(make_decal_for_sprite(s))
         for s in grasses:
-                decals.append(make_decal_for_sprite(s))
+            decals.append(make_decal_for_sprite(s))
         for s in rocks:
-                decals.append(make_decal_for_sprite(s))
+            decals.append(make_decal_for_sprite(s))
 
-            # Build single-VBO-per-texture batches and store them as drawables
+        print(f"Created {len(decals)} shadow decals.")
+
+        # Build single-VBO-per-texture batches and store them as drawables
         decal_batch = DecalBatch.build(decals)
-            # Attach a simple wrapper so Scene.draw can call draw() directly
-        self.static_meshes.append(decal_batch)
 
+        # Attach a simple wrapper so Scene.draw can call draw() directly
+        self.static_meshes.append(decal_batch)
+        print("World scene initialization complete.")
 
     def draw_sky(self) -> None:  # pragma: no cover - visual
         """Draw sky elements (delegated from engine)."""
@@ -420,7 +459,8 @@ class WorldScene(Scene):
 
     def draw(self):  # pragma: no cover - visual
         # Ensure fog is enabled for world rendering
-        from OpenGL.GL import glEnable, GL_FOG
+
+        self.ground_mesh.draw()
 
         glEnable(GL_FOG)
         super().draw()
@@ -503,7 +543,6 @@ class WorldScene(Scene):
         if not Sounds.is_playing("ambient_birds"):
             Sounds.play("ambient_birds", volume=0.05)
 
-
         moving, sprinting = self._camera_controller.update(dt)
 
         self._sway_controller.update(dt)
@@ -520,11 +559,8 @@ class WorldScene(Scene):
             a = 1.0 - math.exp(-CAMERA_FOLLOW_SMOOTH_HZ * dt)
             self.camera.position.y += (target_cam_y - self.camera.position.y) * a
 
-
         self._hud.update(dt)
         self._headbob.update(moving=moving, sprinting=sprinting, dt=dt)
-
-
 
         super().update(dt)
 
@@ -532,23 +568,10 @@ class WorldScene(Scene):
     def handle_event(self, event) -> None:
         pass
 
-
     # Full render for 3D scene (projection, view, sky, world, overlay)
     def render(
         self, *, show_hud: bool = True, text=None, fps: float | None = None
     ):  # pragma: no cover - visual
-        from OpenGL.GL import (
-            glClear,
-            glMatrixMode,
-            glLoadIdentity,
-            glRotatef,
-            glTranslatef,
-            GL_COLOR_BUFFER_BIT,
-            GL_DEPTH_BUFFER_BIT,
-            GL_PROJECTION,
-            GL_MODELVIEW,
-        )
-        from OpenGL.GLU import gluPerspective
 
         # Clear
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
@@ -606,4 +629,3 @@ class WorldScene(Scene):
             self._camera_controller.on_mouse_delta(dx, dy)
         except Exception:
             pass
-

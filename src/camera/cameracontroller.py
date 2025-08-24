@@ -110,8 +110,12 @@ class CameraController:
             self.camera.rotation.y = self.rot_target_y
         else:
             alpha = 1.0 - math.exp(-self.rot_smooth_hz * dt)
-            self.camera.rotation.x += (self.rot_target_x - self.camera.rotation.x) * alpha
-            self.camera.rotation.y += (self.rot_target_y - self.camera.rotation.y) * alpha
+            self.camera.rotation.x += (
+                self.rot_target_x - self.camera.rotation.x
+            ) * alpha
+            self.camera.rotation.y += (
+                self.rot_target_y - self.camera.rotation.y
+            ) * alpha
         self.camera.update_rotation()
 
         # Read input and handle movement

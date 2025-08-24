@@ -53,10 +53,14 @@ class WallTile(Object3D):
         depth=50,
         texture: int | None = None,
         uv_repeat: tuple[float, float] = (1.0, 1.0),
+        thickness: float = 0.0,
     ):
         self.width = width
         self.height = height
         self.depth = depth
+        # thickness along -X to give the wall a small box-like volume
+        # 0.0 = original single-plane behavior
+        self.thickness = float(thickness)
         # OpenGL texture id (optional)
         self.texture = texture
         # UV repeat (u_repeat, v_repeat) to control tiling of the texture across the wall
@@ -65,30 +69,59 @@ class WallTile(Object3D):
         super().__init__(position=position or Vector3(0, 0, 0))
         self._generate_vertices()
 
-        # Single front-facing quad (facing +X)
-        self.faces = [
-            (0, 1, 2, 3),
-        ]
-        # Default face color (RGB floats 0..1)
-        self.face_colors = [
-            (1.0, 1.0, 1.0),
-        ]
+        # Faces and default colors. If thickness is zero we keep the original
+        # single front-facing quad. Otherwise create a thin box (6 faces).
+        if self.thickness <= 0.0:
+            # Single front-facing quad (facing +X)
+            self.faces = [(0, 1, 2, 3)]
+            self.face_colors = [(1.0, 1.0, 1.0)]
+        else:
+            # Vert ordering when thickness > 0: front 0..3, back 4..7
+            # Faces: front, back, right(+Z), left(-Z), top(+Y), bottom(-Y)
+            self.faces = [
+                (0, 1, 2, 3),  # front
+                (5, 4, 7, 6),  # back
+                (1, 5, 6, 2),  # right (+Z)
+                (4, 0, 3, 7),  # left (-Z)
+                (3, 2, 6, 7),  # top (+Y)
+                (4, 5, 1, 0),  # bottom (-Y)
+            ]
+            # default white for all faces
+            self.face_colors = [(1.0, 1.0, 1.0)] * len(self.faces)
 
     def _generate_vertices(self):
         w = self.width  # plane at x = +width
         h = self.height
         d = self.depth
-        # Local space vertices of the vertical plane (counter-clockwise when
-        # looking from +X):
-        #   3 ---- 2   (top)
-        #   |      |
-        #   0 ---- 1   (bottom)
-        self.local_vertices = [
-            Vector3(w, -h, -d),
-            Vector3(w, -h, d),
-            Vector3(w, h, d),
-            Vector3(w, h, -d),
-        ]
+        # If thickness is zero, keep the original single-plane vertices.
+        # When thickness > 0 we create an extruded thin box (8 verts) so the
+        # wall has fake thickness: front (x = +w) and back (x = w - thickness).
+        if self.thickness <= 0.0:
+            # Local space vertices of the vertical plane (counter-clockwise when
+            # looking from +X):
+            #   3 ---- 2   (top)
+            #   |      |
+            #   0 ---- 1   (bottom)
+            self.local_vertices = [
+                Vector3(w, -h, -d),
+                Vector3(w, -h, d),
+                Vector3(w, h, d),
+                Vector3(w, h, -d),
+            ]
+        else:
+            t = self.thickness
+            # Front quad (x = w)
+            f0 = Vector3(w, -h, -d)
+            f1 = Vector3(w, -h, d)
+            f2 = Vector3(w, h, d)
+            f3 = Vector3(w, h, -d)
+            # Back quad (x = w - t)
+            b0 = Vector3(w - t, -h, -d)
+            b1 = Vector3(w - t, -h, d)
+            b2 = Vector3(w - t, h, d)
+            b3 = Vector3(w - t, h, -d)
+            # Order: front(0..3), back(4..7)
+            self.local_vertices = [f0, f1, f2, f3, b0, b1, b2, b3]
 
     def draw_untextured(self):
         """Draw the wall as an untextured colored quad (immediate mode)."""
@@ -139,11 +172,118 @@ class WallTile(Object3D):
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
             # Use full white with full alpha so the texture's alpha is applied
             glColor4f(1.0, 1.0, 1.0, 1.0)
+            # Draw each face; compute per-face UVs for side faces when the
+            # geometry was extruded.
             for face_idx, face in enumerate(self.faces):
+                # Determine world spans for this face to compute a sensible
+                # repeat if caller left uv_repeat at the default (1.0, 1.0).
+                if len(face) != 4:
+                    continue
                 a, b, c, d = face
+                # Determine representative verts to compute spans
+                va = world_verts[a]
+                vb = world_verts[b]
+                vc = world_verts[c]
+
+                # Compute edge vectors in world space
+                e1 = vb - va
+                e2 = vc - vb
+                # approximate spans as lengths of two edges
+                span_u = e1.length()
+                span_v = e2.length()
+
+                u_r, v_r = u_repeat, v_repeat
+                if tex_size and (u_repeat == 1.0 and v_repeat == 1.0):
+                    tex_w, tex_h = tex_size
+                    u_r = span_u / max(1e-6, float(tex_w))
+                    v_r = span_v / max(1e-6, float(tex_h))
+
+                # Default base uv mapping for a quad (bottom-left -> top-right)
+                face_uvs = [
+                    (0.0 * u_r, 0.0 * v_r),
+                    (1.0 * u_r, 0.0 * v_r),
+                    (1.0 * u_r, 1.0 * v_r),
+                    (0.0 * u_r, 1.0 * v_r),
+                ]
+
+                # If the wall is extruded, avoid stretching by sampling a thin
+                # strip from the front/back texture for the side/top/bottom faces
+                # so they visually continue the edge pixels instead of stretching
+                # the whole front texture across a thin face.
+                if self.thickness > 0.0 and tex_size:
+                    tex_w, tex_h = tex_size
+                    # a small strip size in texture-space (one texel scaled by repeat)
+                    strip_u = max(
+                        1.0 / max(1.0, float(tex_w)) * u_repeat, 0.001 * u_repeat
+                    )
+                    strip_v = max(
+                        1.0 / max(1.0, float(tex_h)) * v_repeat, 0.001 * v_repeat
+                    )
+
+                    # Face ordering when extruded defined in __init__:
+                    # 0: front, 1: back, 2: right (+Z), 3: left (-Z), 4: top (+Y), 5: bottom (-Y)
+                    if face_idx == 0:
+                        # front: unchanged
+                        face_uvs = [
+                            (0.0 * u_r, 0.0 * v_r),
+                            (1.0 * u_r, 0.0 * v_r),
+                            (1.0 * u_r, 1.0 * v_r),
+                            (0.0 * u_r, 1.0 * v_r),
+                        ]
+                    elif face_idx == 1:
+                        # back: unchanged but may need flip to match winding
+                        face_uvs = [
+                            (0.0 * u_r, 0.0 * v_r),
+                            (1.0 * u_r, 0.0 * v_r),
+                            (1.0 * u_r, 1.0 * v_r),
+                            (0.0 * u_r, 1.0 * v_r),
+                        ]
+                    elif face_idx == 2:
+                        # right side: sample a thin vertical strip from the right
+                        # edge of the front texture and tile vertically across height
+                        u_min = max(0.0, u_repeat - strip_u)
+                        u_max = u_repeat
+                        face_uvs = [
+                            (u_min, 0.0 * v_r),
+                            (u_max, 0.0 * v_r),
+                            (u_max, 1.0 * v_r),
+                            (u_min, 1.0 * v_r),
+                        ]
+                    elif face_idx == 3:
+                        # left side: sample a thin vertical strip from the left
+                        u_min = 0.0
+                        u_max = min(strip_u, u_repeat)
+                        face_uvs = [
+                            (u_min, 0.0 * v_r),
+                            (u_max, 0.0 * v_r),
+                            (u_max, 1.0 * v_r),
+                            (u_min, 1.0 * v_r),
+                        ]
+                    elif face_idx == 4:
+                        # top: sample a thin horizontal strip from the top row of the
+                        # front texture and tile across the top face's span
+                        v_min = max(0.0, v_r - strip_v)
+                        v_max = v_r
+                        face_uvs = [
+                            (0.0 * u_r, v_min),
+                            (1.0 * u_r, v_min),
+                            (1.0 * u_r, v_max),
+                            (0.0 * u_r, v_max),
+                        ]
+                    elif face_idx == 5:
+                        # bottom: sample a thin horizontal strip from the bottom
+                        v_min = 0.0
+                        v_max = min(strip_v, v_r)
+                        face_uvs = [
+                            (0.0 * u_r, v_min),
+                            (1.0 * u_r, v_min),
+                            (1.0 * u_r, v_max),
+                            (0.0 * u_r, v_max),
+                        ]
+
                 glBegin(GL_QUADS)
                 for vi, idx in enumerate((a, b, c, d)):
-                    uv = uvs[vi]
+                    uv = face_uvs[vi]
                     v = world_verts[idx]
                     glTexCoord2f(uv[0], uv[1])
                     glVertex3f(v.x, v.y, v.z)

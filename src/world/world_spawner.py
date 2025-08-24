@@ -25,6 +25,8 @@ def spawn_world_sprites(
     max_spawn_x: float,
     max_spawn_z: float,
     avoid_roads: list | None = None,
+    # avoid_areas: list of objects with contains_point(x,z, margin=0.0) -> bool
+    avoid_areas: list | None = None,
 ) -> list[WorldSprite]:
     """Create a list of billboard sprites randomly placed in the area.
 
@@ -39,11 +41,28 @@ def spawn_world_sprites(
             z = random.uniform(-max_spawn_z, max_spawn_z) + z_off
             if not avoid_roads:
                 break
+            # Check roads first
             if any(
                 r.contains_point(x, z, margin=2.0) for r in avoid_roads if r is not None
             ):
                 # reject and retry
                 continue
+            # Check avoid_areas (e.g., building footprints)
+            if avoid_areas:
+                blocked = False
+                for a in avoid_areas:
+                    try:
+                        if (
+                            a is not None
+                            and hasattr(a, "contains_point")
+                            and a.contains_point(x, z, margin=2.0)
+                        ):
+                            blocked = True
+                            break
+                    except Exception:
+                        pass
+                if blocked:
+                    continue
             break
         tex = random.choice(textures)
         # Compute world size from actual texture pixel size

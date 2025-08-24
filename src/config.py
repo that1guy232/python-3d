@@ -11,7 +11,7 @@ VSYNC = False
 BASE_SPEED = 60.0
 SPRINT_SPEED = 100.0
 MOUSE_SENSITIVITY = 0.0015
-MUTE = False
+MUTE = True
 # Camera follow-ground behavior
 CAMERA_GROUND_OFFSET = 25.0  # eye height above ground surface
 CAMERA_FOLLOW_SMOOTH_HZ = (

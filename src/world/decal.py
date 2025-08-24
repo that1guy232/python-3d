@@ -31,7 +31,7 @@ from OpenGL.GL import (
     GL_ONE_MINUS_SRC_ALPHA,
 )
 
-from core.renderer import BatchedMesh
+from core.mesh import BatchedMesh
 
 
 HeightFn = Callable[[float, float], float]

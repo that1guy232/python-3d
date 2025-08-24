@@ -25,7 +25,7 @@ from OpenGL.GL import (
     GL_REPEAT,
 )
 
-from core.renderer import BatchedMesh
+from core.mesh import BatchedMesh
 from textures.texture_utils import (
     get_texture_size,
 )  # kept for potential future sizing (unused)
