@@ -150,128 +150,7 @@ class BatchedMesh:
         glBufferData(GL_ARRAY_BUFFER, vertex_data.nbytes, vertex_data, GL_STATIC_DRAW)
         self.vertex_count = int(vertex_data.shape[0])
 
-    def raise_area(
-        self,
-        center_x: float,
-        center_z: float,
-        radius: float,
-        delta: float,
-        *,
-        smooth: bool = True,
-    ):
-        """Raise (or lower, if delta<0) corner heights inside a circular area.
 
-        The corner influence falls off linearly with distance when smooth=True.
-        After mutating the internal height array this calls
-        `update_vertex_buffer_from_heights()`.
-        """
-        hs = self.height_sampler
-        if not hasattr(hs, "_heights") or self._count is None:
-            return
-        heights = hs._heights
-        count = int(self._count)
-        spacing = float(self._spacing)
-        half = float(self._half)
-
-        corners = [(-half, -half), (half, -half), (half, half), (-half, half)]
-        for gx in range(count):
-            for gz in range(count):
-                base_x = gx * spacing
-                base_z = gz * spacing
-                for ci, (cx_off, cz_off) in enumerate(corners):
-                    wx = base_x + cx_off
-                    wz = base_z + cz_off
-                    dist = math.hypot(wx - center_x, wz - center_z)
-                    if dist > radius:
-                        continue
-                    if smooth and radius > 0:
-                        t = max(0.0, 1.0 - (dist / radius))
-                    else:
-                        t = 1.0
-                    heights[gx, gz, ci] = float(heights[gx, gz, ci] + delta * t)
-
-        # Inform sampler and rebuild VBO
-        self.height_sampler._heights = heights
-        self.update_vertex_buffer_from_heights()
-
-    def level_area(
-        self,
-        center_x: float,
-        center_z: float,
-        radius: float,
-        target: float,
-        *,
-        smooth: bool = True,
-    ):
-        """Move corner heights toward `target` inside a circular area.
-
-        Uses linear falloff when smooth=True. Fully sets corners at center to
-        `target` and blends toward their original values near the radius.
-        """
-        hs = self.height_sampler
-        if not hasattr(hs, "_heights") or self._count is None:
-            return
-        heights = hs._heights
-        count = int(self._count)
-        spacing = float(self._spacing)
-        half = float(self._half)
-
-        corners = [(-half, -half), (half, -half), (half, half), (-half, half)]
-        for gx in range(count):
-            for gz in range(count):
-                base_x = gx * spacing
-                base_z = gz * spacing
-                for ci, (cx_off, cz_off) in enumerate(corners):
-                    wx = base_x + cx_off
-                    wz = base_z + cz_off
-                    dist = math.hypot(wx - center_x, wz - center_z)
-                    if dist > radius:
-                        continue
-                    if smooth and radius > 0:
-                        t = max(0.0, 1.0 - (dist / radius))
-                    else:
-                        t = 1.0
-                    heights[gx, gz, ci] = float(
-                        (1.0 - t) * heights[gx, gz, ci] + t * target
-                    )
-
-        self.height_sampler._heights = heights
-        self.update_vertex_buffer_from_heights()
-
-    def smooth_heights(self, iterations: int = 1):
-        """Apply a simple smoothing pass over the corner heights.
-
-        This performs a neighbor average (4-neighbor) smoothing `iterations`
-        times and rebuilds the VBO.
-        """
-        hs = self.height_sampler
-        if not hasattr(hs, "_heights") or self._count is None:
-            return
-        heights = hs._heights
-        count = int(self._count)
-
-        for _ in range(max(0, int(iterations))):
-            new_h = heights.copy()
-            for gx in range(count):
-                for gz in range(count):
-                    for ci in range(4):
-                        acc = heights[gx, gz, ci]
-                        n = 1
-                        # check neighbors in grid (clamp at edges)
-                        for ngx, ngz in (
-                            (gx - 1, gz),
-                            (gx + 1, gz),
-                            (gx, gz - 1),
-                            (gx, gz + 1),
-                        ):
-                            if 0 <= ngx < count and 0 <= ngz < count:
-                                acc += heights[ngx, ngz, ci]
-                                n += 1
-                        new_h[gx, gz, ci] = acc / float(n)
-            heights = new_h
-
-        self.height_sampler._heights = heights
-        self.update_vertex_buffer_from_heights()
 
 
 class GroundHeightSampler:
@@ -370,3 +249,27 @@ class GroundHeightSampler:
             + u_lin * v_lin * c
             + (1 - u_lin) * v_lin * d
         )
+
+    def raise_area(self, start: tuple[float, float], end: tuple[float, float], amount: float = 1.0) -> None:
+        """Disabled: previously raised stored corner heights inside a rectangle.
+
+        Terrain deformation has been intentionally disabled project-wide. This
+        method is kept as a no-op to preserve API compatibility.
+        """
+        return None
+
+    def lower_area(self, start: tuple[float, float], end: tuple[float, float], amount: float = 1.0) -> None:
+        """Lower the stored corner heights inside the rectangle by `amount`.
+
+        This is a thin wrapper around :meth:`raise_area` that applies a
+        negative delta.
+        """
+        # No-op: deformation disabled for runtime safety and to keep terrain static.
+        return None
+
+    def level_area(self, start: tuple[float, float], end: tuple[float, float], y: float) -> None:
+        """Disabled: previously set all stored corner heights inside an AABB.
+
+        Kept as a no-op to avoid modifying the height grid at runtime.
+        """
+        return None

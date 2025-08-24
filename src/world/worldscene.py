@@ -243,6 +243,35 @@ class WorldScene(Scene):
         # If ground mesh exposes a height sampler, use it for precise ground queries
         self._ground_height_sampler = getattr(self.ground_mesh, "height_sampler", None)
 
+
+        meshes = []
+
+        
+        wall_tex = load_texture(WALL1_TEXTURE_PATH)
+
+        for b in self.buildings:
+            base_y = None
+            default_wall_height = 50
+            building_width = 500
+            building_depth = 100
+            walls = b.create_perimeter_walls(
+                wall_height=default_wall_height,
+                wall_thickness=2.5,
+                width=building_width,
+                depth=building_depth,
+                texture=wall_tex,
+                uv_repeat=(1.0, 1.0),
+                base_y=base_y,
+            )
+
+            meshes.extend(walls)
+
+        print(f"Built {len(walls)} building walls.")
+
+
+        padding_tiles = 200
+
+
         print("Spawning world objects...")
         # Example road from west edge toward east edge across center
         center_x = (self.ground_bounds[0] + self.ground_bounds[1]) * 0.5
@@ -377,34 +406,15 @@ class WorldScene(Scene):
         )
         print(f"Built {len(fence_meshes)} fence segments.")
 
-        meshes = [self.road]
+        
         meshes.extend(fence_meshes)
 
 
-        wall_tex = load_texture(WALL1_TEXTURE_PATH)
 
-        for b in self.buildings:
-            base_y = None
-            default_wall_height = 50
+        self.static_meshes = meshes + trees + grasses + rocks + [self.road]
 
-            walls = b.create_perimeter_walls(
-                wall_height=default_wall_height,
-                wall_thickness=2.5,
-                width=500,
-                texture=wall_tex,
-                uv_repeat=(1.0, 1.0),
-                base_y=base_y,
-            )
 
-            meshes.extend(walls)
-
-        print(f"Built {len(walls)} building walls.")
-
-        # print the building corners
-        for w in walls:
-            print(f" - Wall at {w.position}")
-
-        self.static_meshes = meshes + trees + grasses + rocks
+        
 
         # --- Spawn procedural shadow decals under vegetation -------------
         # Build a reusable high‑quality blob shadow texture (linear filtered)
