@@ -287,7 +287,9 @@ class WorldScene(Scene):
             elevation=3.0,
             segment_length=8.0,
         )
+
         print("Road created.")
+      
         lil_buffer = 15
         # Center spawns around the middle of the ground, not shifted to +X/+Z
         min_x, max_x, min_z, max_z = self.ground_bounds
@@ -378,10 +380,7 @@ class WorldScene(Scene):
         meshes = [self.road]
         meshes.extend(fence_meshes)
 
-        # Create perimeter walls for any buildings and add them to the scene meshes
-        # so they are rendered. We load the shared wall texture and pass it into
-        # the building helper; WallTile will compute sensible UV repeats at draw
-        # time when uv_repeat is left at the default (1.0,1.0).
+
         wall_tex = load_texture(WALL1_TEXTURE_PATH)
 
         for b in self.buildings:
@@ -400,6 +399,10 @@ class WorldScene(Scene):
             meshes.extend(walls)
 
         print(f"Built {len(walls)} building walls.")
+
+        # print the building corners
+        for w in walls:
+            print(f" - Wall at {w.position}")
 
         self.static_meshes = meshes + trees + grasses + rocks
 
