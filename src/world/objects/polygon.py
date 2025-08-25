@@ -332,8 +332,7 @@ class Polygon(Object3D):
             
         a, b, c, d = face
         va, vb, vc, vd = [world_verts[i] for i in face]
-        
-        # Compute face dimensions
+                # Compute face dimensions
         edge1 = vb - va
         edge2 = vc - vb
         span_u = edge1.length()
@@ -349,7 +348,7 @@ class Polygon(Object3D):
             # For thin side faces, sample edge pixels to avoid stretching
             if self.thickness > 0.0:
                 strip_u = max(1.0 / max(1.0, float(tex_w)) * u_repeat, 0.001 * u_repeat)
-                strip_v = max(1.0 / max(1.0, float(tex_h)) * v_repeat, 0.001 * v_repeat)
+
                 
                 # Sample appropriate edge based on side
                 if side_idx % 2 == 0:  # Even sides - sample thin vertical strip

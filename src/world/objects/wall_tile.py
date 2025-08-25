@@ -135,27 +135,13 @@ class WallTile(Object3D):
         if not world_verts:
             return
 
-        # Single-quad per face; base (u,v) mapping: bottom-left (0,0) -> top-right (1,1)
-        u_base = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
-
         # For textured walls, use the registered texture pixel size to compute
         # a sensible repeat so the texture tiles instead of stretching across
         # large walls. If the caller provided an explicit non-default
         # `uv_repeat` we keep it; otherwise compute from texture size.
         u_repeat, v_repeat = self.uv_repeat
-        if self.texture:
-            tex_size = get_texture_size(self.texture)
-            if tex_size and (u_repeat == 1.0 and v_repeat == 1.0):
-                tex_w, tex_h = tex_size
-                # World spans for the quad: horizontal along Z is 2*depth, vertical along Y is 2*height
-                world_u = 2.0 * self.depth
-                world_v = 2.0 * self.height
-                # Compute repeats as ratio of world size to texture pixel size.
-                # This ensures one texture image covers ~tex_w x tex_h world units.
-                u_repeat = world_u / max(1e-6, float(tex_w))
-                v_repeat = world_v / max(1e-6, float(tex_h))
+        tex_size = get_texture_size(self.texture)
 
-        uvs = [(u * u_repeat, v * v_repeat) for (u, v) in u_base]
 
         if self.texture:
             glEnable(GL_TEXTURE_2D)
