@@ -125,3 +125,5 @@ Thumbs.db
 # End of .gitignore
 .github/instructions/instructions.md
 .gitignore
+.github/copilot-instructions.md
+.gitignore
