@@ -102,6 +102,44 @@ class TexturedGroundGridBuilder:
             )
             return None, 0, 0, 0.0, 0.0, 0.0, 0.0
 
+    def _sample_heights_vectorized(self, world_coords, heightmap_data):
+        """Sample heights for multiple world coordinates at once"""
+        heightmap_arr, hm_w, hm_h, world_min_x, world_max_x, world_min_z, world_max_z = heightmap_data
+        
+        if heightmap_arr is None:
+            heights = np.full(len(world_coords), self.h, dtype=np.float32)
+        else:
+            wx = world_coords[:, 0]
+            wz = world_coords[:, 1]
+            
+            # Vectorized UV calculation
+            ux = (wx - world_min_x) / max(1e-12, (world_max_x - world_min_x))
+            uz = (wz - world_min_z) / max(1e-12, (world_max_z - world_min_z))
+            ux = np.clip(ux, 0.0, 1.0)
+            uz = np.clip(uz, 0.0, 1.0)
+            
+            px = (ux * (hm_w - 1)).astype(int)
+            py = (uz * (hm_h - 1)).astype(int)
+            
+            # Sample heights
+            rgb_values = heightmap_arr[px, py]
+            lum = rgb_values.mean(axis=1)
+            heights = self.h + (lum - 0.5) * 2.0 * self.heightmap_amp
+        
+        # Apply height modifiers if present
+        if self.height_modifiers:
+            for i in range(len(heights)):
+                y = float(heights[i])
+                wx, wz = world_coords[i, 0], world_coords[i, 1]
+                for mod in self.height_modifiers:
+                    try:
+                        y = float(mod(wx, wz, y))
+                    except Exception:
+                        pass
+                heights[i] = y
+        
+        return heights.astype(np.float32)
+
     def _sample_height(
         self,
         wx: float,
@@ -114,6 +152,7 @@ class TexturedGroundGridBuilder:
         world_min_z,
         world_max_z,
     ) -> float:
+        """Legacy single-point height sampling for compatibility"""
         if heightmap_arr is None:
             return self.h
         ux = (wx - world_min_x) / max(1e-12, (world_max_x - world_min_x))
@@ -125,6 +164,7 @@ class TexturedGroundGridBuilder:
         rgb = heightmap_arr[px, py]
         lum = float(rgb[0] + rgb[1] + rgb[2]) / 3.0
         base_y = self.h + (lum - 0.5) * 2.0 * self.heightmap_amp
+
         if self.height_modifiers:
             y = float(base_y)
             for mod in self.height_modifiers:
@@ -133,107 +173,77 @@ class TexturedGroundGridBuilder:
                 except Exception:
                     pass
             return y
+
         return float(base_y)
 
     def build(self) -> BatchedMesh:
         tile_vertex_array = self._make_tile_vertex_array()
-
-        (
-            heightmap_arr,
-            hm_w,
-            hm_h,
-            world_min_x,
-            world_max_x,
-            world_min_z,
-            world_max_z,
-        ) = self._load_heightmap()
-
-        vertices = []
+        heightmap_data = self._load_heightmap()
+        
+        # Pre-allocate final vertex array
+        vertices_per_tile = len(tile_vertex_array)
+        total_vertices = vertices_per_tile * self.count * self.count
+        vertex_data = np.zeros((total_vertices, 8), dtype=np.float32)
         corner_heights = np.zeros((self.count, self.count, 4), dtype=np.float32)
-        for gx in range(self.count):
-            for gz in range(self.count):
-                tx = gx * self.spacing
-                tz = gz * self.spacing
-                translated = tile_vertex_array.copy()
-                translated[:, 0] += tx
-                translated[:, 2] += tz
-
-                for i in range(len(translated)):
-                    x, _, z = translated[i, 0], translated[i, 1], translated[i, 2]
-                    translated[i, 1] = self._sample_height(
-                        x,
-                        z,
-                        heightmap_arr,
-                        hm_w,
-                        hm_h,
-                        world_min_x,
-                        world_max_x,
-                        world_min_z,
-                        world_max_z,
-                    )
-
-                vertices.append(translated)
-
-                a_y = self._sample_height(
-                    tx - self.w,
-                    tz - self.d,
-                    heightmap_arr,
-                    hm_w,
-                    hm_h,
-                    world_min_x,
-                    world_max_x,
-                    world_min_z,
-                    world_max_z,
-                )
-                b_y = self._sample_height(
-                    tx + self.w,
-                    tz - self.d,
-                    heightmap_arr,
-                    hm_w,
-                    hm_h,
-                    world_min_x,
-                    world_max_x,
-                    world_min_z,
-                    world_max_z,
-                )
-                c_y = self._sample_height(
-                    tx + self.w,
-                    tz + self.d,
-                    heightmap_arr,
-                    hm_w,
-                    hm_h,
-                    world_min_x,
-                    world_max_x,
-                    world_min_z,
-                    world_max_z,
-                )
-                d_y = self._sample_height(
-                    tx - self.w,
-                    tz + self.d,
-                    heightmap_arr,
-                    hm_w,
-                    hm_h,
-                    world_min_x,
-                    world_max_x,
-                    world_min_z,
-                    world_max_z,
-                )
-                corner_heights[gx, gz, 0] = a_y
-                corner_heights[gx, gz, 1] = b_y
-                corner_heights[gx, gz, 2] = c_y
-                corner_heights[gx, gz, 3] = d_y
-
-        if not vertices:
+        
+        if total_vertices == 0:
             empty = np.zeros((0, 8), dtype=np.float32)
             vbo = glGenBuffers(1)
             glBindBuffer(GL_ARRAY_BUFFER, vbo)
             glBufferData(GL_ARRAY_BUFFER, empty.nbytes, empty, GL_STATIC_DRAW)
             return BatchedMesh(vbo_vertices=vbo, vertex_count=0, texture=self.texture)
 
-        vertex_data = np.vstack(vertices)
+        vertex_idx = 0
+        
+        # Pre-calculate all grid positions
+        grid_positions = []
+        corner_coords_list = []
+        tile_start_indices = []
+        
+        for gx in range(self.count):
+            for gz in range(self.count):
+                tx = gx * self.spacing
+                tz = gz * self.spacing
+                grid_positions.append((gx, gz, tx, tz))
+                
+                # Store tile start index for vertex processing
+                tile_start_indices.append(vertex_idx)
+                
+                # Copy tile data directly into final array
+                vertex_data[vertex_idx:vertex_idx + vertices_per_tile] = tile_vertex_array
+                
+                # Apply translation
+                vertex_data[vertex_idx:vertex_idx + vertices_per_tile, 0] += tx
+                vertex_data[vertex_idx:vertex_idx + vertices_per_tile, 2] += tz
+                
+                # Prepare corner coordinates for batch processing
+                corner_coords_list.extend([
+                    (gx, gz, 0, tx - self.w, tz - self.d),
+                    (gx, gz, 1, tx + self.w, tz - self.d),
+                    (gx, gz, 2, tx + self.w, tz + self.d),
+                    (gx, gz, 3, tx - self.w, tz + self.d)
+                ])
+                
+                vertex_idx += vertices_per_tile
+        
+        # Batch process all vertex heights
+        vertex_world_coords = vertex_data[:, [0, 2]]  # Extract x, z coordinates
+        vertex_heights = self._sample_heights_vectorized(vertex_world_coords, heightmap_data)
+        vertex_data[:, 1] = vertex_heights  # Update y coordinates
+        
+        # Batch process all corner heights
+        corner_world_coords = np.array([[coord[3], coord[4]] for coord in corner_coords_list])
+        corner_heights_flat = self._sample_heights_vectorized(corner_world_coords, heightmap_data)
+        
+        # Assign corner heights to the corner_heights array
+        for i, (gx, gz, corner_idx, _, _) in enumerate(corner_coords_list):
+            corner_heights[gx, gz, corner_idx] = corner_heights_flat[i]
+
+        # Create VBO
         vbo = glGenBuffers(1)
         glBindBuffer(GL_ARRAY_BUFFER, vbo)
         glBufferData(GL_ARRAY_BUFFER, vertex_data.nbytes, vertex_data, GL_STATIC_DRAW)
+        
         mesh = BatchedMesh(
             vbo_vertices=vbo, vertex_count=vertex_data.shape[0], texture=self.texture
         )
