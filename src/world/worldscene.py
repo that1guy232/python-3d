@@ -97,8 +97,8 @@ class WorldScene(Scene):
         self,
         camera: Optional[Camera] = None,
         *,
-        grid_count: int = 50,
-        grid_tile_size: int = 100,
+        grid_count: int = 200,
+        grid_tile_size: int = 25,
         grid_gap: int = 0,
         tree_count: int = 2000,
         grass_count: int = 1000,
@@ -220,13 +220,11 @@ class WorldScene(Scene):
         print("Asset loading complete.")
 
         print("Creating buildings...")
+
         self.buildings: list[Building] = []
 
-        building_height = 0
-        building = Building(
-            position=self.world_center,
-            target_height=building_height,
-        )
+        building_pos = self.world_center + Vector3(0, 0, 200)
+        building = Building(position=building_pos)
         self.buildings.append(building)
 
         builder = TexturedGroundGridBuilder(
@@ -243,17 +241,26 @@ class WorldScene(Scene):
         # If ground mesh exposes a height sampler, use it for precise ground queries
         self._ground_height_sampler = getattr(self.ground_mesh, "height_sampler", None)
 
-
         meshes = []
 
-        
         wall_tex = load_texture(WALL1_TEXTURE_PATH)
 
+        # Build walls after ground is generated so we can place them at the
+        # correct ground/floor Y. We'll compute a sensible base_y per building
+        # using either the building's target_height or sampling the ground.
         for b in self.buildings:
-            base_y = None
             default_wall_height = 50
             building_width = 500
             building_depth = 100
+            # If building doesn't specify a target_height, sample the ground at
+            # the building center to get a sensible base Y.
+            if b.target_height is None:
+                bx, bz = b.position.x, b.position.z
+                sampled_y = self.ground_height_at(bx, bz)
+                base_y = sampled_y
+            else:
+                base_y = None
+
             walls = b.create_perimeter_walls(
                 wall_height=default_wall_height,
                 wall_thickness=2.5,
@@ -268,9 +275,7 @@ class WorldScene(Scene):
 
         print(f"Built {len(walls)} building walls.")
 
-
         padding_tiles = 200
-
 
         print("Spawning world objects...")
         # Example road from west edge toward east edge across center
@@ -303,7 +308,7 @@ class WorldScene(Scene):
         sx = max(min_x + margin, min(max_x - margin, sx))
         sz = max(min_z + margin, min(max_z - margin, sz))
 
-        self.camera.position = building.center
+        self.camera.position = self.world_center
 
         self.road = Road(
             points=road_points,
@@ -318,7 +323,7 @@ class WorldScene(Scene):
         )
 
         print("Road created.")
-      
+
         lil_buffer = 15
         # Center spawns around the middle of the ground, not shifted to +X/+Z
         min_x, max_x, min_z, max_z = self.ground_bounds
@@ -336,7 +341,7 @@ class WorldScene(Scene):
         x_off, z_off = area_offset
         max_spawn_x, max_spawn_z = spawn_limits
 
-        # Generate sprites via helper to reduce duplication
+
         trees = spawn_world_sprites(
             self,
             count=tree_count,
@@ -351,6 +356,7 @@ class WorldScene(Scene):
             avoid_areas=self.buildings,
         )
         print(f"Spawned {len(trees)} trees.")
+        
         grasses = spawn_world_sprites(
             self,
             count=grass_count,
@@ -380,8 +386,6 @@ class WorldScene(Scene):
         )
         print(f"Spawned {len(rocks)} rocks.")
 
-
-
         # Build fence ring just outside ground bounds so it sits at the edge
         min_x, max_x, min_z, max_z = self.ground_bounds
         fence_inset = 0.5  # nudge slightly to avoid z-fighting with ground edges
@@ -406,15 +410,9 @@ class WorldScene(Scene):
         )
         print(f"Built {len(fence_meshes)} fence segments.")
 
-        
         meshes.extend(fence_meshes)
 
-
-
         self.static_meshes = meshes + trees + grasses + rocks + [self.road]
-
-
-        
 
         # --- Spawn procedural shadow decals under vegetation -------------
         # Build a reusable high‑quality blob shadow texture (linear filtered)
