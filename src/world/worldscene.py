@@ -711,9 +711,13 @@ class WorldScene(Scene):
             text.end()
 
     # Mouse look targets updated from Engine each frame via mouse deltas
-    def apply_mouse_delta(self, dx: float, dy: float) -> None:
-        # Forward mouse delta to the camera controller (which also forwards sway)
+    def apply_mouse_delta(self, dx: float, dy: float, dt: float | None = None) -> None:
+        # Forward mouse delta and optional frame dt to the camera controller
         try:
-            self._camera_controller.on_mouse_delta(dx, dy)
+            try:
+                self._camera_controller.on_mouse_delta(dx, dy, dt)
+            except TypeError:
+                # Backwards compatible: camera controller may not accept dt
+                self._camera_controller.on_mouse_delta(dx, dy)
         except Exception:
             pass

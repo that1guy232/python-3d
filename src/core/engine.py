@@ -75,7 +75,7 @@ class Engine:
         return True
 
     # ------------------------------------------------------------------
-    def handle_events(self) -> bool:
+    def handle_events(self, dt: float) -> bool:
         keys = pygame.key.get_pressed()
         for event in pygame.event.get():
             if event.type == pygame.QUIT or keys[pygame.K_ESCAPE]:
@@ -88,8 +88,13 @@ class Engine:
                     pass
         # mouse look (update target rotation; smoothing applied in update())
         mdx, mdy = pygame.mouse.get_rel()
+        # Forward mouse delta and frame dt so handlers can normalize by frame time
         if hasattr(self.scene, "apply_mouse_delta"):
-            self.scene.apply_mouse_delta(mdx, mdy)
+            try:
+                self.scene.apply_mouse_delta(mdx, mdy, dt)
+            except TypeError:
+                # Backwards compatible: older apply_mouse_delta may not accept dt
+                self.scene.apply_mouse_delta(mdx, mdy)
         return True
 
     # ------------------------------------------------------------------
@@ -117,7 +122,7 @@ class Engine:
                 dt = self.clock.tick() / 1000.0
             else:
                 dt = self.clock.tick(FPS) / 1000.0
-            running = self.handle_events()
+            running = self.handle_events(dt)
             if not running:
                 break
             self.update(dt)

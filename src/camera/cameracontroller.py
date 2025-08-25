@@ -100,8 +100,23 @@ class CameraController:
 
         return slid
 
-    def on_mouse_delta(self, dx: float, dy: float) -> None:
-        """Accept raw mouse delta and update rotation targets."""
+    def on_mouse_delta(self, dx: float, dy: float, dt: float | None = None) -> None:
+        """Accept raw mouse delta and update rotation targets.
+
+        If a frame delta `dt` is provided, normalize the raw per-frame deltas
+        to a baseline 60Hz so mouse look feels consistent across varying FPS.
+        """
+        # Normalize deltas to baseline frame time (1/60s) when dt available
+        if dt is not None and dt > 0.0:
+            baseline = 1.0 / 60.0
+            try:
+                scale = baseline / dt
+            except Exception:
+                scale = 1.0
+            dx *= scale
+            dy *= scale
+
+        # Accept normalized (or raw) deltas
         self.rot_target_y -= dx * MOUSE_SENSITIVITY
         cand_x = self.rot_target_x - dy * MOUSE_SENSITIVITY
         self.rot_target_x = max(-math.pi / 2 + 0.001, min(math.pi / 2 - 0.001, cand_x))
