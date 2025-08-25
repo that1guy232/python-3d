@@ -185,7 +185,6 @@ class Building:
             return
 
         self._bbox = (min_x, max_x, min_z, max_z)
-        print(f"Building bbox updated: {self._bbox}")
 
     def get_bounding_box(self) -> Optional[tuple[float, float, float, float]]:
         """Get the cached axis-aligned bounding box (min_x, max_x, min_z, max_z)

@@ -200,10 +200,10 @@ class WallTile(Object3D):
 
                 # Default base uv mapping for a quad (bottom-left -> top-right)
                 face_uvs = [
-                    (0.0 * u_r, 0.0 * v_r),
-                    (1.0 * u_r, 0.0 * v_r),
-                    (1.0 * u_r, 1.0 * v_r),
-                    (0.0 * u_r, 1.0 * v_r),
+                    (0.0, 0.0),
+                    (u_r, 0.0),
+                    (u_r, v_r),
+                    (0.0, v_r),
                 ]
 
                 # If the wall is extruded, avoid stretching by sampling a thin
@@ -222,21 +222,13 @@ class WallTile(Object3D):
 
                     # Face ordering when extruded defined in __init__:
                     # 0: front, 1: back, 2: right (+Z), 3: left (-Z), 4: top (+Y), 5: bottom (-Y)
-                    if face_idx == 0:
-                        # front: unchanged
+                    if face_idx in (0, 1):
+                        # front/back: unchanged (back may be flipped by winding elsewhere)
                         face_uvs = [
-                            (0.0 * u_r, 0.0 * v_r),
-                            (1.0 * u_r, 0.0 * v_r),
-                            (1.0 * u_r, 1.0 * v_r),
-                            (0.0 * u_r, 1.0 * v_r),
-                        ]
-                    elif face_idx == 1:
-                        # back: unchanged but may need flip to match winding
-                        face_uvs = [
-                            (0.0 * u_r, 0.0 * v_r),
-                            (1.0 * u_r, 0.0 * v_r),
-                            (1.0 * u_r, 1.0 * v_r),
-                            (0.0 * u_r, 1.0 * v_r),
+                            (0.0, 0.0),
+                            (u_r, 0.0),
+                            (u_r, v_r),
+                            (0.0, v_r),
                         ]
                     elif face_idx == 2:
                         # right side: sample a thin vertical strip from the right
@@ -244,20 +236,20 @@ class WallTile(Object3D):
                         u_min = max(0.0, u_repeat - strip_u)
                         u_max = u_repeat
                         face_uvs = [
-                            (u_min, 0.0 * v_r),
-                            (u_max, 0.0 * v_r),
-                            (u_max, 1.0 * v_r),
-                            (u_min, 1.0 * v_r),
+                            (u_min, 0.0),
+                            (u_max, 0.0),
+                            (u_max, v_r),
+                            (u_min, v_r),
                         ]
                     elif face_idx == 3:
                         # left side: sample a thin vertical strip from the left
                         u_min = 0.0
                         u_max = min(strip_u, u_repeat)
                         face_uvs = [
-                            (u_min, 0.0 * v_r),
-                            (u_max, 0.0 * v_r),
-                            (u_max, 1.0 * v_r),
-                            (u_min, 1.0 * v_r),
+                            (u_min, 0.0),
+                            (u_max, 0.0),
+                            (u_max, v_r),
+                            (u_min, v_r),
                         ]
                     elif face_idx == 4:
                         # top: sample a thin horizontal strip from the top row of the
@@ -265,20 +257,20 @@ class WallTile(Object3D):
                         v_min = max(0.0, v_r - strip_v)
                         v_max = v_r
                         face_uvs = [
-                            (0.0 * u_r, v_min),
-                            (1.0 * u_r, v_min),
-                            (1.0 * u_r, v_max),
-                            (0.0 * u_r, v_max),
+                            (0.0, v_min),
+                            (u_r, v_min),
+                            (u_r, v_max),
+                            (0.0, v_max),
                         ]
                     elif face_idx == 5:
                         # bottom: sample a thin horizontal strip from the bottom
                         v_min = 0.0
                         v_max = min(strip_v, v_r)
                         face_uvs = [
-                            (0.0 * u_r, v_min),
-                            (1.0 * u_r, v_min),
-                            (1.0 * u_r, v_max),
-                            (0.0 * u_r, v_max),
+                            (0.0, v_min),
+                            (u_r, v_min),
+                            (u_r, v_max),
+                            (0.0, v_max),
                         ]
 
                 glBegin(GL_QUADS)
@@ -288,6 +280,7 @@ class WallTile(Object3D):
                     glTexCoord2f(uv[0], uv[1])
                     glVertex3f(v.x, v.y, v.z)
                 glEnd()
+      
             glDisable(GL_BLEND)
             glDisable(GL_ALPHA_TEST)
             glDisable(GL_TEXTURE_2D)

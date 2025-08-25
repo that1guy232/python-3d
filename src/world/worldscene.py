@@ -17,6 +17,7 @@ from pygame.math import Vector3
 
 from core.scene import Scene
 
+from world.objects.polygon import Polygon
 from world.sprite import WorldSprite
 
 from world.objects.fence import build_textured_fence_ring
@@ -275,8 +276,82 @@ class WorldScene(Scene):
 
         print(f"Built {len(walls)} building walls.")
 
-        padding_tiles = 200
 
+        tri_thickness = 5
+
+        # Create a variety of counterclockwise (CCW) polygons to showcase shapes
+        def regular_polygon(cx: float, cy: float, radius: float, sides: int) -> list[tuple[float, float]]:
+            pts: list[tuple[float, float]] = []
+            for i in range(sides):
+                ang = math.radians(90.0 + 360.0 * i / sides)
+                x = cx + math.cos(ang) * radius
+                y = cy + math.sin(ang) * radius
+                pts.append((x, y))
+            return pts
+
+        showcase_polygons: list[Polygon] = []
+
+        off_ground = 40
+        # Large CCW triangle
+        triangle_points = [(0, 0), (60, 0), (30, 50)]
+        showcase_polygons.append(
+            Polygon(
+                position=Vector3(self.world_center.x, self.ground_height_at(self.world_center.x, self.world_center.z) + off_ground, self.world_center.z),
+                points_2d=triangle_points,
+                thickness=tri_thickness,
+                texture=wall_tex,
+            )
+        )
+
+        # Square (CCW)
+        square_points = [(0, 0), (40, 0), (40, 40), (0, 40)]
+        showcase_polygons.append(
+            Polygon(
+                position=Vector3(self.world_center.x - 100, self.ground_height_at(self.world_center.x - 100, self.world_center.z) + off_ground, self.world_center.z),
+                points_2d=square_points,
+                thickness=tri_thickness,
+                texture=wall_tex,
+            )
+        )
+
+        # Regular pentagon (generated CCW)
+        pent_points = regular_polygon(0.0, 0.0, 30.0, 5)
+        showcase_polygons.append(
+            Polygon(
+                position=Vector3(self.world_center.x + 100, self.ground_height_at(self.world_center.x + 100, self.world_center.z) + off_ground, self.world_center.z),
+                points_2d=pent_points,
+                thickness=tri_thickness,
+                texture=wall_tex,
+            )
+        )
+
+        # # Concave arrow-like polygon (make sure coordinates are CCW)
+        arrow_points = [(0, 10), (40, 10), (40, -10), (60, 20), (40, 50), (40, 30), (0, 30)]
+        showcase_polygons.append(
+            Polygon(
+                position=Vector3(self.world_center.x - 200, self.ground_height_at(self.world_center.x - 200, self.world_center.z) + off_ground, self.world_center.z),
+                points_2d=arrow_points,
+                thickness=tri_thickness,
+                texture=wall_tex,
+            )
+        )
+
+        # Hexagon (regular, CCW)
+
+
+        l_points = [(0, 0), (60, 0), (60, 20), (20, 20), (20, 80), (0, 80)]
+        showcase_polygons.append(
+            Polygon(
+                position=Vector3(self.world_center.x + 200, self.ground_height_at(self.world_center.x + 200, self.world_center.z) + off_ground, self.world_center.z),
+                points_2d=l_points,
+                thickness=tri_thickness,
+                texture=wall_tex,
+            )
+        )
+
+        # Add all showcase polygons to the scene meshes
+        meshes.extend(showcase_polygons)
+    
         print("Spawning world objects...")
         # Example road from west edge toward east edge across center
         center_x = (self.ground_bounds[0] + self.ground_bounds[1]) * 0.5
