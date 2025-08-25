@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Callable, List, Optional
 import math
+import random
 
 from pygame.math import Vector3
 
@@ -49,11 +50,18 @@ class Building:
         Returns a list of 4 `WallTile` instances (N, E, S, W) forming a closed box without overlaps.
         """
         cx, cz = float(self.position.x), float(self.position.z)
-        base_y = (
-            self.target_height
-            if base_y is None and self.target_height is not None
-            else (0.0 if base_y is None else float(base_y))
-        )
+        # Determine base Y for walls. Priority:
+        # 1) explicit `base_y` argument
+        # 2) `self.target_height` if set
+        # 3) building position Y (makes placement intuitive when using
+        #    world coordinates or when the scene positions the building)
+        if base_y is None:
+            if self.target_height is not None:
+                base_y = float(self.target_height)
+            else:
+                base_y = float(self.position.y)
+        else:
+            base_y = float(base_y)
 
         # Determine outer footprint dimensions (use defaults if not provided)
         DEFAULT_SIDE = 100.0
@@ -109,11 +117,23 @@ class Building:
                 thickness=wall_thickness,
             )
             tile.rotation = Vector3(0.0, theta, 0.0)
-            walls.append(tile)
 
-        # Attach to building shapes
-        if walls:
-            self.attach_shapes(walls)
+            walls.append(tile)
+            self.attach_shapes(
+                [tile]
+            )  # we still attach all shapes for the bounding box
+
+        shortest_id = None
+        shortest_span = float("inf")
+        for idx, wall in enumerate(walls):
+            span = max(float(wall.width), float(wall.depth))
+            if span < shortest_span:
+                shortest_span = span
+                shortest_id = idx
+
+        if shortest_id is not None:
+            # remove the single shortest wall
+            walls.pop(shortest_id)
 
         return walls
 
@@ -172,6 +192,33 @@ class Building:
         of attached shapes, or None if no shapes are attached.
         """
         return self._bbox
+
+    def contains_point(self, x: float, z: float, margin: float = 0.0) -> bool:
+        """Return True if the X/Z point lies within the building footprint.
+
+        This is used by the world spawner's `avoid_areas` checks. The method
+        prefers the computed axis-aligned bounding box of attached shapes. If
+        no bbox is available it falls back to a default square footprint used
+        by `create_perimeter_walls`.
+        """
+        # Use bounding box if available
+        if self._bbox is not None:
+            min_x, max_x, min_z, max_z = self._bbox
+            return (min_x - margin) <= x <= (max_x + margin) and (
+                min_z - margin
+            ) <= z <= (max_z + margin)
+
+        print("Using default footprint")
+        # Fallback to default footprint (same default as create_perimeter_walls)
+        DEFAULT_SIDE = 100.0
+        half_x = DEFAULT_SIDE / 2.0
+        half_z = DEFAULT_SIDE / 2.0
+        if abs(x - self.position.x) <= (half_x + margin) and abs(
+            z - self.position.z
+        ) <= (half_z + margin):
+            return True
+
+        return False
 
     def get_floor_level(self) -> float:
         """Return the world-space floor/base Y for this building.
