@@ -67,19 +67,38 @@ class CameraController:
         """
         meshes = getattr(self.scene, "static_meshes", None) or []
         player_radius = getattr(self.scene, "_player_radius", 16)
-        col_normal = movement_blocked_by_wall(
-            meshes, old_position, self.camera.position, player_radius
-        )
-        if col_normal is None:
-            return False
 
-        attempted = self.camera.position - old_position
-        # v_slide = attempted - (n dot attempted) * n
-        n = col_normal
-        dot = attempted.dot(n)
-        slide = attempted - n * dot
-        self.camera.position = old_position + slide
-        return True
+        # Try to handle multiple, sequential wall collisions (e.g. at a 90deg
+        # corner) by repeatedly querying for a blocking plane and projecting
+        # the attempted movement onto that plane. Limit iterations to avoid
+        # pathological loops.
+        slid = False
+        max_iters = 3
+        eps = 1e-6
+        for _ in range(max_iters):
+            col_normal = movement_blocked_by_wall(
+                meshes, old_position, self.camera.position, player_radius
+            )
+            if col_normal is None:
+                break
+
+            attempted = self.camera.position - old_position
+            # v_slide = attempted - (n dot attempted) * n
+            n = col_normal
+            dot = attempted.dot(n)
+            slide = attempted - n * dot
+            new_pos = old_position + slide
+            # If projection made no meaningful progress, stop to avoid loop.
+            if (new_pos - self.camera.position).length_squared() <= eps:
+                # Ensure we don't leave the camera stuck inside the wall.
+                self.camera.position = old_position
+                slid = True
+                break
+
+            self.camera.position = new_pos
+            slid = True
+
+        return slid
 
     def on_mouse_delta(self, dx: float, dy: float) -> None:
         """Accept raw mouse delta and update rotation targets."""
