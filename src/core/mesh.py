@@ -151,8 +151,6 @@ class BatchedMesh:
         self.vertex_count = int(vertex_data.shape[0])
 
 
-
-
 class GroundHeightSampler:
     __slots__ = ("_count", "_spacing", "_w", "_heights")
 
@@ -249,27 +247,3 @@ class GroundHeightSampler:
             + u_lin * v_lin * c
             + (1 - u_lin) * v_lin * d
         )
-
-    def raise_area(self, start: tuple[float, float], end: tuple[float, float], amount: float = 1.0) -> None:
-        """Disabled: previously raised stored corner heights inside a rectangle.
-
-        Terrain deformation has been intentionally disabled project-wide. This
-        method is kept as a no-op to preserve API compatibility.
-        """
-        return None
-
-    def lower_area(self, start: tuple[float, float], end: tuple[float, float], amount: float = 1.0) -> None:
-        """Lower the stored corner heights inside the rectangle by `amount`.
-
-        This is a thin wrapper around :meth:`raise_area` that applies a
-        negative delta.
-        """
-        # No-op: deformation disabled for runtime safety and to keep terrain static.
-        return None
-
-    def level_area(self, start: tuple[float, float], end: tuple[float, float], y: float) -> None:
-        """Disabled: previously set all stored corner heights inside an AABB.
-
-        Kept as a no-op to avoid modifying the height grid at runtime.
-        """
-        return None
