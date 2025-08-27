@@ -45,6 +45,11 @@ class Scene:
         polygons: list[Polygon] = []
         others: list[object] = []
 
+        import time
+        total_start_time = time.perf_counter()
+
+
+        sort_meshes_time = time.perf_counter()
         for mesh in self.static_meshes:
             if isinstance(mesh, WorldSprite):
                 sprite_items.append(mesh)
@@ -60,10 +65,15 @@ class Scene:
                 print("Found GroundTile")
             else:
                 others.append(mesh)
+        end_sort_meshes_time = time.perf_counter()
+        print(f"Sorting meshes took {end_sort_meshes_time - sort_meshes_time:.6f} seconds")
 
         # Draw any decal batches that may have been added (single VBO per texture)
+        start_draw_decal_batches_time = time.perf_counter()
         for batch in decal_batches:
-            batch.draw()
+            batch.draw(camera=self.camera)
+        end_draw_decal_batches_time = time.perf_counter()
+        print(f"Drawing decal batches took {end_draw_decal_batches_time - start_draw_decal_batches_time:.6f} seconds")
 
         # Draw non-sprite, non-decal first
         def _approx_pos(obj):
@@ -118,7 +128,7 @@ class Scene:
             # Unknown
             return None
 
-
+        starting_draw_other_time = time.perf_counter()
         cam_pos = self.camera.position if self.camera is not None else None
         vd_sq = VIEWDISTANCE * VIEWDISTANCE
         for m in others:
@@ -138,13 +148,24 @@ class Scene:
                         pass
 
             m.draw()
+        end_draw_other_time = time.perf_counter()
+        print(f"Drawing other objects took {end_draw_other_time - starting_draw_other_time:.6f} seconds")
 
+        start_draw_wall_tiles_time = time.perf_counter()
         for w in wall_tiles:
             w.draw(camera=self.camera)
+        end_draw_wall_tiles_time = time.perf_counter()
+        print(f"Drawing wall tiles took {end_draw_wall_tiles_time - start_draw_wall_tiles_time:.6f} seconds")
 
+
+        start_draw_polygons_time = time.perf_counter()
         for p in polygons:
             p.draw(camera=self.camera)
+        end_draw_polygons_time = time.perf_counter()
+        print(f"Drawing polygons took {end_draw_polygons_time - start_draw_polygons_time:.6f} seconds")
 
+
+        start_draw_sprites_time = time.perf_counter()
         # Draw sprites batched with alpha blending
         if sprite_items and self.camera is not None:
             dist_culled = [
@@ -155,6 +176,8 @@ class Scene:
             # Provide a ground height sampler so sprite shadows can conform to terrain
             height_fn = getattr(self, "ground_height_at", None)
             draw_sprites_batched(dist_culled, self.camera, height_fn)
+        
+        print(f"Drawing sprites took {time.perf_counter() - start_draw_sprites_time:.6f} seconds")
 
 
    
