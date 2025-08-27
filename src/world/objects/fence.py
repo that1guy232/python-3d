@@ -1,250 +1,134 @@
-"""Fence building utilities extracted from renderer.py."""
+"""Simplified fence building utilities - minimal version."""
 
-from __future__ import annotations
 import random
 import numpy as np
 from textures.texture_utils import get_texture_size
-from OpenGL.GL import (
-    glGenBuffers,
-    glBindBuffer,
-    glBufferData,
-    GL_ARRAY_BUFFER,
-    GL_STATIC_DRAW,
-)
-
+from OpenGL.GL import glGenBuffers, glBindBuffer, glBufferData, GL_ARRAY_BUFFER, GL_STATIC_DRAW
 from core.mesh import BatchedMesh
 
 
 def build_textured_fence_ring(
-    *,
-    min_x: float,
-    max_x: float,
-    min_z: float,
-    max_z: float,
-    ground_y: float = 5.0,
-    height_sampler=None,
-    textures: list[int] | None = None,
-    px_to_world: float = 1.0,
-    color: tuple[float, float, float] = (1.0, 1.0, 1.0),
-    wave_amp: float = 0.0,
-    wave_freq: float = 0.02,
-    wave_phase: float = 0.0,
-    slices_per_segment: int | None = None,
-    brightness_modifiers: list[callable] = None,
-    default_brightness: float = 1.0,
-) -> list[BatchedMesh]:
+    min_x, max_x, min_z, max_z,
+    ground_y=5.0, height_sampler=None, textures=None, px_to_world=1.0,
+    color=(1.0, 1.0, 1.0), wave_amp=0.0, wave_freq=0.02, wave_phase=0.0,
+    slices_per_segment=None, brightness_modifiers=None, default_brightness=1.0
+):
+    """Build fence ring - simplified."""
     if not textures:
         return []
 
-    first_tex = textures[0]
-    size = get_texture_size(first_tex)
+    # Get segment size
+    size = get_texture_size(textures[0])
     if size:
-        w_px, h_px = size
-        seg_nominal_w = float(w_px) * px_to_world
-        seg_h = float(h_px) * px_to_world
+        seg_w, seg_h = float(size[0]) * px_to_world, float(size[1]) * px_to_world
     else:
-        seg_nominal_w = 200.0 * px_to_world
-        seg_h = 200.0 * px_to_world
+        seg_w, seg_h = 200.0 * px_to_world, 200.0 * px_to_world
 
-    r, g, b = color
+    # Height function
+    def height_at(x, z):
+        if not height_sampler:
+            return ground_y
+        if callable(height_sampler):
+            return height_sampler(x, z)
+        if hasattr(height_sampler, "height_at"):
+            return height_sampler.height_at(x, z)
+        return ground_y
 
-    if height_sampler is None:
-        sampler_fn = None
-    elif callable(height_sampler):
-        sampler_fn = height_sampler
-    elif hasattr(height_sampler, "height_at"):
-        sampler_fn = lambda x, z, _hs=height_sampler: _hs.height_at(x, z)
-    else:
-        sampler_fn = None
+    # Create segments around perimeter
+    def make_segments(x0, z0, x1, z1):
+        length = np.hypot(x1 - x0, z1 - z0)
+        if length <= 1e-6:
+            return []
+        n = max(1, int(np.ceil(length / seg_w)))
+        dx, dz = (x1 - x0) / n, (z1 - z0) / n
+        return [(x0 + i * dx, z0 + i * dz, x0 + (i + 1) * dx, z0 + (i + 1) * dz) for i in range(n)]
 
-    segments: list[tuple[float, float, float, float]] = []
-
-    def add_edge_constant_x_segments(x: float, z_start: float, z_end: float):
-        length = z_end - z_start
-        dir_sign = 1.0 if length >= 0 else -1.0
-        L = abs(length)
-        if L <= 1e-6:
-            return
-        n = max(1, int(np.ceil(L / seg_nominal_w)))
-        step = L / n
-        for i in range(n):
-            z0 = z_start + dir_sign * (i * step)
-            z1 = z_start + dir_sign * ((i + 1) * step)
-            segments.append((x, z0, x, z1))
-
-    def add_edge_constant_z_segments(z: float, x_start: float, x_end: float):
-        length = x_end - x_start
-        dir_sign = 1.0 if length >= 0 else -1.0
-        L = abs(length)
-        if L <= 1e-6:
-            return
-        n = max(1, int(np.ceil(L / seg_nominal_w)))
-        step = L / n
-        for i in range(n):
-            x0 = x_start + dir_sign * (i * step)
-            x1 = x_start + dir_sign * ((i + 1) * step)
-            segments.append((x0, z, x1, z))
-
-    add_edge_constant_x_segments(min_x, min_z, max_z)
-    add_edge_constant_x_segments(max_x, max_z, min_z)
-    add_edge_constant_z_segments(min_z, min_x, max_x)
-    add_edge_constant_z_segments(max_z, max_x, min_x)
+    segments = (
+        make_segments(min_x, min_z, min_x, max_z) +  # Left
+        make_segments(max_x, max_z, max_x, min_z) +  # Right  
+        make_segments(min_x, min_z, max_x, min_z) +  # Bottom
+        make_segments(max_x, max_z, min_x, max_z)    # Top
+    )
 
     if not segments:
         return []
 
-    verts_by_tex: dict[
-        int, list[tuple[float, float, float, float, float, float, float, float]]
-    ] = {t: [] for t in textures}
-
-    def add_panel_flat(verts_list: list, x0: float, z0: float, x1: float, z1: float):
-        y0_left = (
-            float(sampler_fn(x0, z0)) if sampler_fn is not None else float(ground_y)
-        )
-        y0_right = (
-            float(sampler_fn(x1, z1)) if sampler_fn is not None else float(ground_y)
-        )
-        y_top0 = y0_left + seg_h
-        y_top1 = y0_right + seg_h
-
-        verts_list.append((x0, y_top0, z0, r, g, b, 0.0, 1.0))
-        verts_list.append((x1, y_top1, z1, r, g, b, 1.0, 1.0))
-        verts_list.append((x1, y0_right, z1, r, g, b, 1.0, 0.0))
-        verts_list.append((x0, y_top0, z0, r, g, b, 0.0, 1.0))
-        verts_list.append((x1, y0_right, z1, r, g, b, 1.0, 0.0))
-        verts_list.append((x0, y0_left, z0, r, g, b, 0.0, 0.0))
-
-    def add_panel_wavey(verts_list: list, x0: float, z0: float, x1: float, z1: float):
-        dx = x1 - x0
-        dz = z1 - z0
-        L = float(np.hypot(dx, dz))
-        if L <= 1e-6:
-            return
-        if slices_per_segment is not None and slices_per_segment > 0:
-            n = slices_per_segment
-        else:
-            target_slice_len = max(seg_nominal_w / 4.0, 1.0)
-            n = max(2, int(np.ceil(L / target_slice_len)))
-
-        for i in range(n):
-            t0 = i / n
-            t1 = (i + 1) / n
-            sx0 = x0 + dx * t0
-            sz0 = z0 + dz * t0
-            sx1 = x0 + dx * t1
-            sz1 = z0 + dz * t1
-
-            s0 = L * t0
-            s1 = L * t1
-            off0 = wave_amp * float(np.sin(2.0 * np.pi * wave_freq * s0 + wave_phase))
-            off1 = wave_amp * float(np.sin(2.0 * np.pi * wave_freq * s1 + wave_phase))
-
-            y_bottom0 = (
-                float(sampler_fn(sx0, sz0))
-                if sampler_fn is not None
-                else float(ground_y)
-            )
-            y_bottom1 = (
-                float(sampler_fn(sx1, sz1))
-                if sampler_fn is not None
-                else float(ground_y)
-            )
-            y_top0 = y_bottom0 + seg_h + off0
-            y_top1 = y_bottom1 + seg_h + off1
-
-            u0 = t0
-            u1 = t1
-
-            verts_list.append((sx0, y_top0, sz0, r, g, b, u0, 1.0))
-            verts_list.append((sx1, y_top1, sz1, r, g, b, u1, 1.0))
-            verts_list.append((sx1, y_bottom1, sz1, r, g, b, u1, 0.0))
-            verts_list.append((sx0, y_top0, sz0, r, g, b, u0, 1.0))
-            verts_list.append((sx1, y_bottom1, sz1, r, g, b, u1, 0.0))
-            verts_list.append((sx0, y_bottom0, sz0, r, g, b, u0, 0.0))
+    # Generate vertices
+    verts_by_tex = {t: [] for t in textures}
+    r, g, b = color
 
     for x0, z0, x1, z1 in segments:
         tex = random.choice(textures)
-        if wave_amp > 0.0:
-            add_panel_wavey(verts_by_tex[tex], x0, z0, x1, z1)
+        y0, y1 = height_at(x0, z0), height_at(x1, z1)
+        
+        if wave_amp > 0:
+            # Wavy panels
+            dx, dz, length = x1 - x0, z1 - z0, np.hypot(x1 - x0, z1 - z0)
+            if length <= 1e-6:
+                continue
+            n = slices_per_segment or max(2, int(np.ceil(length / (seg_w / 4))))
+            
+            for i in range(n):
+                t0, t1 = i / n, (i + 1) / n
+                sx0, sz0 = x0 + dx * t0, z0 + dz * t0
+                sx1, sz1 = x0 + dx * t1, z0 + dz * t1
+                
+                wave0 = wave_amp * np.sin(2 * np.pi * wave_freq * length * t0 + wave_phase)
+                wave1 = wave_amp * np.sin(2 * np.pi * wave_freq * length * t1 + wave_phase)
+                
+                by0, by1 = height_at(sx0, sz0), height_at(sx1, sz1)
+                ty0, ty1 = by0 + seg_h + wave0, by1 + seg_h + wave1
+                
+                quad = [
+                    (sx0, ty0, sz0, r, g, b, t0, 1.0), (sx1, ty1, sz1, r, g, b, t1, 1.0), (sx1, by1, sz1, r, g, b, t1, 0.0),
+                    (sx0, ty0, sz0, r, g, b, t0, 1.0), (sx1, by1, sz1, r, g, b, t1, 0.0), (sx0, by0, sz0, r, g, b, t0, 0.0)
+                ]
+                verts_by_tex[tex].extend(quad)
         else:
-            add_panel_flat(verts_by_tex[tex], x0, z0, x1, z1)
+            # Flat panels
+            ty0, ty1 = y0 + seg_h, y1 + seg_h
+            quad = [
+                (x0, ty0, z0, r, g, b, 0.0, 1.0), (x1, ty1, z1, r, g, b, 1.0, 1.0), (x1, y1, z1, r, g, b, 1.0, 0.0),
+                (x0, ty0, z0, r, g, b, 0.0, 1.0), (x1, y1, z1, r, g, b, 1.0, 0.0), (x0, y0, z0, r, g, b, 0.0, 0.0)
+            ]
+            verts_by_tex[tex].extend(quad)
 
-    meshes: list[BatchedMesh] = []
+    # Create meshes
+    meshes = []
     for tex, verts in verts_by_tex.items():
         if not verts:
             continue
-        # Convert to numpy array for batch processing and potential lighting
+            
         vertex_data = np.array(verts, dtype=np.float32)
-
-        # Apply optional brightness/lighting modifiers (vectorized)
+        
+        # Apply brightness
         if brightness_modifiers:
-            print("test")
-            try:
-                N = vertex_data.shape[0]
-                brightness_factor = np.full(N, float(default_brightness), dtype=np.float32)
-                is_modified = np.zeros(N, dtype=bool)
-                coords = vertex_data[:, [0, 2]]  # x, z
-
-                # Mark vertices affected by any modifier
-                for modifier in brightness_modifiers:
-                    try:
-                        position, radius, brightness_value, fall_off = modifier
-                        center_x = position.x
-                        center_z = position.z
-                        dx = coords[:, 0] - center_x
-                        dz = coords[:, 1] - center_z
-                        distances = np.sqrt(dx * dx + dz * dz)
-                        within_radius = distances <= radius
-                        is_modified |= within_radius
-                    except (ValueError, AttributeError, IndexError) as e:
-                        print(f"Warning: Invalid brightness modifier {modifier}, skipping. Error: {e}")
-
-                brightness_factor[~is_modified] = float(default_brightness)
-
-                # Apply modifiers multiplicatively
-                for modifier in brightness_modifiers:
-                    try:
-                        position, radius, brightness_value, fall_off = modifier
-                        center_x = position.x
-                        center_z = position.z
-                        dx = coords[:, 0] - center_x
-                        dz = coords[:, 1] - center_z
-                        distances = np.sqrt(dx * dx + dz * dz)
-                        within_radius = distances <= radius
-
-                        # Normalized distance [0,1]
-                        norm = distances / np.maximum(radius, 1e-12)
-                        norm = np.clip(norm, 0.0, 1.0)
-                        attenuation = (1.0 - norm) ** np.maximum(fall_off, 0.0)
-
-                        if float(default_brightness) == 0.0:
-                            rel = float(brightness_value)
-                        else:
-                            rel = float(brightness_value) / float(default_brightness)
-                        modifier_effect = 1.0 + (rel - 1.0) * attenuation
-
-                        # Apply only to vertices inside radius
-                        brightness_factor[within_radius] *= modifier_effect[within_radius]
-                    except (ValueError, AttributeError, IndexError) as e:
-                        print(f"Warning: Invalid brightness modifier {modifier}, skipping. Error: {e}")
-
-                # Multiply RGB columns by brightness factor
-                vertex_data[:, 3:6] = vertex_data[:, 3:6] * brightness_factor[:, np.newaxis]
-            except Exception as e:
-                # Fallback: ensure we at least apply default brightness
-                print(f"Warning: failed to apply brightness modifiers: {e}")
-                vertex_data[:, 3:6] *= float(default_brightness)
+            coords = vertex_data[:, [0, 2]]
+            brightness = np.full(len(verts), default_brightness, dtype=np.float32)
+            
+            for mod in brightness_modifiers:
+                try:
+                    pos, radius, brightness_val, falloff = mod
+                    dx = coords[:, 0] - pos.x
+                    dz = coords[:, 1] - pos.z
+                    dist = np.sqrt(dx * dx + dz * dz)
+                    mask = dist <= radius
+                    
+                    if mask.any():
+                        atten = (1.0 - np.clip(dist[mask] / radius, 0, 1)) ** max(falloff, 0)
+                        factor = brightness_val / default_brightness if default_brightness else brightness_val
+                        brightness[mask] *= 1.0 + (factor - 1.0) * atten
+                except:
+                    pass
+            
+            vertex_data[:, 3:6] *= brightness[:, np.newaxis]
         else:
-            # No modifiers: apply default to all vertices
-            vertex_data[:, 3:6] *= float(default_brightness)
+            vertex_data[:, 3:6] *= default_brightness
 
         vbo = glGenBuffers(1)
         glBindBuffer(GL_ARRAY_BUFFER, vbo)
         glBufferData(GL_ARRAY_BUFFER, vertex_data.nbytes, vertex_data, GL_STATIC_DRAW)
-        meshes.append(
-            BatchedMesh(
-                vbo_vertices=vbo, vertex_count=vertex_data.shape[0], texture=tex
-            )
-        )
+        
+        meshes.append(BatchedMesh(vbo_vertices=vbo, vertex_count=len(verts), texture=tex))
 
     return meshes
