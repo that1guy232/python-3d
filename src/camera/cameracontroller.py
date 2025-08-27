@@ -106,15 +106,6 @@ class CameraController:
         If a frame delta `dt` is provided, normalize the raw per-frame deltas
         to a baseline 60Hz so mouse look feels consistent across varying FPS.
         """
-        # Normalize deltas to baseline frame time (1/60s) when dt available
-        if dt is not None and dt > 0.0:
-            baseline = 1.0 / 60.0
-            try:
-                scale = baseline / dt
-            except Exception:
-                scale = 1.0
-            dx *= scale
-            dy *= scale
 
         # Accept normalized (or raw) deltas
         self.rot_target_y -= dx * MOUSE_SENSITIVITY
@@ -150,7 +141,7 @@ class CameraController:
             self.camera.rotation.y += (
                 self.rot_target_y - self.camera.rotation.y
             ) * alpha
-        self.camera.update_rotation()
+        self.camera.update_rotation(dt)
 
         # Read input and handle movement
         keys = pygame.key.get_pressed()
@@ -180,20 +171,25 @@ class CameraController:
 
         moving = False
         if any_key_down:
+            # Determine if translation movement keys are pressed
             moving = (
                 keys[pygame.K_w]
                 or keys[pygame.K_a]
                 or keys[pygame.K_s]
                 or keys[pygame.K_d]
             )
-            if moving:
-                old_position = self.camera.position.copy()
-                # Perform movement. Let exceptions propagate rather than silently
-                # swallowing them; failures should be visible during development.
-                self.camera.move_camera(keys, speed, dt)
 
-                # Try to handle boundary and wall collisions using helper methods
-                # that reduce nested conditionals and make intent explicit.
+            # Always call move_camera when any relevant input is down so
+            # non-translation controls (e.g., Q/E manual height adjust) are
+            # processed even when the player isn't moving.
+            old_position = self.camera.position.copy()
+            # Perform movement/controls. Let exceptions propagate during dev.
+            self.camera.move_camera(keys, speed, dt)
+
+            # Only perform boundary/wall collision handling if we actually
+            # attempted a translation move (WASD). This avoids sliding when
+            # the user only adjusted height with Q/E.
+            if moving:
                 if self._attempt_boundary_slide(old_position):
                     # Boundary slide handled (including revert) — nothing more to do.
                     pass
