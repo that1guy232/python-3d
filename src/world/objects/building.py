@@ -23,7 +23,7 @@ class Building:
         self.shapes: list = []
         self._bbox: Optional[tuple[float, float, float, float]] = None
         self.target_height = target_height
-
+            
     def create_perimeter_walls(
         self,
         *,
@@ -34,27 +34,15 @@ class Building:
         base_y: Optional[float] = None,
         width: Optional[float] = None,
         depth: Optional[float] = None,
+        max_tile_width: float = 100.0,  # controls subdivision; default == no subdivision
     ) -> List[WallTile]:
         """Create a 4-wall rectangular (box) perimeter centered on the building.
 
-        Walls are positioned so their outer faces form the exact rectangle defined by width/depth.
-        Properly handles corner overlaps and z-fighting.
-
-        Parameters
-        - wall_height: full world-space height of each wall (meters)
-        - wall_thickness: thickness of walls (meters)
-        - texture / uv_repeat: forwarded to each `WallTile`
-        - base_y: world-space base Y for walls
-        - width, depth: optional full side lengths along X and Z (outer dimensions)
-
-        Returns a list of 4 `WallTile` instances (N, E, S, W) forming a closed box without overlaps.
+        Same semantics as your original function, but each side is subdivided
+        into tiles whose width does not exceed max_tile_width.
         """
         cx, cz = float(self.position.x), float(self.position.z)
-        # Determine base Y for walls. Priority:
-        # 1) explicit `base_y` argument
-        # 2) `self.target_height` if set
-        # 3) building position Y (makes placement intuitive when using
-        #    world coordinates or when the scene positions the building)
+
         if base_y is None:
             if self.target_height is not None:
                 base_y = float(self.target_height)
@@ -63,7 +51,6 @@ class Building:
         else:
             base_y = float(base_y)
 
-        # Determine outer footprint dimensions (use defaults if not provided)
         DEFAULT_SIDE = 100.0
         outer_x = float(width) if width is not None else DEFAULT_SIDE
         outer_z = float(depth) if depth is not None else DEFAULT_SIDE
@@ -72,71 +59,107 @@ class Building:
         half_z = outer_z / 2.0
 
         walls: List[WallTile] = []
-        # Normals: (nx, nz) for outward direction
+        # We'll keep per-side tile lists so we can remove the shortest side later.
+        sides_tiles: list[list[WallTile]] = []
+        side_spans: list[float] = []
+
         normals = [
-            (0.0, 1.0),  # North (positive Z)
-            (1.0, 0.0),  # East (positive X)
+            (0.0, 1.0),   # North (positive Z)
+            (1.0, 0.0),   # East (positive X)
             (0.0, -1.0),  # South (negative Z)
             (-1.0, 0.0),  # West (negative X)
         ]
 
         for nx, nz in normals:
+            # Default centers
             center_x = cx
             center_z = cz
 
-            if abs(nz) > 0.0:  # North/South walls (span along X axis)
-                # Position: move Z inward by half thickness
-                center_z = cz + nz * (half_z - wall_thickness / 2.0)
-                # CORRECTED:
-                #   width = thickness/2 (normal direction)
-                #   depth = full width/2 (span direction)
-                half_width = wall_thickness / 2.0
-                half_depth = half_x
-            else:  # East/West walls (span along Z axis)
-                # Position: move X inward by half thickness
-                center_x = cx + nx * (half_x - wall_thickness / 2.0)
-                # CORRECTED:
-                #   width = thickness/2 (normal direction)
-                #   depth = full depth/2 (span direction)
-                half_width = wall_thickness / 2.0
-                half_depth = half_z  # NOT reduced by thickness!
+            # thickness half (perpendicular half-extent)
+            half_width = wall_thickness / 2.0
 
-            theta = math.atan2(nz, nx)  # Corrected rotation order
+            if abs(nz) > 0.0:
+                # North/South: wall plane perpendicular to Z, span along X
+                center_z = cz + nz * (half_z - half_width)
+                span_half = half_x
+                span_axis = "x"
+            else:
+                # East/West: wall plane perpendicular to X, span along Z
+                center_x = cx + nx * (half_x - half_width)
+                span_half = half_z
+                span_axis = "z"
 
+            full_span = span_half * 2.0
+            # compute subdivision count
+            num_tiles = max(1, int(math.ceil(full_span / float(max_tile_width))))
+            tile_width = full_span / num_tiles
+            tile_half = tile_width / 2.0
+
+            theta = math.atan2(nz, nx)
             eps = max(1e-5, 0.01 * min(1.0, wall_thickness))
+
+            # nudge the whole wall slightly inward to avoid z-fighting (same as original)
             center_x -= nx * eps
             center_z -= nz * eps
 
-            tile = WallTile(
-                position=Vector3(center_x, base_y + wall_height * 0.5, center_z),
-                width=half_width,  # Now correctly set
-                height=wall_height * 0.5,
-                depth=half_depth,  # Now correctly set
-                texture=texture,
-                uv_repeat=uv_repeat,
-                thickness=wall_thickness,
-            )
-            tile.rotation = Vector3(0.0, theta, 0.0)
+            # span start (outer edge along span axis)
+            if span_axis == "x":
+                span_start = center_x - span_half
+            else:
+                span_start = center_z - span_half
 
-            walls.append(tile)
-            self.attach_shapes(
-                [tile]
-            )  # we still attach all shapes for the bounding box
+            this_side_tiles: list[WallTile] = []
+            for i in range(num_tiles):
+                center_along = span_start + (i + 0.5) * tile_width
+                if span_axis == "x":
+                    tx = center_along
+                    tz = center_z
+                    w = half_width          # half-thickness (X half is tile width? rotation handles it)
+                    d = tile_half           # half-span along X mapped to depth param
+                else:
+                    tx = center_x
+                    tz = center_along
+                    w = half_width
+                    d = tile_half
 
+                tile = WallTile(
+                    position=Vector3(tx, base_y + wall_height * 0.5, tz),
+                    width=w,
+                    height=wall_height * 0.5,
+                    depth=d,
+                    texture=texture,
+                    uv_repeat=uv_repeat,
+                    thickness=wall_thickness,
+                )
+                tile.rotation = Vector3(0.0, theta, 0.0)
+
+                this_side_tiles.append(tile)
+                walls.append(tile)
+                self.attach_shapes([tile])
+
+            sides_tiles.append(this_side_tiles)
+            side_spans.append(full_span)
+
+        # find shortest side (same behavior as your original code which removed the single shortest wall)
         shortest_id = None
         shortest_span = float("inf")
-        for idx, wall in enumerate(walls):
-            span = max(float(wall.width), float(wall.depth))
+        for idx, span in enumerate(side_spans):
             if span < shortest_span:
                 shortest_span = span
                 shortest_id = idx
 
+        # remove tiles that belong to the shortest side (if any)
         if shortest_id is not None:
-            # remove the single shortest wall
-            walls.pop(shortest_id)
+            for t in sides_tiles[shortest_id]:
+                # remove from walls list if present
+                try:
+                    walls.remove(t)
+                except ValueError:
+                    pass
+            # Note: attached shapes remain attached (same as original behavior).
+            # If you want to also detach them from `self.shapes` you'd need to do so here.
 
         return walls
-
     def attach_shapes(self, shapes: list) -> None:
         """Attach shape objects (Object3D-derived) to this building and
         update the cached bounding-box. Shapes should have a working
@@ -244,6 +267,43 @@ class Building:
         if min_y == float("inf"):
             return 0.0
         return float(min_y)
+
+    @property
+    def height(self) -> float:
+        """Return the building height in world units.
+
+        Priority:
+        - If an explicit override was set via the `height` setter, use that.
+        - Else if attached shapes provide vertices, return (max_y - min_y).
+        - Fallback to a sensible default (10.0).
+        """
+        # honor explicit override if present
+        if getattr(self, "_height_override", None) is not None:
+            return float(self._height_override)
+
+        min_y = float("inf")
+        max_y = float("-inf")
+        for s in self.shapes:
+            try:
+                verts = s.get_world_vertices() or []
+            except Exception:
+                continue
+            for v in verts:
+                if v.y < min_y:
+                    min_y = v.y
+                if v.y > max_y:
+                    max_y = v.y
+
+        if min_y == float("inf") or max_y == float("-inf") or max_y <= min_y:
+            # no usable geometry; return a practical default
+            return 10.0
+
+        return float(max_y - min_y)
+
+    @height.setter
+    def height(self, value: float) -> None:
+        """Allow callers to explicitly set/override the building height."""
+        self._height_override = float(value)
 
     def get_corners(self) -> tuple[list[Vector3], float]:
         """Return the four outer-corner world positions and the floor Y.

@@ -1,3 +1,4 @@
+import math
 from pygame.math import Vector3
 from core.object3d import Object3D
 from OpenGL.GL import (
@@ -123,58 +124,49 @@ class WallTile(Object3D):
             # Order: front(0..3), back(4..7)
             self.local_vertices = [f0, f1, f2, f3, b0, b1, b2, b3]
 
-    def draw_untextured(self):
-        """Draw the wall as an untextured colored quad (immediate mode)."""
-        self.draw()
 
-    def draw(self):
+    def draw(self, camera=None):
         """Immediate-mode draw. If self.texture is set, render textured; otherwise
         render a flat colored quad using face_colors.
         """
         world_verts = self.get_world_vertices()
         if not world_verts:
             return
+        
+        # FIXED: Use optimized camera brightness system with proper blending
+        vertex_brightness = []
+        for vert in world_verts:
+            if camera and hasattr(camera, 'get_brightness_at'):
+                # Use the optimized camera method that handles overlapping areas correctly
+                brightness = camera.get_brightness_at(vert)
+            else:
+                # Fallback to default brightness
+                brightness = getattr(camera, 'brightness_default', 0.0) if camera else 0.0
+            
+            vertex_brightness.append(float(brightness))
 
-        # For textured walls, use the registered texture pixel size to compute
-        # a sensible repeat so the texture tiles instead of stretching across
-        # large walls. If the caller provided an explicit non-default
-        # `uv_repeat` we keep it; otherwise compute from texture size.
         u_repeat, v_repeat = self.uv_repeat
         tex_size = get_texture_size(self.texture)
-
 
         if self.texture:
             glEnable(GL_TEXTURE_2D)
             glEnable(GL_BLEND)
-            # Enable alpha testing so fully transparent texture pixels are discarded
-            # and do not write to the depth buffer. This allows objects behind
-            # the wall to remain visible through transparent texels.
             glEnable(GL_ALPHA_TEST)
             glAlphaFunc(GL_GREATER, 0.01)
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
             glBindTexture(GL_TEXTURE_2D, self.texture)
-            # Ensure this texture uses repeat wrapping so uv_repeat tiles it.
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
-            # Use full white with full alpha so the texture's alpha is applied
-            glColor4f(1.0, 1.0, 1.0, 1.0)
-            # Draw each face; compute per-face UVs for side faces when the
-            # geometry was extruded.
             for face_idx, face in enumerate(self.faces):
-                # Determine world spans for this face to compute a sensible
-                # repeat if caller left uv_repeat at the default (1.0, 1.0).
                 if len(face) != 4:
                     continue
                 a, b, c, d = face
-                # Determine representative verts to compute spans
                 va = world_verts[a]
                 vb = world_verts[b]
                 vc = world_verts[c]
 
-                # Compute edge vectors in world space
                 e1 = vb - va
                 e2 = vc - vb
-                # approximate spans as lengths of two edges
                 span_u = e1.length()
                 span_v = e2.length()
 
@@ -192,13 +184,9 @@ class WallTile(Object3D):
                     (0.0, v_r),
                 ]
 
-                # If the wall is extruded, avoid stretching by sampling a thin
-                # strip from the front/back texture for the side/top/bottom faces
-                # so they visually continue the edge pixels instead of stretching
-                # the whole front texture across a thin face.
+
                 if self.thickness > 0.0 and tex_size:
                     tex_w, tex_h = tex_size
-                    # a small strip size in texture-space (one texel scaled by repeat)
                     strip_u = max(
                         1.0 / max(1.0, float(tex_w)) * u_repeat, 0.001 * u_repeat
                     )
@@ -206,10 +194,8 @@ class WallTile(Object3D):
                         1.0 / max(1.0, float(tex_h)) * v_repeat, 0.001 * v_repeat
                     )
 
-                    # Face ordering when extruded defined in __init__:
-                    # 0: front, 1: back, 2: right (+Z), 3: left (-Z), 4: top (+Y), 5: bottom (-Y)
+
                     if face_idx in (0, 1):
-                        # front/back: unchanged (back may be flipped by winding elsewhere)
                         face_uvs = [
                             (0.0, 0.0),
                             (u_r, 0.0),
@@ -217,8 +203,6 @@ class WallTile(Object3D):
                             (0.0, v_r),
                         ]
                     elif face_idx == 2:
-                        # right side: sample a thin vertical strip from the right
-                        # edge of the front texture and tile vertically across height
                         u_min = max(0.0, u_repeat - strip_u)
                         u_max = u_repeat
                         face_uvs = [
@@ -228,7 +212,6 @@ class WallTile(Object3D):
                             (u_min, v_r),
                         ]
                     elif face_idx == 3:
-                        # left side: sample a thin vertical strip from the left
                         u_min = 0.0
                         u_max = min(strip_u, u_repeat)
                         face_uvs = [
@@ -238,8 +221,6 @@ class WallTile(Object3D):
                             (u_min, v_r),
                         ]
                     elif face_idx == 4:
-                        # top: sample a thin horizontal strip from the top row of the
-                        # front texture and tile across the top face's span
                         v_min = max(0.0, v_r - strip_v)
                         v_max = v_r
                         face_uvs = [
@@ -249,7 +230,6 @@ class WallTile(Object3D):
                             (0.0, v_max),
                         ]
                     elif face_idx == 5:
-                        # bottom: sample a thin horizontal strip from the bottom
                         v_min = 0.0
                         v_max = min(strip_v, v_r)
                         face_uvs = [
@@ -263,6 +243,9 @@ class WallTile(Object3D):
                 for vi, idx in enumerate((a, b, c, d)):
                     uv = face_uvs[vi]
                     v = world_verts[idx]
+                    brightness = vertex_brightness[idx]
+                    brightness = max(0.0, min(1.0, brightness))
+                    glColor4f(brightness, brightness, brightness, 1.0)
                     glTexCoord2f(uv[0], uv[1])
                     glVertex3f(v.x, v.y, v.z)
                 glEnd()
@@ -270,25 +253,3 @@ class WallTile(Object3D):
             glDisable(GL_BLEND)
             glDisable(GL_ALPHA_TEST)
             glDisable(GL_TEXTURE_2D)
-        else:
-            # Untextured: use per-face color (RGB floats)
-            for face_idx, face in enumerate(self.faces):
-                a, b, c, d = face
-                color = (
-                    self.face_colors[face_idx]
-                    if face_idx < len(self.face_colors)
-                    else (
-                        1.0,
-                        1.0,
-                        1.0,
-                    )
-                )
-                # normalize if color appears in 0-255 range
-                if any(x > 2.0 for x in color):
-                    color = tuple(x / 255.0 for x in color)
-                glColor3f(*color)
-                glBegin(GL_QUADS)
-                for idx in (a, b, c, d):
-                    v = world_verts[idx]
-                    glVertex3f(v.x, v.y, v.z)
-                glEnd()

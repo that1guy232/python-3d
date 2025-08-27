@@ -16,7 +16,6 @@ from .ground_tile import GroundTile
 from .objects import WallTile, Road
 from .world_spawner import spawn_world_sprites
 from .world_hud import WorldHUD
-from .world_shade_overlay import WorldShadeOverlay
 from .world_collision import movement_blocked_by_wall
 
 __all__ = [

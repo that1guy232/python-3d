@@ -209,7 +209,7 @@ class Polygon(Object3D):
         return faces
     
 
-    def draw(self):
+    def draw(self, camera=None):
         """Draw the polygon with OpenGL immediate mode."""
         world_verts = self.get_world_vertices()
         if not world_verts:
@@ -228,7 +228,53 @@ class Polygon(Object3D):
             glBindTexture(GL_TEXTURE_2D, self.texture)
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
-            glColor4f(1.0, 1.0, 1.0, 1.0)
+
+            # Compute per-vertex brightness using camera's brightness areas
+            vertex_brightness = []
+            for vert in world_verts:
+                if not camera:
+                    vertex_brightness.append(0.0)
+                    continue
+
+                # Start from the camera baseline so modifiers multiply around it
+                baseline = getattr(camera, "brightness_default", 0.0)
+                brightness_factor = baseline
+
+                # Apply multiplicative brightness areas if present
+                areas = getattr(camera, "brightness_areas", [])
+                if areas:
+                    for area in areas:
+                        try:
+                            center = area.get("center")
+                            radius = float(area.get("radius", 0.0))
+                            value = float(area.get("value", baseline))
+                            fall_off = float(area.get("falloff", 1.0))
+                        except Exception:
+                            # ignore malformed areas
+                            continue
+
+                        dx = vert.x - center.x
+                        dz = vert.z - center.z
+                        dist = (dx * dx + dz * dz) ** 0.5
+                        if dist > radius:
+                            continue
+
+                        norm = dist / max(radius, 1e-12)
+                        norm = max(0.0, min(1.0, norm))
+                        attenuation = (1.0 - norm) ** max(fall_off, 0.0)
+
+                        if baseline == 0.0:
+                            rel = value
+                        else:
+                            rel = value / baseline
+
+                        modifier_effect = 1.0 + (rel - 1.0) * attenuation
+                        brightness_factor *= modifier_effect
+
+                if brightness_factor < baseline:
+                    brightness_factor = baseline
+
+                vertex_brightness.append(float(brightness_factor))
 
             # Compute a single UV map for the entire polygon so the texture
             # spans the whole front/back faces instead of per-triangle.
@@ -252,10 +298,10 @@ class Polygon(Object3D):
             for face_idx, face in enumerate(self.faces):
                 if len(face) != 4:
                     # Front/back faces (triangles after triangulation)
-                    self._draw_polygon_face_textured(world_verts, face, uv_map)
+                    self._draw_polygon_face_textured(world_verts, face, uv_map, vertex_brightness)
                 else:
                     # Side faces (quads)
-                    self._draw_quad_face_textured(world_verts, face, side_idx)
+                    self._draw_quad_face_textured(world_verts, face, side_idx, vertex_brightness)
                     side_idx += 1
 
             glDisable(GL_BLEND)
@@ -271,6 +317,7 @@ class Polygon(Object3D):
                     if hasattr(self, 'face_colors') and face_idx < len(self.face_colors)
                     else (1.0, 1.0, 1.0)
                 )
+                
 
                 # Normalize color if in 0-255 range
                 if any(x > 2.0 for x in color):
@@ -302,7 +349,7 @@ class Polygon(Object3D):
             glVertex3f(v.x, v.y, v.z)
         glEnd()
 
-    def _draw_polygon_face_textured(self, world_verts, face, uv_map):
+    def _draw_polygon_face_textured(self, world_verts, face, uv_map, vertex_brightness=None):
         """Draw a triangulated polygon face using a global uv_map.
 
         uv_map is a list of per-vertex (u,v) coordinates computed from the
@@ -321,11 +368,16 @@ class Polygon(Object3D):
                 # Back-face uses offset indices; map back to front vertex
                 u, v_coord = uv_map[idx - len(uv_map)]
 
+            # Apply per-vertex brightness if provided
+            if vertex_brightness and idx < len(vertex_brightness):
+                b = vertex_brightness[idx]
+                glColor4f(b, b, b, 1.0)
+
             glTexCoord2f(u, v_coord)
             glVertex3f(v.x, v.y, v.z)
         glEnd()
 
-    def _draw_quad_face_textured(self, world_verts, face, side_idx):
+    def _draw_quad_face_textured(self, world_verts, face, side_idx, vertex_brightness=None):
         """Draw a textured quad face (side face) with edge-sampling for thin faces."""
         if len(face) != 4:
             return
@@ -380,6 +432,11 @@ class Polygon(Object3D):
         for vi, idx in enumerate(face):
             uv = face_uvs[vi]
             v = world_verts[idx]
+            # Apply per-vertex brightness if provided
+            if vertex_brightness and idx < len(vertex_brightness):
+                b = vertex_brightness[idx]
+                glColor4f(b, b, b, 1.0)
+
             glTexCoord2f(uv[0], uv[1])
             glVertex3f(v.x, v.y, v.z)
         glEnd()

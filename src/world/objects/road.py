@@ -67,6 +67,9 @@ class Road:
     height_fn: Optional[Callable[[float, float], float]] = None
     elevation: float = 0.02  # lift above terrain to avoid z-fighting
     segment_length: float = 20.0  # segment length for tessellation when conforming
+    # Brightness modifiers: list of (position(Vector3), radius, brightness_value, fall_off)
+    brightness_modifiers: list[callable] | None = None
+    default_brightness: float = 1.0
 
     # Internal
     _mesh: BatchedMesh | None = None
@@ -89,6 +92,8 @@ class Road:
         height_sampler: Optional[object] = None,
         elevation: float = 0.02,
         segment_length: float = 20.0,
+        brightness_modifiers: Optional[list[callable]] = None,
+        default_brightness: float = 1.0,
     ) -> None:
         # Derive start/end from points if provided with at least 2 entries
         if (start is None or end is None) and points is not None and len(points) >= 2:
@@ -116,6 +121,9 @@ class Road:
         self.texture = int(texture)
         self.v_tiles = float(v_tiles) if v_tiles is not None else 1.0
         self.color = color
+        # Brightness modifiers (same contract as TexturedGroundGridBuilder)
+        self.brightness_modifiers = brightness_modifiers or []
+        self.default_brightness = float(default_brightness)
         # Prefer explicit height_fn, else use sampler.height_at if provided
         if height_fn is not None:
             self.height_fn = height_fn
@@ -291,6 +299,56 @@ class Road:
                     verts.append((lx1, y_l1, lz1, r, g, b, u_l, v_len1))
 
         vertex_data = np.array(verts, dtype=np.float32)
+        # Apply brightness modifiers to vertex colors (r,g,b at cols 3..5)
+        if len(vertex_data) > 0:
+            if self.brightness_modifiers:
+                N = len(vertex_data)
+                brightness_factor = np.full(N, self.default_brightness, dtype=np.float32)
+                is_modified = np.zeros(N, dtype=bool)
+                vertex_world_coords = vertex_data[:, [0, 2]]
+
+                # 1) mark vertices affected by any modifier
+                for modifier in self.brightness_modifiers:
+                    try:
+                        position, radius, brightness_value, fall_off = modifier
+                        center_x = position.x
+                        center_z = position.z
+                        dx = vertex_world_coords[:, 0] - center_x
+                        dz = vertex_world_coords[:, 1] - center_z
+                        distances = np.sqrt(dx * dx + dz * dz)
+                        within = distances <= radius
+                        is_modified |= within
+                    except (ValueError, AttributeError, IndexError) as e:
+                        print(f"Warning: Invalid modifier {modifier}, skipping. Error: {e}")
+
+                brightness_factor[~is_modified] = self.default_brightness
+
+                # 2) apply modifiers multiplicatively
+                for modifier in self.brightness_modifiers:
+                    try:
+                        position, radius, brightness_value, fall_off = modifier
+                        center_x = position.x
+                        center_z = position.z
+                        dx = vertex_world_coords[:, 0] - center_x
+                        dz = vertex_world_coords[:, 1] - center_z
+                        distances = np.sqrt(dx * dx + dz * dz)
+                        within = distances <= radius
+                        norm = distances / np.maximum(radius, 1e-12)
+                        norm = np.clip(norm, 0.0, 1.0)
+                        attenuation = (1.0 - norm) ** np.maximum(fall_off, 0.0)
+                        if self.default_brightness == 0:
+                            rel = brightness_value
+                        else:
+                            rel = brightness_value / self.default_brightness
+                        modifier_effect = 1.0 + (rel - 1.0) * attenuation
+                        brightness_factor[within] *= modifier_effect[within]
+                    except (ValueError, AttributeError, IndexError) as e:
+                        print(f"Warning: Invalid modifier {modifier}, skipping. Error: {e}")
+                        continue
+
+                vertex_data[:, 3:6] = vertex_data[:, 3:6] * brightness_factor[:, np.newaxis]
+            else:
+                vertex_data[:, 3:6] *= self.default_brightness
         vbo = glGenBuffers(1)
         glBindBuffer(GL_ARRAY_BUFFER, vbo)
         glBufferData(GL_ARRAY_BUFFER, vertex_data.nbytes, vertex_data, GL_STATIC_DRAW)
@@ -341,3 +399,22 @@ class Road:
         dx = x - cx
         dz = z - cz
         return (dx * dx + dz * dz) <= half_w2
+
+    # Bounding helpers used by world spawning and scene culling.
+    def get_bounding_box(self) -> tuple[float, float, float, float]:
+        """Return conservative XZ extents as (min_x, max_x, min_z, max_z).
+
+        This is used by the scene/spawner for distance culling and
+        pre-filtering. We include the road width as padding so the box
+        fully contains the visible geometry.
+        """
+        half_w = self.width * 0.5
+        min_x = min(self.start.x, self.end.x) - half_w
+        max_x = max(self.start.x, self.end.x) + half_w
+        min_z = min(self.start.z, self.end.z) - half_w
+        max_z = max(self.start.z, self.end.z) + half_w
+        return (min_x, max_x, min_z, max_z)
+
+    # alias used by some spawn helpers
+    def get_bounds(self) -> tuple[float, float, float, float]:
+        return self.get_bounding_box()

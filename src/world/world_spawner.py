@@ -79,9 +79,18 @@ def _prefilter_collision_objects(avoid_objects, x_center, z_center, max_spawn_x,
         
         # Check if object has bounding box method
         if hasattr(obj, 'get_bounds'):
+            # Expect get_bounds() -> (min_x, max_x, min_z, max_z)
             obj_bounds = obj.get_bounds()
-            if (obj_bounds[0] <= max_x and obj_bounds[2] >= min_x and 
-                obj_bounds[1] <= max_z and obj_bounds[3] >= min_z):
+            try:
+                o_min_x, o_max_x, o_min_z, o_max_z = obj_bounds
+            except Exception:
+                # Malformed bounds: conservatively include
+                filtered.append(obj)
+                continue
+
+            # Overlap test: object's X interval intersects spawn X interval AND
+            # object's Z interval intersects spawn Z interval.
+            if (o_min_x <= max_x and o_max_x >= min_x and o_min_z <= max_z and o_max_z >= min_z):
                 filtered.append(obj)
         else:
             # Conservative: include all objects without bounds info

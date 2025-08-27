@@ -9,7 +9,6 @@ import random
 from pygame.math import Vector3
 from world.sprite import WorldSprite
 from ui.compass_overlay import CompassOverlay
-from world.world_shade_overlay import WorldShadeOverlay
 from textures.texture_utils import load_texture
 from textures.resoucepath import (
     COMPASS_BASE_TEXTURE_PATH,
@@ -23,7 +22,6 @@ class WorldHUD:
     def __init__(self, scene) -> None:
         self.scene = scene
         # World darkening overlay
-        self._world_shade = WorldShadeOverlay(opacity=0.05, color=(0, 0, 0))
 
         # Load compass textures (safe if missing)
         base_tex = load_texture(COMPASS_BASE_TEXTURE_PATH)
@@ -112,9 +110,3 @@ class WorldHUD:
         except Exception:
             pass
 
-    def draw_overlay(self) -> None:
-        # Draw 2D overlay elements (world shade)
-        try:
-            self._world_shade.draw()
-        except Exception:
-            pass

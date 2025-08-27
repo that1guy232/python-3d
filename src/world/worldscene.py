@@ -34,7 +34,9 @@ from world.decal_batch import DecalBatch
 from textures.texture_utils import (
     load_texture,
     create_shadow_texture,
+    create_polygon_shadow_texture,
     create_test_texture,
+    get_texture_size,
 )
 from textures.texture_manager import load_world_textures
 from textures.resoucepath import *
@@ -69,6 +71,7 @@ from OpenGL.GL import (
     GL_PROJECTION,
     GL_MODELVIEW,
     glFogfv,
+    glClearColor
 )
 from OpenGL.GLU import gluPerspective
 
@@ -107,14 +110,53 @@ class WorldScene(Scene):
         area_offset: Optional[Tuple[float, float]] = None,
         spawn_limits: Optional[Tuple[float, float]] = None,
     ) -> None:
-
+        spacing = grid_tile_size + grid_gap
+        half = grid_tile_size / 2.0
+        self.world_center = Vector3(
+            (grid_count * spacing) / 2, 0, (grid_count * spacing) / 2
+        )
         print("World Scene Initialized")
 
         # If no camera provided (default), create one suitable for this scene
         cam = camera or Camera(
             position=Vector3(STARTING_POS), width=WIDTH, height=HEIGHT, fov=FOV
         )
+        
+        self.camera = cam
 
+        # Generate 100 random brightness areas (lights) placed within the playable ground
+        # Use the grid spacing and tile half to avoid placing lights exactly on the outer edge.
+        brightness_modifiers = []
+        min_x = 0 + half
+        max_x = grid_count * spacing - half
+        min_z = 0 + half
+        max_z = grid_count * spacing - half
+        brightness_modifiers.append((
+                Vector3(self.world_center.x, 0, self.world_center.z),
+                1000,
+                0.8,
+                4,
+            ))
+        for i in range(55):
+            # Use a non-uniform float distribution so spawns concentrate toward the center
+            # triangular(low, high, mode) returns a float; mode is center to bias inward
+            cx = random.triangular(min_x, max_x, (min_x + max_x) * 0.5) + 1e-6
+            cz = random.triangular(min_z, max_z, (min_z + max_z) * 0.5) + 1e-6
+            radius = random.uniform(150.0, 250.0)
+            brightness_modifiers.append((
+                Vector3(cx, 0, cz),
+                radius,
+                random.uniform(0.5, 0.8),
+                4,
+            ))
+
+        # Register all generated brightness areas with the camera
+        for bm in brightness_modifiers:
+            try:
+                self.camera.add_brightness_area(*bm)
+            except Exception:
+                # Non-fatal: ignore any bad area
+                pass
         super().__init__(camera=cam)
 
         # Create head-bob instance directly and wire up footstep handler
@@ -173,12 +215,8 @@ class WorldScene(Scene):
 
         self._camera_controller = CameraController(self, self.camera, rot_smooth_hz=4)
 
-        spacing = grid_tile_size + grid_gap
-        half = grid_tile_size / 2.0
-        # calculate using gap, tile_size and grid_count
-        self.world_center = Vector3(
-            (grid_count * spacing) / 2, 0, (grid_count * spacing) / 2
-        )
+
+
         self.ground_bounds = (
             0 + half,
             grid_count * spacing - half,
@@ -195,10 +233,12 @@ class WorldScene(Scene):
         self.sky = SkyRenderer()
         self._hud = WorldHUD(self)
 
-        # Fake sun direction (unit vector pointing from sun toward the world).
-        # Change this to move the sun: X,Z controls azimuth, Y should be negative
-        # for a sun above the scene. We'll normalize it below.
-        _sd = Vector3(0.2, -1.0, 0.3)
+
+
+
+        self.sun_pos = Vector3(self.world_center.x + 10000.0, 20000.0, self.world_center.z + 3000.0)
+        # Compute sun_direction pointing FROM sun -> world_center
+        _sd = Vector3(self.world_center.x, 0.0, self.world_center.z) - self.sun_pos
         sd_len = _sd.length()
         if sd_len != 0:
             _sd = _sd / sd_len
@@ -228,16 +268,17 @@ class WorldScene(Scene):
         building = Building(position=building_pos)
         self.buildings.append(building)
 
-        builder = TexturedGroundGridBuilder(
+        self.builder = TexturedGroundGridBuilder(
             count=grid_count,
             tile_size=grid_tile_size,
             gap=grid_gap,
             texture=ground_tex,
-            height_modifiers=None,
+            brightness_modifiers=brightness_modifiers,
+            default_brightness=self.camera.brightness_default
         )
 
         print("Generating ground mesh...")
-        self.ground_mesh = builder.build()
+        self.ground_mesh = self.builder.build()
 
         # If ground mesh exposes a height sampler, use it for precise ground queries
         self._ground_height_sampler = getattr(self.ground_mesh, "height_sampler", None)
@@ -329,7 +370,7 @@ class WorldScene(Scene):
         arrow_points = [(0, 10), (40, 10), (40, -10), (60, 20), (40, 50), (40, 30), (0, 30)]
         showcase_polygons.append(
             Polygon(
-                position=Vector3(self.world_center.x - 200, self.ground_height_at(self.world_center.x - 200, self.world_center.z) + off_ground, self.world_center.z),
+                position=Vector3(self.world_center.x - 200, self.ground_height_at(self.world_center.x - 200, self.world_center.z) + off_ground, self.world_center.z - 200),
                 points_2d=arrow_points,
                 thickness=tri_thickness,
                 texture=wall_tex,
@@ -342,7 +383,7 @@ class WorldScene(Scene):
         l_points = [(0, 0), (60, 0), (60, 20), (20, 20), (20, 80), (0, 80)]
         showcase_polygons.append(
             Polygon(
-                position=Vector3(self.world_center.x + 200, self.ground_height_at(self.world_center.x + 200, self.world_center.z) + off_ground, self.world_center.z),
+                position=Vector3(self.world_center.x + 230, self.ground_height_at(self.world_center.x + 230, self.world_center.z) + off_ground, self.world_center.z),
                 points_2d=l_points,
                 thickness=tri_thickness,
                 texture=wall_tex,
@@ -395,6 +436,8 @@ class WorldScene(Scene):
             height_sampler=self._ground_height_sampler,
             elevation=3.0,
             segment_length=8.0,
+            brightness_modifiers=brightness_modifiers,
+            default_brightness=self.camera.brightness_default,
         )
 
         print("Road created.")
@@ -482,6 +525,8 @@ class WorldScene(Scene):
             wave_amp=0.5,
             wave_freq=0.02,
             wave_phase=0.3,
+            brightness_modifiers=brightness_modifiers,
+            default_brightness=self.camera.brightness_default,
         )
         print(f"Built {len(fence_meshes)} fence segments.")
 
@@ -489,15 +534,16 @@ class WorldScene(Scene):
 
         self.static_meshes = meshes + trees + grasses + rocks + [self.road]
 
-        # --- Spawn procedural shadow decals under vegetation -------------
-        # Build a reusable high‑quality blob shadow texture (linear filtered)
+
         shadow_texture = create_shadow_texture(
             width_px=256,
             height_px=256,
-            max_alpha=0.26,
-            inner_ratio=0.22,
-            outer_ratio=0.96,
-            falloff_exp=2.2,
+            max_alpha=0.8,
+            inner_ratio=0.02,  
+            outer_ratio=1,  
+            falloff_exp=0.55,   
+            pixelated=True,
+            pixel_scale=16
         )
         print("Created shadow texture.")
 
@@ -505,32 +551,153 @@ class WorldScene(Scene):
         rng = random.Random()
 
         def make_decal_for_sprite(s: WorldSprite) -> Decal:
-            # Base oval shaped shadow scaled to sprite width/height in world units
             w, h = s.size
-            # Slightly smaller than footprint, with variability
-            size_w = max(14.0, min(200.0, float(w) * rng.uniform(0.35, 0.55)))
-            size_h = max(10.0, min(160.0, float(h) * rng.uniform(0.25, 0.45)))
-            rot = rng.uniform(0.0, 360.0)
-            return Decal(
-                center=Vector3(s.position.x, 0.0, s.position.z),
-                size=(size_w, size_h),
-                texture=shadow_texture,
-                rotation_deg=rot,
-                subdiv_u=8,
-                subdiv_v=8,
-                height_fn=self.ground_height_at,
-                elevation=random.uniform(0.15, 0.35),
-                uv_repeat=(1.0, 1.0),
-                color=(1.0, 1.0, 1.0),
-                build_vbo=True,  # we'll batch into one VBO per texture
-            )
+            size_w = w * rng.uniform(0.45, 0.75)
+            size_h = h * rng.uniform(0.45, 0.75)
 
-        for s in trees:
-            decals.append(make_decal_for_sprite(s))
-        for s in grasses:
-            decals.append(make_decal_for_sprite(s))
-        for s in rocks:
-            decals.append(make_decal_for_sprite(s))
+            sun = getattr(self, "sun_direction", None)
+            final_w, final_h = size_w, size_h
+            offset_x, offset_z = 0.0, 0.0  # Start with no offset
+            base_y = self.ground_height_at(s.position.x, s.position.z)
+            center_y = base_y
+
+            if sun is not None:
+                proj_x = float(sun.x)
+                proj_z = float(sun.z)
+                proj_len = math.hypot(proj_x, proj_z)
+                
+                if proj_len >= 1e-6:
+                    vert = abs(float(sun.y))
+                    elong = 1.0 / max(0.05, vert)
+                    elong = max(1.0, min(elong, 12.0))
+
+                    seed = max(size_w, size_h)
+                    major = max(14.0, min(400.0, seed * (0.9 + elong * 0.6)))
+                    minor = max(8.0, min(200.0, min(size_w, size_h) * 0.9))
+                    final_w, final_h = major, minor
+
+                    # Calculate direction AWAY FROM SUN (critical fix)
+                    dir_x = -proj_x / proj_len  # Invert X component
+                    dir_z = -proj_z / proj_len  # Invert Z component
+                    
+                    # Position the NEAR EDGE of the shadow under the tree
+                    # So center = tree_position + (direction_away * major/2)
+                    offset_x = (-dir_x * (major * 0.45)) 
+                    offset_z = -dir_z * (major * 0.5) # half the texture width
+
+                    # Calculate rotation (keep your existing rotation logic)
+                    angle_rad = math.atan2(-proj_x, -proj_z)
+                    angle_deg = math.degrees(angle_rad)
+                    rot = (angle_deg + 90.0) % 360.0
+
+                base_y = self.ground_height_at(
+                        s.position.x + offset_x, 
+                        s.position.z + offset_z
+                )
+                center_y = base_y
+
+                return Decal(
+                        center=Vector3(s.position.x + offset_x, center_y, s.position.z + offset_z),
+                        size=(final_w, final_h),
+                        texture=shadow_texture,
+                        rotation_deg=rot,
+                        subdiv_u=8,
+                        subdiv_v=8,
+                        height_fn=self.ground_height_at,
+                        elevation=1,
+                        uv_repeat=(1.0, 1.0),
+                        color=(1.0, 1.0, 1.0),
+                        build_vbo=True,  # we'll batch into one VBO per texture
+                )
+
+        # for s in trees:
+        #     decals.append(make_decal_for_sprite(s))
+
+        # Create a polygon-shaped shadow for the showcase arrow polygon
+        try:
+            # arrow_points lives in this scope (defined earlier near showcase_polygons)
+            if 'arrow_points' in locals():
+                # Generate a polygon shadow texture sized reasonably
+                poly_tex = create_polygon_shadow_texture(
+                    arrow_points,
+                    width_px=256,
+                    height_px=256,
+                    max_alpha=0.9,
+                    inner_ratio=0.02,
+                    outer_ratio=0.02,
+                    falloff_exp=2,
+                    pixelated=False,
+                )
+
+                # Compute world position matching the showcase polygon placement
+                poly_world_x = self.world_center.x - 200
+                poly_world_z = self.world_center.z
+
+                # Compute polygon bbox to choose a decal size (use original polygon units)
+                xs = [p[0] for p in arrow_points]
+                ys = [p[1] for p in arrow_points]
+                poly_w = max(xs) - min(xs) if xs else 32
+                poly_h = max(ys) - min(ys) if ys else 32
+
+                # Default placement values
+                offset_x, offset_z = 0.0, 0.0
+                rot = 0.0
+                final_w, final_h = max(1.0, poly_w), max(1.0, poly_h)
+
+                # Use sun direction to offset/elongate the shadow similarly to tree decals
+                sun = getattr(self, 'sun_direction', None)
+                if sun is not None:
+                    proj_x = float(sun.x)
+                    proj_z = float(sun.z)
+                    proj_len = math.hypot(proj_x, proj_z)
+                    if proj_len >= 1e-6:
+                        vert = abs(float(sun.y))
+                        elong = 1.0 / max(0.05, vert)
+                        elong = max(1.0, min(elong, 12.0))
+
+                        seed = max(poly_w, poly_h)
+                        major = max(14.0, min(400.0, seed * (0.9 + elong * 0.6)))
+                        minor = max(8.0, min(200.0, min(poly_w, poly_h) * 0.9))
+                        final_w, final_h = major, minor
+
+                        # direction AWAY FROM SUN
+                        dir_x = -proj_x / proj_len
+                        dir_z = -proj_z / proj_len
+
+                        # Position the NEAR EDGE of the shadow under the polygon so it sits away from the caster
+                        # place the shadow to the LEFT of the arrow by using the left-perpendicular
+                        perp_left_x = -dir_z
+                        perp_left_z = dir_x
+                        offset_x = perp_left_x * (major * 0.45)
+                        offset_z = perp_left_z * (major * 0.5)
+
+                        # Rotation to align elongated shadow with sun direction
+                        angle_rad = math.atan2(-proj_x, -proj_z)
+                        angle_deg = math.degrees(angle_rad)
+                        rot = (angle_deg + 270.0) % 360.0
+
+                # Sample ground height at the offset center
+                poly_world_y = self.ground_height_at(poly_world_x + offset_x, poly_world_z + offset_z)
+
+                # Create decal centered at polygon world position (offset away from caster like tree shadows)
+                poly_decal = Decal(
+                    center=Vector3(poly_world_x + offset_x, poly_world_y, poly_world_z + offset_z),
+                    size=(final_w, final_h),
+                    texture=poly_tex,
+                    rotation_deg=rot,
+                    subdiv_u=8,
+                    subdiv_v=8,
+                    height_fn=self.ground_height_at,
+                    elevation=1,
+                    uv_repeat=(1.0, 1.0),
+                    color=(1.0, 1.0, 1.0),
+                    build_vbo=True,
+                )
+
+                decals.append(poly_decal)
+        except Exception:
+            # Non-critical; don't crash scene init if decal creation fails
+            pass
 
         print(f"Created {len(decals)} shadow decals.")
 
@@ -541,9 +708,15 @@ class WorldScene(Scene):
         self.static_meshes.append(decal_batch)
         print("World scene initialization complete.")
 
+        # Initialize overlay holes from buildings
+        try:
+            self._shade_overlay.set_holes_from_buildings(self.buildings)
+        except Exception:
+            pass
+
     def draw_sky(self) -> None:  # pragma: no cover - visual
         """Draw sky elements (delegated from engine)."""
-        self.sky.draw(self.camera)
+        self.sky.draw(self.camera, getattr(self, "sun_direction", None))
 
     def draw(self):  # pragma: no cover - visual
         # Ensure fog is enabled for world rendering
@@ -551,23 +724,12 @@ class WorldScene(Scene):
         self.ground_mesh.draw()
 
         glEnable(GL_FOG)
+      
         super().draw()
-        # Draw HUD elements (held item + compass)
-        try:
-            self._hud.draw()
-        except Exception:
-            pass
+    
+        self._hud.draw()
 
-    def draw_overlay(self) -> None:  # pragma: no cover - visual
-        """Draw 2D overlay elements that belong to the world scene.
 
-        Currently draws the world shade to slightly darken the world.
-        """
-        # Delegate overlay drawing to HUD
-        try:
-            self._hud.draw_overlay()
-        except Exception:
-            pass
 
     # Convenience for engine movement clamp
     def contains_horizontal(self, pos: Vector3) -> bool:
@@ -640,7 +802,9 @@ class WorldScene(Scene):
             self.camera.position.x, self.camera.position.z
         )
 
-        target_cam_y = ground_y_here + CAMERA_GROUND_OFFSET
+        # Include manual camera height offset (adjustable via Q/E on Camera).
+        manual_offset = getattr(self.camera, "manual_height_offset", 0.0)
+        target_cam_y = ground_y_here + CAMERA_GROUND_OFFSET + float(manual_offset)
         if CAMERA_FOLLOW_SMOOTH_HZ <= 0 or dt <= 0:
             self.camera.position.y = target_cam_y
         else:
@@ -649,6 +813,7 @@ class WorldScene(Scene):
 
         self._hud.update(dt)
         self._headbob.update(moving=moving, sprinting=sprinting, dt=dt)
+
 
         super().update(dt)
 
@@ -660,10 +825,19 @@ class WorldScene(Scene):
     def render(
         self, *, show_hud: bool = True, text=None, fps: float | None = None
     ):  # pragma: no cover - visual
+        
 
-        # Clear
+
+        brightness = self.camera.brightness_default
+
+        rgba = LIGHT_BLUE
+        rgba = [c * brightness for c in rgba]
+        # set alpha to 1
+        rgba[3] = 0
+
+        glFogfv(GL_FOG_COLOR, rgba)
+        glClearColor(*rgba)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-
         # Projection
         glMatrixMode(GL_PROJECTION)
         glLoadIdentity()
@@ -692,11 +866,15 @@ class WorldScene(Scene):
             -self.camera.position.x, -self.camera.position.y, -self.camera.position.z
         )
 
+
+
+
         # World
         self.draw()
 
-        # Overlay
-        self.draw_overlay()
+
+
+
 
         # Optional HUD (delegated from Engine)
         if show_hud and text is not None and fps is not None:

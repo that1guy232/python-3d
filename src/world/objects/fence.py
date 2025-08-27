@@ -30,6 +30,8 @@ def build_textured_fence_ring(
     wave_freq: float = 0.02,
     wave_phase: float = 0.0,
     slices_per_segment: int | None = None,
+    brightness_modifiers: list[callable] = None,
+    default_brightness: float = 1.0,
 ) -> list[BatchedMesh]:
     if not textures:
         return []
@@ -171,7 +173,71 @@ def build_textured_fence_ring(
     for tex, verts in verts_by_tex.items():
         if not verts:
             continue
+        # Convert to numpy array for batch processing and potential lighting
         vertex_data = np.array(verts, dtype=np.float32)
+
+        # Apply optional brightness/lighting modifiers (vectorized)
+        if brightness_modifiers:
+            print("test")
+            try:
+                N = vertex_data.shape[0]
+                brightness_factor = np.full(N, float(default_brightness), dtype=np.float32)
+                is_modified = np.zeros(N, dtype=bool)
+                coords = vertex_data[:, [0, 2]]  # x, z
+
+                # Mark vertices affected by any modifier
+                for modifier in brightness_modifiers:
+                    try:
+                        position, radius, brightness_value, fall_off = modifier
+                        center_x = position.x
+                        center_z = position.z
+                        dx = coords[:, 0] - center_x
+                        dz = coords[:, 1] - center_z
+                        distances = np.sqrt(dx * dx + dz * dz)
+                        within_radius = distances <= radius
+                        is_modified |= within_radius
+                    except (ValueError, AttributeError, IndexError) as e:
+                        print(f"Warning: Invalid brightness modifier {modifier}, skipping. Error: {e}")
+
+                brightness_factor[~is_modified] = float(default_brightness)
+
+                # Apply modifiers multiplicatively
+                for modifier in brightness_modifiers:
+                    try:
+                        position, radius, brightness_value, fall_off = modifier
+                        center_x = position.x
+                        center_z = position.z
+                        dx = coords[:, 0] - center_x
+                        dz = coords[:, 1] - center_z
+                        distances = np.sqrt(dx * dx + dz * dz)
+                        within_radius = distances <= radius
+
+                        # Normalized distance [0,1]
+                        norm = distances / np.maximum(radius, 1e-12)
+                        norm = np.clip(norm, 0.0, 1.0)
+                        attenuation = (1.0 - norm) ** np.maximum(fall_off, 0.0)
+
+                        if float(default_brightness) == 0.0:
+                            rel = float(brightness_value)
+                        else:
+                            rel = float(brightness_value) / float(default_brightness)
+                        modifier_effect = 1.0 + (rel - 1.0) * attenuation
+
+                        # Apply only to vertices inside radius
+                        brightness_factor[within_radius] *= modifier_effect[within_radius]
+                    except (ValueError, AttributeError, IndexError) as e:
+                        print(f"Warning: Invalid brightness modifier {modifier}, skipping. Error: {e}")
+
+                # Multiply RGB columns by brightness factor
+                vertex_data[:, 3:6] = vertex_data[:, 3:6] * brightness_factor[:, np.newaxis]
+            except Exception as e:
+                # Fallback: ensure we at least apply default brightness
+                print(f"Warning: failed to apply brightness modifiers: {e}")
+                vertex_data[:, 3:6] *= float(default_brightness)
+        else:
+            # No modifiers: apply default to all vertices
+            vertex_data[:, 3:6] *= float(default_brightness)
+
         vbo = glGenBuffers(1)
         glBindBuffer(GL_ARRAY_BUFFER, vbo)
         glBufferData(GL_ARRAY_BUFFER, vertex_data.nbytes, vertex_data, GL_STATIC_DRAW)
