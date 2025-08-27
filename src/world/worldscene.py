@@ -119,7 +119,7 @@ class WorldScene(Scene):
 
         # If no camera provided (default), create one suitable for this scene
         cam = camera or Camera(
-            position=Vector3(STARTING_POS), width=WIDTH, height=HEIGHT, fov=FOV
+            position=Vector3(STARTING_POS), width=WIDTH, height=HEIGHT, fov=FOV, default_brightness=0.1
         )
         
         self.camera = cam
@@ -134,7 +134,7 @@ class WorldScene(Scene):
         brightness_modifiers.append((
                 Vector3(self.world_center.x, 0, self.world_center.z),
                 1000,
-                0.8,
+                1,
                 4,
             ))
         for i in range(55):
@@ -610,94 +610,9 @@ class WorldScene(Scene):
                         build_vbo=True,  # we'll batch into one VBO per texture
                 )
 
-        # for s in trees:
-        #     decals.append(make_decal_for_sprite(s))
+        for s in trees:
+            decals.append(make_decal_for_sprite(s))
 
-        # Create a polygon-shaped shadow for the showcase arrow polygon
-        try:
-            # arrow_points lives in this scope (defined earlier near showcase_polygons)
-            if 'arrow_points' in locals():
-                # Generate a polygon shadow texture sized reasonably
-                poly_tex = create_polygon_shadow_texture(
-                    arrow_points,
-                    width_px=256,
-                    height_px=256,
-                    max_alpha=0.9,
-                    inner_ratio=0.02,
-                    outer_ratio=0.02,
-                    falloff_exp=2,
-                    pixelated=False,
-                )
-
-                # Compute world position matching the showcase polygon placement
-                poly_world_x = self.world_center.x - 200
-                poly_world_z = self.world_center.z
-
-                # Compute polygon bbox to choose a decal size (use original polygon units)
-                xs = [p[0] for p in arrow_points]
-                ys = [p[1] for p in arrow_points]
-                poly_w = max(xs) - min(xs) if xs else 32
-                poly_h = max(ys) - min(ys) if ys else 32
-
-                # Default placement values
-                offset_x, offset_z = 0.0, 0.0
-                rot = 0.0
-                final_w, final_h = max(1.0, poly_w), max(1.0, poly_h)
-
-                # Use sun direction to offset/elongate the shadow similarly to tree decals
-                sun = getattr(self, 'sun_direction', None)
-                if sun is not None:
-                    proj_x = float(sun.x)
-                    proj_z = float(sun.z)
-                    proj_len = math.hypot(proj_x, proj_z)
-                    if proj_len >= 1e-6:
-                        vert = abs(float(sun.y))
-                        elong = 1.0 / max(0.05, vert)
-                        elong = max(1.0, min(elong, 12.0))
-
-                        seed = max(poly_w, poly_h)
-                        major = max(14.0, min(400.0, seed * (0.9 + elong * 0.6)))
-                        minor = max(8.0, min(200.0, min(poly_w, poly_h) * 0.9))
-                        final_w, final_h = major, minor
-
-                        # direction AWAY FROM SUN
-                        dir_x = -proj_x / proj_len
-                        dir_z = -proj_z / proj_len
-
-                        # Position the NEAR EDGE of the shadow under the polygon so it sits away from the caster
-                        # place the shadow to the LEFT of the arrow by using the left-perpendicular
-                        perp_left_x = -dir_z
-                        perp_left_z = dir_x
-                        offset_x = perp_left_x * (major * 0.45)
-                        offset_z = perp_left_z * (major * 0.5)
-
-                        # Rotation to align elongated shadow with sun direction
-                        angle_rad = math.atan2(-proj_x, -proj_z)
-                        angle_deg = math.degrees(angle_rad)
-                        rot = (angle_deg + 270.0) % 360.0
-
-                # Sample ground height at the offset center
-                poly_world_y = self.ground_height_at(poly_world_x + offset_x, poly_world_z + offset_z)
-
-                # Create decal centered at polygon world position (offset away from caster like tree shadows)
-                poly_decal = Decal(
-                    center=Vector3(poly_world_x + offset_x, poly_world_y, poly_world_z + offset_z),
-                    size=(final_w, final_h),
-                    texture=poly_tex,
-                    rotation_deg=rot,
-                    subdiv_u=8,
-                    subdiv_v=8,
-                    height_fn=self.ground_height_at,
-                    elevation=1,
-                    uv_repeat=(1.0, 1.0),
-                    color=(1.0, 1.0, 1.0),
-                    build_vbo=True,
-                )
-
-                decals.append(poly_decal)
-        except Exception:
-            # Non-critical; don't crash scene init if decal creation fails
-            pass
 
         print(f"Created {len(decals)} shadow decals.")
 
