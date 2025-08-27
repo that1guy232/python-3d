@@ -6,7 +6,7 @@ import pygame
 
 
 class Camera:
-    def __init__(self, position=None, rotation=None, width=800, height=600, fov=75):
+    def __init__(self, position=None, rotation=None, width=800, height=600, fov=75, default_brightness=0.1):
         # keep external API types the same (pygame.Vector3)
         self.position = position or Vector3(0, 0, -300)
         self.rotation = rotation or Vector3(0, 0, 0)  # pitch (x), yaw (y), roll (z)
@@ -17,7 +17,7 @@ class Camera:
         # If no areas are defined, brightness defaults to `brightness_default` (0.0).
         # Access the current camera brightness with the `brightness` property below.
         self.brightness_areas = []
-        self.brightness_default = 0.025
+        self.brightness_default = default_brightness
 
         # FOV scale (same formula you used)
         self._fov_scale = (height / 2) / math.tan(math.radians(fov / 2))
@@ -366,12 +366,12 @@ class Camera:
         
 
 
-        # if keys[pygame.K_q]:
-        #     delta = self.height_adjust_speed * dt
-        #     self.manual_height_offset += delta
-        # if keys[pygame.K_e]:
-        #     delta = self.height_adjust_speed * dt
-        #     self.manual_height_offset -= delta
+        if keys[pygame.K_q]:
+            delta = self.height_adjust_speed * dt
+            self.manual_height_offset += delta
+        if keys[pygame.K_e]:
+            delta = self.height_adjust_speed * dt
+            self.manual_height_offset -= delta
 
         return self.position
 
