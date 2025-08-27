@@ -61,7 +61,7 @@ class Engine:
         glClearColor(*LIGHT_BLUE)
 
         # Active scene (owns camera & input)
-        self.scene = WorldScene(spawn_limits=(2490, 2490))
+        self.scene = WorldScene()
 
         pygame.mouse.set_visible(False)
         pygame.event.set_grab(True)
