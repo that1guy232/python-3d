@@ -11,9 +11,7 @@ import ctypes
 import math
 import numpy as np
 from OpenGL.GL import (
-    glGenBuffers,
     glBindBuffer,
-    glBufferData,
     glEnableClientState,
     glVertexPointer,
     glColorPointer,
@@ -24,7 +22,6 @@ from OpenGL.GL import (
     glEnable,
     glDisable,
     GL_ARRAY_BUFFER,
-    GL_STATIC_DRAW,
     GL_FLOAT,
     GL_TRIANGLES,
     GL_VERTEX_ARRAY,
@@ -34,7 +31,13 @@ from OpenGL.GL import (
     GL_BLEND,
     GL_SRC_ALPHA,
     GL_ONE_MINUS_SRC_ALPHA,
-)
+    glBlendFunc,
+    glTexEnvi,
+    GL_TEXTURE_ENV_MODE,
+    GL_MODULATE,
+    GL_TEXTURE_ENV
+    )
+
 
 
 @dataclass
@@ -44,112 +47,67 @@ class BatchedMesh:
     texture: int | None = None
     height_sampler: Optional[object] = None
 
-    # Optional runtime data populated by builders that allows regenerating
-    # the vertex buffer when the underlying height grid changes. These
-    # attributes are set by the ground grid builder when creating a ground
-    # mesh.
-    _tile_vertex_array: Optional[np.ndarray] = None
-    _count: Optional[int] = None
-    _spacing: Optional[float] = None
-    _half: Optional[float] = None
-
-    def draw_untextured(self):
-        if self.vertex_count == 0:
-            return
-        glBindBuffer(GL_ARRAY_BUFFER, self.vbo_vertices)
-        stride = 6 * 4
-        glEnableClientState(GL_VERTEX_ARRAY)
-        glVertexPointer(3, GL_FLOAT, stride, None)
-        glEnableClientState(GL_COLOR_ARRAY)
-        glColorPointer(3, GL_FLOAT, stride, ctypes.c_void_p(12))
-        glDrawArrays(GL_TRIANGLES, 0, self.vertex_count)
-        glDisableClientState(GL_COLOR_ARRAY)
-        glDisableClientState(GL_VERTEX_ARRAY)
 
     def draw(self):
         if self.vertex_count == 0:
             return
-
+            
+        import time
+        start_draw = time.perf_counter()
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo_vertices)
-
+    
         if self.texture is not None:
-            stride = 8 * 4
+            # Vertex format: [x, y, z, r, g, b, u, v] = 8 floats per vertex
+            stride = 8 * 4  # 8 floats * 4 bytes per float = 32 bytes per vertex
+            
+            # Enable vertex arrays
             glEnableClientState(GL_VERTEX_ARRAY)
-            glVertexPointer(3, GL_FLOAT, stride, None)
+            glVertexPointer(3, GL_FLOAT, stride, None)  # Position at offset 0
+            
             glEnableClientState(GL_COLOR_ARRAY)
-            glColorPointer(3, GL_FLOAT, stride, ctypes.c_void_p(12))
+            glColorPointer(3, GL_FLOAT, stride, ctypes.c_void_p(3 * 4))  # Color at offset 3 floats (12 bytes)
+            
             glEnableClientState(GL_TEXTURE_COORD_ARRAY)
-            glTexCoordPointer(2, GL_FLOAT, stride, ctypes.c_void_p(24))
+            glTexCoordPointer(2, GL_FLOAT, stride, ctypes.c_void_p(6 * 4))  # UV at offset 6 floats (24 bytes)
 
+            # Enable texturing and blending
             glEnable(GL_TEXTURE_2D)
             glEnable(GL_BLEND)
-            from OpenGL.GL import glBlendFunc
-
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+            glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE)
             glBindTexture(GL_TEXTURE_2D, self.texture)
 
+            # Draw the mesh
             glDrawArrays(GL_TRIANGLES, 0, self.vertex_count)
 
+            # Clean up
             glDisable(GL_BLEND)
             glDisable(GL_TEXTURE_2D)
             glDisableClientState(GL_TEXTURE_COORD_ARRAY)
             glDisableClientState(GL_COLOR_ARRAY)
             glDisableClientState(GL_VERTEX_ARRAY)
         else:
-            self.draw_untextured()
+            # Handle non-textured case (if needed)
+            stride = 6 * 4  # Position (3) + Color (3) = 6 floats
+            
+            glEnableClientState(GL_VERTEX_ARRAY)
+            glVertexPointer(3, GL_FLOAT, stride, None)
+            
+            glEnableClientState(GL_COLOR_ARRAY)
+            glColorPointer(3, GL_FLOAT, stride, ctypes.c_void_p(3 * 4))
+            
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+            
+            glDrawArrays(GL_TRIANGLES, 0, self.vertex_count)
+            
+            glDisable(GL_BLEND)
+            glDisableClientState(GL_COLOR_ARRAY)
+            glDisableClientState(GL_VERTEX_ARRAY)
 
-    # --- Runtime editing helpers ---------------------------------
-
-    def update_vertex_buffer_from_heights(self):
-        """Rebuild the VBO from the stored tile template and the mesh's
-        height sampler. This lets callers modify the sampler._heights array
-        (or the sampler itself) and then refresh the GPU vertex buffer.
-
-        If the builder did not attach the required metadata this becomes
-        a no-op.
-        """
-        if self._tile_vertex_array is None or self._count is None:
-            return
-
-        tile_vertex_array = self._tile_vertex_array
-        count = int(self._count)
-        spacing = float(self._spacing)
-        half = float(self._half)
-        hs = self.height_sampler
-
-        vertices = []
-        for gx in range(count):
-            for gz in range(count):
-                tx = gx * spacing
-                tz = gz * spacing
-                translated = tile_vertex_array.copy()
-                translated[:, 0] += tx
-                translated[:, 2] += tz
-
-                # Fill Y from height sampler for each vertex
-                for i in range(len(translated)):
-                    x = float(translated[i, 0])
-                    z = float(translated[i, 2])
-                    try:
-                        translated[i, 1] = float(hs.height_at(x, z))
-                    except Exception:
-                        # Fallback to current value if sampler fails
-                        pass
-
-                vertices.append(translated)
-
-        if not vertices:
-            empty = np.zeros((0, 8), dtype=np.float32)
-            glBindBuffer(GL_ARRAY_BUFFER, self.vbo_vertices)
-            glBufferData(GL_ARRAY_BUFFER, empty.nbytes, empty, GL_STATIC_DRAW)
-            self.vertex_count = 0
-            return
-
-        vertex_data = np.vstack(vertices)
-        glBindBuffer(GL_ARRAY_BUFFER, self.vbo_vertices)
-        glBufferData(GL_ARRAY_BUFFER, vertex_data.nbytes, vertex_data, GL_STATIC_DRAW)
-        self.vertex_count = int(vertex_data.shape[0])
-
+        end_draw = time.perf_counter()
+        draw_duration = end_draw - start_draw
+        print(f"Mesh draw time: {draw_duration:.6f} seconds")
 
 class GroundHeightSampler:
     __slots__ = ("_count", "_spacing", "_w", "_heights")
