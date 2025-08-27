@@ -54,3 +54,5 @@ COMPASS_BASE_TEXTURE_PATH: str = TEXTURES_PATH + "items/compass_base.png"
 COMPASS_NEEDLE_TEXTURE_PATH: str = TEXTURES_PATH + "items/compass_needle.png"
 
 SHADOW_TEXTURE_PATH: str = TEXTURES_PATH + "shadow.png"
+
+LIGHT_TEXTURE_PATH: str = TEXTURES_PATH + "light.png"

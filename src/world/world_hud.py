@@ -14,6 +14,7 @@ from textures.resoucepath import (
     COMPASS_BASE_TEXTURE_PATH,
     COMPASS_NEEDLE_TEXTURE_PATH,
     SWORD_TEXTURE_PATH,
+    LIGHT_TEXTURE_PATH
 )
 from config import HEADBOB_ENABLED
 
@@ -49,10 +50,20 @@ class WorldHUD:
         sword_pos = Vector3(1, -1, -5)
         self.sword = WorldSprite(
             position=sword_pos,
-            size=(2, 2),
+            size=(4, 4),
             camera=self.scene.camera,
             texture=sword_tex,
         )
+
+        self.test_light = WorldSprite(
+            position=Vector3(0, 0, 0),
+            size=(10, 10),
+            camera=self.scene.camera,
+            texture=load_texture(LIGHT_TEXTURE_PATH),
+            color=(1.0, 1.0, 1.0),
+        )
+        # Visible only when looking down; initial false
+        self._test_light_visible = True
 
     def update(self, dt: float) -> None:
         # Place sword and compass using scene's helper view_space_position
@@ -73,7 +84,7 @@ class WorldHUD:
             off_x = off_x * 0.75
             self.sword.position += Vector3(+off_x, +off_y, 0)
             self._compass.position += Vector3(+off_x * 1, +off_y * 1, 0)
-
+       
         # Apply mouse-look sway from scene's sway controller (if present)
         try:
             sc = getattr(self.scene, "_sway_controller", None)
@@ -98,6 +109,13 @@ class WorldHUD:
         except Exception:
             # If camera axes or sway not present, skip sway
             pass
+        
+        cam_pos = self.scene.camera.position
+        ground_y = self.scene.ground_height_at(cam_pos.x, cam_pos.z)
+        cx = cam_pos.x
+        cz = cam_pos.z
+        elevation = 5
+        self.test_light.position = Vector3(cx, ground_y + elevation, cz)
 
     def draw(self) -> None:
         # Draw held item and compass (world-space sprites with pitch effect)
@@ -110,3 +128,4 @@ class WorldHUD:
         except Exception:
             pass
 
+        self.test_light.draw(pitch_effect=True)
