@@ -51,9 +51,7 @@ class BatchedMesh:
     def draw(self):
         if self.vertex_count == 0:
             return
-            
-        import time
-        start_draw = time.perf_counter()
+
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo_vertices)
     
         if self.texture is not None:
@@ -104,10 +102,6 @@ class BatchedMesh:
             glDisable(GL_BLEND)
             glDisableClientState(GL_COLOR_ARRAY)
             glDisableClientState(GL_VERTEX_ARRAY)
-
-        end_draw = time.perf_counter()
-        draw_duration = end_draw - start_draw
-        print(f"Mesh draw time: {draw_duration:.6f} seconds")
 
 class GroundHeightSampler:
     __slots__ = ("_count", "_spacing", "_w", "_heights")
