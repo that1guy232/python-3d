@@ -76,23 +76,6 @@ from OpenGL.GL import (
 from OpenGL.GLU import gluPerspective
 
 
-# It will be a sprite on the screen floating acting as if in the player hands
-# class WorldSprite:
-#     position: Vector3
-#     size: tuple[float, float]
-#     texture: int
-#     camera: any  # expects Camera with _right and _forward vectors updated via update_rotation()
-#     color: tuple[float, float, float] = (1.0, 1.0, 1.0)
-class test_sword(WorldSprite):
-    # it needs it's supers size, pos, cam & texture
-    def __init__(
-        self, position: Vector3, size: Tuple[float, float], camera: Camera, texture: int
-    ):
-        self.position = position
-        self.size = size
-        self.camera = camera
-        self.texture = texture
-        super().__init__(position=position, size=size, camera=camera, texture=texture)
 
 
 class WorldScene(Scene):
@@ -121,7 +104,7 @@ class WorldScene(Scene):
         cam = camera or Camera(
             position=Vector3(STARTING_POS), width=WIDTH, height=HEIGHT, fov=FOV, default_brightness=0.1
         )
-        
+
         self.camera = cam
 
         # Generate 100 random brightness areas (lights) placed within the playable ground
@@ -639,7 +622,8 @@ class WorldScene(Scene):
         self.ground_mesh.draw()
 
         glEnable(GL_FOG)
-      
+
+
         super().draw()
     
         self._hud.draw()
