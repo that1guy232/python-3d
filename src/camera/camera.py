@@ -11,8 +11,7 @@ class Camera:
         self.position = position or Vector3(0, 0, -300)
         self.rotation = rotation or Vector3(0, 0, 0)  # pitch (x), yaw (y), roll (z)
         self.speed = 5
-        self.world_up = Vector3(0, 1, 0)
-        
+
         # Area-based brightness: a list of circular areas (center, radius, value).
         # If no areas are defined, brightness defaults to `brightness_default` (0.0).
         # Access the current camera brightness with the `brightness` property below.
@@ -27,10 +26,9 @@ class Camera:
         self._yaw_sin = 0.0
         self._pitch_cos = 1.0
         self._pitch_sin = 0.0
-        self._forward = Vector3(0, 0, -1)
-        self._right = Vector3(1, 0, 0)
-        self._ground_forward = -Vector3(0, 0, -1)
 
+
+        
         # NumPy rotation matrix (world -> camera)
         self._R = np.eye(3, dtype=np.float64)
 
@@ -158,16 +156,6 @@ class Camera:
             total_contribution = sum(ca["contribution"] for ca in contributing_areas)
             total_brightness = self.brightness_default + total_contribution
             
-            # Alternative Method 2: Screen blending (more natural light blending)
-            # Uncomment this block instead if you prefer screen blending:
-            # 
-            # brightness_factor = 1.0
-            # for ca in contributing_areas:
-            #     # Convert to relative brightness multiplier
-            #     relative_brightness = ca["contribution"] / self.brightness_default if self.brightness_default > 0 else ca["contribution"]
-            #     # Screen blend: result = 1 - (1-a) * (1-b)
-            #     brightness_factor = 1.0 - (1.0 - brightness_factor) * (1.0 - relative_brightness)
-            # total_brightness = self.brightness_default * brightness_factor
 
         # Cache the result with all the data we computed
         best_area = max(contributing_areas, key=lambda x: x["contribution"])["area"] if contributing_areas else None
@@ -284,6 +272,7 @@ class Camera:
         """Convenience property: brightness at the camera's current position."""
         return self.get_brightness_at(self.position)
 
+
     def update_rotation(self, dt):
         """Precompute trig, direction vectors (Vector3) and rotation matrix (numpy)."""
         cp = math.cos(self.rotation.x)
@@ -298,14 +287,12 @@ class Camera:
 
         # Right vector (matches your previous expression)
         self._right = Vector3(self._yaw_cos, 0, -self._yaw_sin)
-
         # Full forward vector (with vertical component when pitched)
         self._forward = Vector3(
             -self._pitch_cos * self._yaw_sin,
             self._pitch_sin,
             -self._pitch_cos * self._yaw_cos,
         )
-
         # Ground forward (horizontal component only — keep same formula you used)
         self._ground_forward = -Vector3(-self._yaw_sin, 0, -self._yaw_cos)
 
@@ -322,33 +309,7 @@ class Camera:
         # world -> camera matrix: pitch * yaw (so application is R @ vector)
         self._R = Rx @ Ry
 
-    def transform_point(self, point):
-        """
-        Drop-in replacement for your original single-point transform.
-        Accepts a pygame.Vector3 `point`. Returns (int_x, int_y) or None for clipped.
-        Uses the precomputed numpy rotation matrix for speed/clarity.
-        """
-        # translate into camera-relative coordinates (world -> camera via matrix)
-        rel = np.array(
-            [
-                point.x - self.position.x,
-                point.y - self.position.y,
-                point.z - self.position.z,
-            ],
-            dtype=np.float64,
-        )
 
-        # apply rotation matrix (yaw then pitch)
-        cam = self._R @ rel  # cam[0]=x_cam, cam[1]=y_cam, cam[2]=z_cam
-
-        z = cam[2]
-        if z <= 1e-4:
-            return None
-
-        factor = self._fov_scale / z
-        screen_x = int(cam[0] * factor + WIDTH // 2)
-        screen_y = int(HEIGHT // 2 - cam[1] * factor)
-        return (screen_x, screen_y)
 
     def move_camera(self, keys, speed, dt):
         """Movement using precomputed direction vectors (keeps same calls/semantics)."""
@@ -374,18 +335,3 @@ class Camera:
             self.manual_height_offset -= delta
 
         return self.position
-
-    def is_visible(self, obj):
-        # as long as 1 vertex is in front of the near plane, the object is visible
-        for v in obj.get_world_vertices():
-            if self.is_point_visible(v):
-                return True
-        return False
-
-    def is_point_visible(self, point):
-        point = self.transform_point(point)
-        if point is None:
-            return False
-        # Check if the point is within the screen bounds
-        x, y = point
-        return True
