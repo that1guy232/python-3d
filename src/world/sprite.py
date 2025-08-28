@@ -29,15 +29,6 @@ from OpenGL.GL import (
 from config import WIDTH, HEIGHT, VIEWDISTANCE
 
 
-def _clamp01(v: float) -> float:
-    """Clamp a float to [0.0, 1.0]."""
-    if v < 0.0:
-        return 0.0
-    if v > 1.0:
-        return 1.0
-    return v
-
-
 # Internal helpers for billboard math
 _EPS = 1e-6
 _EPS2 = _EPS * _EPS
@@ -45,6 +36,7 @@ _EPS2 = _EPS * _EPS
 
 def _flatten_xz(v: Vector3) -> Vector3:
     return Vector3(v.x, 0.0, v.z)
+
 
 
 def _length_sq(v: Vector3) -> float:
@@ -61,51 +53,46 @@ def _safe_normalize(v: Vector3) -> Vector3 | None:
     return v.normalize()
 
 
-def _billboard_axes(
-    camera, pitch_effect: bool, world_up: Vector3
-) -> tuple[Vector3, Vector3] | None:
-    """Compute right/up axes for a billboard.
 
-    - pitch_effect=True: spherical billboard (tilts with camera pitch)
-    - pitch_effect=False: cylindrical billboard (up locked to world_up)
-    Returns (right, up) or None if degenerate.
-    """
-    forward = getattr(camera, "_forward", None)
-    right = getattr(camera, "_right", None)
-    if forward is None or right is None:
-        return None
-
-    if pitch_effect:
-        r = _safe_normalize(right)
-        f = _safe_normalize(forward)
-        if r is None or f is None:
-            return None
-        up = r.cross(f)
-        if _length_sq(up) <= _EPS2:
-            up = world_up
-        else:
-            up = up.normalize()
-        return r, up
-    else:
-        # Cylindrical: only yaw-align, keep up locked to world
-        r_flat = _flatten_xz(right)
-        if _length_sq(r_flat) <= _EPS2:
-            f_flat = _flatten_xz(forward)
-            if _length_sq(f_flat) <= _EPS2:
-                return None
-            r_flat = world_up.cross(f_flat)
-        r = r_flat.normalize()
-        up = world_up
-        return r, up
-
-
+from core.consts import *
 @dataclass
 class WorldSprite:
+    
     position: Vector3
     size: tuple[float, float]
     texture: int
     camera: any  # expects Camera with _right and _forward vectors updated via update_rotation()
     color: tuple[float, float, float] = (1.0, 1.0, 1.0)
+    
+    @property
+    def faces(self):
+        return [[0, 1, 2, 3]]
+
+    
+
+    def _billboard_axes(self,camera, pitch_effect: bool) -> tuple[Vector3, Vector3] | None:
+        """Compute right/up axes for a billboard."""
+        right = getattr(camera, "_right", RIGHT)
+        forward = getattr(camera, "_forward", FORWARD)
+        if pitch_effect:
+            r = right.normalize() if right.length_squared() > _EPS2 else None
+            f = forward.normalize() if forward.length_squared() > _EPS2 else None
+            if not r or not f:
+                return None
+            up = r.cross(f)
+            up = up.normalize() if up.length_squared() > _EPS2 else WORLD_UP
+            return r, up
+        else:
+            r_flat = Vector3(right.x, 0.0, right.z)
+            if r_flat.length_squared() <= _EPS2:
+                f_flat = Vector3(forward.x, 0.0, forward.z)
+                if f_flat.length_squared() <= _EPS2:
+                    return None
+                r_flat = WORLD_UP.cross(f_flat)
+            r = r_flat.normalize()
+            return r, WORLD_UP
+
+
 
     def draw_untextured(self):  # keep interface parity
         self.draw()
@@ -114,12 +101,7 @@ class WorldSprite:
         if not self.texture:
             return
         
-        # Compute billboard axes
-        # - If pitch_effect: use full camera pitch (spherical billboard)
-        # - Else: lock to world up (cylindrical billboard)
-        world_up = Vector3(0.0, 1.0, 0.0)
-
-        axes = _billboard_axes(self.camera, pitch_effect, world_up)
+        axes = self._billboard_axes(self.camera, pitch_effect)
         if not axes:
             return
         right, up = axes
@@ -158,14 +140,32 @@ class WorldSprite:
 
         glDisable(GL_BLEND)
         glDisable(GL_TEXTURE_2D)
-        
+
+    def get_world_vertices(self):
+        #print("Getting world vertices for", self)
+        axes = self._billboard_axes(self.camera, pitch_effect=False)
+        if not axes:
+            return None
+        right, up = axes
+
+        w, h = self.size
+        hw, hh = w * 0.5, h * 0.5
+
+        # Four corners in world space (counter-clockwise)
+        center = self.position
+        tl = center - right * hw + up * hh
+        tr = center + right * hw + up * hh
+        br = center + right * hw - up * hh
+        bl = center - right * hw - up * hh
+
+        return [tl, tr, br, bl]
+
 def draw_sprites_batched(
     sprites: list["WorldSprite"],
     camera,
     ground_height_fn=None,
 ) -> None:
     """Optimized minimal-change batched renderer that keeps glBegin/quads but reduces Python overhead."""
-
     if not sprites:
         return
 
@@ -282,13 +282,19 @@ def draw_sprites_batched(
         if abs(x_cam) > (half_h + hw_cull + side_extra) or abs(y_cam) > (half_v + hh_cull):
             continue
 
+
         append_vis((depth, tex, s))
 
     if not visible_sprites:
         return
 
+    
+
     # back-to-front sort
     visible_sprites.sort(key=lambda x: x[0], reverse=True)
+    
+
+    
 
     # Group by texture
     batches = []
@@ -336,7 +342,6 @@ def draw_sprites_batched(
             r = cr * brightness
             g = cg * brightness
             b = cb * brightness
-            # clamp - faster inline than calling _clamp01 thrice
             if r < 0.0:
                 r = 0.0
             elif r > 1.0:
@@ -396,3 +401,6 @@ def draw_sprites_batched(
     glDisable_local(GL_TEXTURE_2D)
     glDisable_local(GL_BLEND)
     glDepthMask_local(True)
+
+
+

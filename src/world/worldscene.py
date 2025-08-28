@@ -73,12 +73,13 @@ from OpenGL.GL import (
     GL_PROJECTION,
     GL_MODELVIEW,
     glFogfv,
-    glClearColor
+    glClearColor,
+    
 )
+
+# let s add gluPerspective
+
 from OpenGL.GLU import gluPerspective
-
-
-
 
 class WorldScene(Scene):
 
@@ -89,15 +90,18 @@ class WorldScene(Scene):
         grid_count: int = 200,
         grid_tile_size: int = 25,
         grid_gap: int = 0,
-        tree_count: int = 2000,
-        grass_count: int = 1000,
-        rock_count: int = 1000,
+        tree_count: int = 1500,
+        grass_count: int = 750,
+        rock_count: int = 750,
     ) -> None:
+                #init super
+        super().__init__()
         spacing = grid_tile_size + grid_gap
         half = grid_tile_size / 2.0
         self.world_center = Vector3(
             (grid_count * spacing) / 2, 0, (grid_count * spacing) / 2
         )
+
         print("World Scene Initialized")
 
         # If no camera provided (default), create one suitable for this scene
@@ -109,7 +113,6 @@ class WorldScene(Scene):
         start_time = time.perf_counter()
         self._setup_brightness_areas(grid_count, spacing, half)
         self.log_timing("Setting up brightness areas", start_time, time.perf_counter())
-        super().__init__(camera=cam)
 
         start_time = time.perf_counter()
         self._setup_controllers()
@@ -129,7 +132,11 @@ class WorldScene(Scene):
         start_time = time.perf_counter()
         self._create_world_objects(grid_count, spacing, half, grid_tile_size, grid_gap, tree_count, grass_count, rock_count)
         self.log_timing("Creating world objects", start_time, time.perf_counter())
+
+
         print("World scene initialization complete.")
+
+
 
     def _setup_brightness_areas(self, grid_count: int, spacing: float, half: float) -> None:
         brightness_modifiers = []
@@ -276,7 +283,6 @@ class WorldScene(Scene):
         self.log_timing("Generating ground mesh", start_time, time.perf_counter())
 
         start_time = time.perf_counter()
-        meshes = []
         wall_tex = load_texture(WALL1_TEXTURE_PATH)
 
         for b in self.buildings:
@@ -290,7 +296,7 @@ class WorldScene(Scene):
             else:
                 base_y = None
 
-            walls = b.create_perimeter_walls(
+            self.walls = b.create_perimeter_walls(
                 wall_height=default_wall_height,
                 wall_thickness=2.5,
                 width=building_width,
@@ -299,13 +305,14 @@ class WorldScene(Scene):
                 uv_repeat=(1.0, 1.0),
                 base_y=base_y,
             )
-            meshes.extend(walls)
 
-        print(f"Built {len(walls)} building walls.")
+        print(f"Built {len(self.walls)} building walls.")
         self.log_timing("Building walls", start_time, time.perf_counter())
+        self.wall_tiles.extend(self.walls)
+
 
         tri_thickness = 5
-        showcase_polygons: list[Polygon] = []
+        self.showcase_polygons: list[Polygon] = []
         off_ground = 40
 
         def regular_polygon(cx: float, cy: float, radius: float, sides: int) -> list[tuple[float, float]]:
@@ -319,7 +326,7 @@ class WorldScene(Scene):
 
         # Triangle
         triangle_points = [(0, 0), (60, 0), (30, 50)]
-        showcase_polygons.append(
+        self.showcase_polygons.append(
             Polygon(
                 position=Vector3(self.world_center.x, self.ground_height_at(self.world_center.x, self.world_center.z) + off_ground, self.world_center.z),
                 points_2d=triangle_points,
@@ -330,7 +337,7 @@ class WorldScene(Scene):
 
         # Square
         square_points = [(0, 0), (40, 0), (40, 40), (0, 40)]
-        showcase_polygons.append(
+        self.showcase_polygons.append(
             Polygon(
                 position=Vector3(self.world_center.x - 100, self.ground_height_at(self.world_center.x - 100, self.world_center.z) + off_ground, self.world_center.z),
                 points_2d=square_points,
@@ -341,7 +348,7 @@ class WorldScene(Scene):
 
         # Pentagon
         pent_points = regular_polygon(0.0, 0.0, 30.0, 5)
-        showcase_polygons.append(
+        self.showcase_polygons.append(
             Polygon(
                 position=Vector3(self.world_center.x + 100, self.ground_height_at(self.world_center.x + 100, self.world_center.z) + off_ground, self.world_center.z),
                 points_2d=pent_points,
@@ -352,7 +359,7 @@ class WorldScene(Scene):
 
         # Arrow
         arrow_points = [(0, 10), (40, 10), (40, -10), (60, 20), (40, 50), (40, 30), (0, 30)]
-        showcase_polygons.append(
+        self.showcase_polygons.append(
             Polygon(
                 position=Vector3(self.world_center.x - 200, self.ground_height_at(self.world_center.x - 200, self.world_center.z) + off_ground, self.world_center.z - 200),
                 points_2d=arrow_points,
@@ -363,7 +370,7 @@ class WorldScene(Scene):
 
         # L-shape
         l_points = [(0, 0), (60, 0), (60, 20), (20, 20), (20, 80), (0, 80)]
-        showcase_polygons.append(
+        self.showcase_polygons.append(
             Polygon(
                 position=Vector3(self.world_center.x + 230, self.ground_height_at(self.world_center.x + 230, self.world_center.z) + off_ground, self.world_center.z),
                 points_2d=l_points,
@@ -373,8 +380,8 @@ class WorldScene(Scene):
         )
 
         start_time = time.perf_counter()
-        meshes.extend(showcase_polygons)
         self.log_timing("Showcase polygons", start_time, time.perf_counter())
+        self.polygons.extend(self.showcase_polygons)
 
         start_time = time.perf_counter()
         print("Spawning world objects...")
@@ -418,9 +425,9 @@ class WorldScene(Scene):
         )
 
         self.log_timing("Create road", start_time, time.perf_counter())
-
+        self.others.append(self.road)
         start_time = time.perf_counter()
-        trees = spawn_world_sprites(
+        self.trees = spawn_world_sprites(
             self,
             count=tree_count,
             textures=self.tree_textures,
@@ -433,11 +440,11 @@ class WorldScene(Scene):
             avoid_roads=[self.road],
             avoid_areas=self.buildings,
         )
-        print(f"Spawned {len(trees)} trees.")
+        print(f"Spawned {len(self.trees)} trees.")
         self.log_timing("Spawn trees", start_time, time.perf_counter())
-
+        self.sprite_items.extend(self.trees)
         start_time = time.perf_counter()
-        grasses = spawn_world_sprites(
+        self.grasses = spawn_world_sprites(
             self,
             count=grass_count,
             textures=self.grasses_textures,
@@ -450,11 +457,12 @@ class WorldScene(Scene):
             avoid_roads=[self.road],
             avoid_areas=self.buildings,
         )
-        print(f"Spawned {len(grasses)} grasses.")
+        print(f"Spawned {len(self.grasses)} grasses.")
         self.log_timing("Spawn grasses", start_time, time.perf_counter())
+        self.sprite_items.extend(self.grasses)
 
         start_time = time.perf_counter()
-        rocks = spawn_world_sprites(
+        self.rocks = spawn_world_sprites(
             self,
             count=rock_count,
             textures=self.rock_textures,
@@ -467,11 +475,12 @@ class WorldScene(Scene):
             avoid_roads=[self.road],
             avoid_areas=self.buildings,
         )
-        print(f"Spawned {len(rocks)} rocks.")
+        print(f"Spawned {len(self.rocks)} rocks.")
         self.log_timing("Spawn rocks", start_time, time.perf_counter())
+        self.sprite_items.extend(self.rocks)
 
         start_time = time.perf_counter()
-        fence_meshes = build_textured_fence_ring(
+        self.fence_meshes = build_textured_fence_ring(
             min_x=self.ground_bounds[0],
             max_x=self.ground_bounds[1],
             min_z=self.ground_bounds[2],
@@ -486,13 +495,13 @@ class WorldScene(Scene):
             brightness_modifiers=self.brightness_modifiers,
             default_brightness=self.camera.brightness_default,
         )
-        print(f"Built {len(fence_meshes)} fence segments.")
+        print(f"Built {len(self.fence_meshes)} fence segments.")
         self.log_timing("Build fences", start_time, time.perf_counter())
+        
 
         start_time = time.perf_counter()
-        meshes.extend(fence_meshes)
 
-        self.static_meshes = meshes + trees + grasses + rocks + [self.road]
+        #self.static_meshes = meshes + trees + grasses + rocks + [self.road]
         self.log_timing("Assemble static meshes", start_time, time.perf_counter())
 
         start_time = time.perf_counter()
@@ -508,7 +517,7 @@ class WorldScene(Scene):
         )
         print("Created shadow texture.")
         self.log_timing("Create shadow texture", start_time, time.perf_counter())
-
+        
         decals: list[Decal] = []
         rng = random.Random()
 
@@ -569,27 +578,22 @@ class WorldScene(Scene):
                 )
 
         start_time = time.perf_counter()
-        for s in trees:
+        for s in self.trees:
             decals.append(make_decal_for_sprite(s))
 
         print(f"Created {len(decals)} shadow decals.")
         self.log_timing("Create decals", start_time, time.perf_counter())
-
+        self.decal_batch = DecalBatch.build(decals)
+        self.decal_batches.append(self.decal_batch)
         start_time = time.perf_counter()
-        decal_batch = DecalBatch.build(decals)
-        self.static_meshes.append(decal_batch)
         self.log_timing("Build decal batch", start_time, time.perf_counter())
 
-        start_time = time.perf_counter()
-        try:
-            self._shade_overlay.set_holes_from_buildings(self.buildings)
-        except Exception:
-            pass
-        self.log_timing("Finalize shade overlay", start_time, time.perf_counter())
+        
 
-    def log_timing(self, message: str, start_time: float, end_time: float):
+    def log_timing(self, message: str, start_time: float, end_time: float, log: bool = False):
         """Logs timing information for WorldScene setup phases."""
-        print(f"{message} took {end_time - start_time:.6f} seconds")
+        if log:
+            print(f"{message} took {end_time - start_time:.6f} seconds")
 
     def draw_sky(self) -> None:  # pragma: no cover - visual
         """Draw sky elements (delegated from engine)."""
@@ -597,6 +601,8 @@ class WorldScene(Scene):
 
     def draw(self, enable_timing: bool = False):  # pragma: no cover - visual
         self.ground_mesh.draw()
+        for m in self.fence_meshes:
+            m.draw()
         glEnable(GL_FOG)
         super().draw(enable_timing=enable_timing)
         self._hud.draw()
@@ -650,6 +656,7 @@ class WorldScene(Scene):
         ground_y_here = self.ground_height_at(
             self.camera.position.x, self.camera.position.z
         )
+
         manual_offset = getattr(self.camera, "manual_height_offset", 0.0)
         target_cam_y = ground_y_here + CAMERA_GROUND_OFFSET + float(manual_offset)
         if CAMERA_FOLLOW_SMOOTH_HZ <= 0 or dt <= 0:
@@ -660,7 +667,6 @@ class WorldScene(Scene):
 
         self._hud.update(dt)
         self._headbob.update(moving=moving, sprinting=sprinting, dt=dt)
-        super().update(dt)
 
     def handle_event(self, event) -> None:
         pass

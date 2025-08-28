@@ -178,7 +178,6 @@ def spawn_world_sprites(
 
     # Use spatial grid for sprite-sprite collision detection
     spatial_grid = SpatialGrid(cell_size=max_sprite_radius * 4)
-    sprites: list[WorldSprite] = []
 
     if use_batch_generation and count > 20:
         # Generate positions in batches for better performance
@@ -187,65 +186,8 @@ def spawn_world_sprites(
             max_spawn_x, max_spawn_z, filtered_roads, filtered_areas,
             pad_margin, max_retries, spatial_grid
         )
-    else:
-        # Use original sequential approach for small counts
-        return _spawn_sprites_sequential(
-            scene, count, textures, texture_sizes, camera, x_off, z_off,
-            max_spawn_x, max_spawn_z, filtered_roads, filtered_areas,
-            pad_margin, max_retries, spatial_grid
-        )
 
 
-def _spawn_sprites_sequential(
-    scene, count, textures, texture_sizes, camera, x_off, z_off,
-    max_spawn_x, max_spawn_z, filtered_roads, filtered_areas,
-    pad_margin, max_retries, spatial_grid
-):
-    """Sequential sprite generation (original approach, optimized)."""
-    sprites = []
-    
-    for _ in range(count):
-        tex = random.choice(textures)
-        width, height = texture_sizes[tex]
-        half_w = width * 0.5
-        
-        # Calculate margins once per sprite
-        road_margin = 2.0 + pad_margin + half_w
-        area_margin = 2.0 + pad_margin + half_w
-
-        # Try to find valid position
-        for _tries in range(max_retries):
-            x = random.uniform(-max_spawn_x, max_spawn_x) + x_off
-            z = random.uniform(-max_spawn_z, max_spawn_z) + z_off
-
-            # Check sprite-sprite collision using spatial grid
-            if spatial_grid.check_collision(x, z, half_w, pad_margin):
-                continue
-
-            # Check road collisions (pre-filtered)
-            if any(r.contains_point(x, z, margin=road_margin) for r in filtered_roads):
-                continue
-
-            # Check area collisions (pre-filtered)
-            if any(a.contains_point(x, z, margin=area_margin) for a in filtered_areas):
-                continue
-
-            # Valid position found
-            break
-        
-        # Create sprite
-        y_center = scene.ground_height_at(x, z) + (height * 0.5)
-        sprite = WorldSprite(
-            position=Vector3(x, y_center, z),
-            size=(width, height),
-            texture=tex,
-            camera=camera,
-        )
-        
-        sprites.append(sprite)
-        spatial_grid.add_sprite(sprite, x, z, half_w)
-
-    return sprites
 
 
 def _spawn_sprites_batch(

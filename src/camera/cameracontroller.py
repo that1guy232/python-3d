@@ -13,6 +13,7 @@ import pygame
 from pygame.math import Vector3
 from typing import Tuple
 
+from world.sprite import WorldSprite
 from world.world_collision import movement_blocked_by_wall
 from config import MOUSE_SENSITIVITY, SPRINT_SPEED, BASE_SPEED
 
@@ -60,14 +61,8 @@ class CameraController:
         return True
 
     def _attempt_wall_slide(self, old_position: Vector3) -> bool:
-        """If movement was blocked by a wall, slide along the collision plane.
 
-        Returns True if a wall collision was detected and sliding applied,
-        otherwise False.
-        """
-        meshes = getattr(self.scene, "static_meshes", None) or []
-        player_radius = getattr(self.scene, "_player_radius", 16)
-
+        #meshes = getattr(self.scene, "static_meshes", None) or []
         # Try to handle multiple, sequential wall collisions (e.g. at a 90deg
         # corner) by repeatedly querying for a blocking plane and projecting
         # the attempted movement onto that plane. Limit iterations to avoid
@@ -75,9 +70,15 @@ class CameraController:
         slid = False
         max_iters = 3
         eps = 1e-6
+        #TODO: These should be passed in through somewere. make make the world collision detection stuff a class on it's own.
+        col_meshes = getattr(self.scene, "wall_tiles", None) or []
+        col_polygons = getattr(self.scene, "polygons", None) or []
+        col_meshes = col_meshes + col_polygons
+        player_radius = 16
+        #filter out WorldSprites
         for _ in range(max_iters):
             col_normal = movement_blocked_by_wall(
-                meshes, old_position, self.camera.position, player_radius
+                col_meshes, old_position, self.camera.position, player_radius
             )
             if col_normal is None:
                 break
@@ -99,6 +100,24 @@ class CameraController:
             slid = True
 
         return slid
+
+    def _attempt_y_collision(self, old_position: Vector3) -> bool:
+        attempted = self.camera.position - old_position
+        # are we going up or down on y
+        # Build a shallow copy of the scene meshes so we don't mutate
+        # the scene's static_meshes list when appending the ground mesh.
+        meshes = getattr(self.scene, "static_meshes", None) or [] #.get_world_vertices
+        ground = getattr(self.scene, "ground_mesh", None)         #. s
+        pos_y_buff = 15
+        neg_y_buff = 60
+        # ground_height_sampler = getattr(ground, "height_sampler", None)
+        # print(ground_height_sampler)
+
+
+
+
+        # No ground-related processing implemented here yet; avoid side-effects.
+        return False
 
     def on_mouse_delta(self, dx: float, dy: float, dt: float | None = None) -> None:
         """Accept raw mouse delta and update rotation targets.
@@ -196,6 +215,8 @@ class CameraController:
                 else:
                     # No boundary issue; try wall slide if needed.
                     self._attempt_wall_slide(old_position)
+            
+            self._attempt_y_collision(old_position)
 
         return moving, sprinting
 

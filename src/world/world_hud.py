@@ -17,7 +17,7 @@ from textures.resoucepath import (
     LIGHT_TEXTURE_PATH
 )
 from config import HEADBOB_ENABLED
-
+from core.consts import *
 
 class WorldHUD:
     def __init__(self, scene) -> None:
@@ -35,15 +35,6 @@ class WorldHUD:
             base_texture=base_tex,
             needle_texture=needle_tex,
         )
-        # Place compass relative to camera if axes available
-        try:
-            right = self.scene.camera._right
-            forward = self.scene.camera._forward
-            up = getattr(self.scene.camera, "_up", right.cross(forward))
-            comp_offset = (right * 3.0) + (up * -1.5) + (forward * 4.0)
-            self._compass.position = self.scene.camera.position + comp_offset
-        except Exception:
-            pass
 
         # Held item (sword) as a WorldSprite
         sword_tex = load_texture(SWORD_TEXTURE_PATH)

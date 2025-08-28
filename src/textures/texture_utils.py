@@ -107,7 +107,6 @@ def load_texture(filename):
     except Exception as e:
         print(f"Failed to load texture {filename}: {e}")
         return create_test_texture()  # Fallback to test texture
-        return None
 
 
 def create_test_texture():

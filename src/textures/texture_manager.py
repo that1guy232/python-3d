@@ -82,3 +82,4 @@ def load_world_textures() -> Dict[str, object]:
         "item_textures": item_textures,
         "wall_tex": wall_tex,
     }
+

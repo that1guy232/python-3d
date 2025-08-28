@@ -10,6 +10,8 @@ from pygame.math import Vector3
 from typing import Iterable, Optional
 from world.objects import WallTile
 from world.objects.polygon import Polygon
+from core.mesh import BatchedMesh
+from world.sprite import WorldSprite
 
 
 def movement_blocked_by_wall(
@@ -45,6 +47,7 @@ def movement_blocked_by_wall(
         """
         if len(face_verts) < 3:
             return None
+        
         v0 = face_verts[0]
         v1 = face_verts[1]
         v2 = face_verts[2]
@@ -109,15 +112,20 @@ def movement_blocked_by_wall(
         return None
 
     for m in meshes:
-        # Accept WallTile and any polygonal mesh that exposes .faces
-        if not (isinstance(m, WallTile) or isinstance(m, Polygon) or hasattr(m, 'faces')):
+        # if it has #get_world_Vertices() we can continues 
+        if not hasattr(m, 'get_world_vertices'):
+            print(m)
+            print("Mesh does not have get_world_vertices, skipping.")
             continue
+
         verts = m.get_world_vertices()
         if not verts:
             continue
+        #print(verts)
 
         faces = getattr(m, 'faces', None)
         if not faces:
+            print("No faces found, falling back to simple quad.")
             # Fall back for simple quad-like meshes (old behavior)
             if len(verts) >= 4:
                 faces = [list(range(4))]
@@ -130,6 +138,109 @@ def movement_blocked_by_wall(
                 face_verts = [verts[i] for i in face]
             except Exception:
                 # malformed face indices
+                continue
+            n = check_face(face_verts)
+            if n is not None:
+                return n
+    return None
+
+
+def movement_blocked_by_floor_ceiling(
+    meshes: Iterable, old_pos: Vector3, new_pos: Vector3, player_radius: float = 16.0, y_axis_tol: float = 0.99
+) -> Optional[Vector3]:
+    """Return the collision plane normal if segment old_pos->new_pos intersects any horizontal (Y axis) face.
+    Used for floors/ceilings that block movement vertically.
+    y_axis_tol: dot threshold for normal to be considered horizontal (default 0.99).
+    """
+    seg = new_pos - old_pos
+    eps = 1e-6
+
+    def is_horizontal(normal: Vector3) -> bool:
+        # normal.y close to +/-1, i.e. dot with Y axis
+        return abs(normal.y) >= y_axis_tol
+
+    def point_in_poly_2d(px: float, pz: float, poly: list[tuple[float, float]]) -> bool:
+        # 2D XZ ray-casting
+        inside = False
+        j = len(poly) - 1
+        for i in range(len(poly)):
+            xi, zi = poly[i]
+            xj, zj = poly[j]
+            intersect = ((zi > pz) != (zj > pz)) and (
+                px < (xj - xi) * (pz - zi) / (zj - zi + 1e-30) + xi
+            )
+            if intersect:
+                inside = not inside
+            j = i
+        return inside
+
+    def check_face(face_verts: list[Vector3]) -> Optional[Vector3]:
+        if len(face_verts) < 3:
+            return None
+        v0, v1, v2 = face_verts[:3]
+        n = (v1 - v0).cross(v2 - v0)
+        nlen = n.length()
+        if nlen <= eps:
+            return None
+        n = n / nlen
+        if not is_horizontal(n):
+            return None
+
+        print(f"distance to wall: {d0}, {d1}")
+
+        d0 = (old_pos - v0).dot(n)
+        d1 = (new_pos - v0).dot(n)
+
+        # Project to XZ plane
+        def project(pt: Vector3) -> tuple[float, float]:
+            return (pt.x, pt.z)
+
+        # Case: segment lies in plane
+        if abs(d0) <= eps and abs(d1) <= eps:
+            mid = old_pos + seg * 0.5
+            p2 = project(mid)
+            poly2d = [project(v) for v in face_verts]
+            if point_in_poly_2d(p2[0], p2[1], poly2d):
+                return n
+            return None
+
+        # If both on same side of plane -> maybe grazing within player_radius
+        if d0 * d1 > 0:
+            if abs(d1) <= player_radius and abs(d1) < abs(d0):
+                p_plane = new_pos - n * d1
+                p2 = project(p_plane)
+                poly2d = [project(v) for v in face_verts]
+                if point_in_poly_2d(p2[0], p2[1], poly2d):
+                    return n
+            return None
+
+        denom = d0 - d1
+        if abs(denom) <= eps:
+            return None
+        t = d0 / denom
+        if t < 0.0 - eps or t > 1.0 + eps:
+            return None
+        p = old_pos + seg * t
+        p2 = project(p)
+        poly2d = [project(v) for v in face_verts]
+        if point_in_poly_2d(p2[0], p2[1], poly2d):
+            return n
+        return None
+
+    for m in meshes:
+        verts = m.get_world_vertices()
+        if not verts:
+            continue
+        faces = getattr(m, 'faces', None)
+        if not faces:
+            if len(verts) >= 4:
+                faces = [list(range(4))]
+            else:
+                continue
+        for face in faces:
+            try:
+                face_verts = [verts[i] for i in face]
+            except Exception:
                 continue
             n = check_face(face_verts)
             if n is not None:

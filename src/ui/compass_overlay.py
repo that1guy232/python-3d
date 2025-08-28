@@ -22,6 +22,8 @@ from OpenGL.GL import (
 )
 
 
+from core.consts import *  # FORWARD, RIGHT, WORLD_UP
+
 class CompassOverlay(WorldSprite):
     def __init__(
         self,
@@ -40,47 +42,14 @@ class CompassOverlay(WorldSprite):
             position=position, size=size, camera=camera, texture=base_texture
         )
 
-    def _billboard_axes(self, pitch_effect: bool):
-        world_up_x, world_up_y, world_up_z = (0.0, 1.0, 0.0)
-        fwd = getattr(self.camera, "_forward", None)
-        right = getattr(self.camera, "_right", None)
-        if fwd is None or right is None:
-            return None
-        if pitch_effect:
-            # spherical: up = right x forward
-            # Normalize right and forward
-            try:
-                r = right.normalize()
-            except Exception:
-                r = right
-            try:
-                f = fwd.normalize()
-            except Exception:
-                f = fwd
-            up = r.cross(f)
-            try:
-                up = up.normalize()
-            except Exception:
-                pass
-            return r, up
-        else:
-            # cylindrical: lock up to world up, flatten right on XZ plane
-            r = type(right)(right.x, 0.0, right.z)
-            if getattr(r, "length", lambda: 0.0)() <= 1e-6:
-                f_flat = type(fwd)(fwd.x, 0.0, fwd.z)
-                r = type(right)(world_up_x, world_up_y, world_up_z).cross(f_flat)
-            try:
-                r = r.normalize()
-            except Exception:
-                pass
-            up = type(right)(world_up_x, world_up_y, world_up_z)
-            return r, up
+
 
     def draw(self, pitch_effect: bool = False):  # pragma: no cover - visual
-        axes = self._billboard_axes(pitch_effect)
-        if not axes:
-            return
-        right, up = axes
+
+
+        axes = self._billboard_axes(self.camera, pitch_effect=pitch_effect)
+        right, up = axes if axes else (RIGHT, WORLD_UP)
+
         w, h = self.size
         hw, hh = w * 0.5, h * 0.5
         cx, cy, cz = self.position.x, self.position.y, self.position.z
