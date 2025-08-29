@@ -111,7 +111,8 @@ class DecalBatch:
         # skip drawing that texture's mesh if it's farther than VIEWDISTANCE.
         cam_pos = getattr(camera, "position", None) if camera is not None else None
         vd_sq = VIEWDISTANCE * VIEWDISTANCE
-
+        total_buckets = len(self.meshes_by_tex)
+        drawn = 0
         glDepthMask(False)
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
@@ -126,7 +127,9 @@ class DecalBatch:
                         dist_sq = (dx * dx + dy * dy + dz * dz)
                         if dist_sq > vd_sq:
                             continue
+                drawn += 1
                 mesh.draw()
         finally:
             glDisable(GL_BLEND)
             glDepthMask(True)
+        #print(f"Drawn {drawn}/{total_buckets} decal batches")
