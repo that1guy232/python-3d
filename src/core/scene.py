@@ -55,29 +55,15 @@ class Scene:
             print(f"Drawing wall tiles took {end_draw_wall_tiles_time - start_draw_wall_tiles_time:.6f} seconds")
 
 
+
+
         start_draw_polygons_time = time.perf_counter()
         for p in self.polygons:
             p.draw(camera=self.camera)
         end_draw_polygons_time = time.perf_counter()
         if enable_timing:
             print(f"Drawing polygons took {end_draw_polygons_time - start_draw_polygons_time:.6f} seconds")
-
-
-        start_draw_sprites_time = time.perf_counter()
-        # Draw sprites batched with alpha blending
-        if self.sprite_items and self.camera is not None:
-            dist_culled = [
-                s
-                for s in self.sprite_items
-                if (s.position - self.camera.position).length() <= VIEWDISTANCE
-            ]
-            # Provide a ground height sampler so sprite shadows can conform to terrain
-            height_fn = getattr(self, "ground_height_at", None)
-            draw_sprites_batched(dist_culled, self.camera, height_fn)
-        
-        end_draw_sprites_time = time.perf_counter()
-        if enable_timing:
-            print(f"Drawing sprites took {end_draw_sprites_time - start_draw_sprites_time:.6f} seconds")
+ 
         # Draw non-sprite, non-decal first
         def _approx_pos(obj):
             """Try to approximate a world-space position for common drawable types.
@@ -155,6 +141,23 @@ class Scene:
         if enable_timing:
             print(f"Drawing other objects took {end_draw_other_time - starting_draw_other_time:.6f} seconds")
 
+  
+
+        start_draw_sprites_time = time.perf_counter()
+        # Draw sprites batched with alpha blending
+        if self.sprite_items and self.camera is not None:
+            dist_culled = [
+                s
+                for s in self.sprite_items
+                if (s.position - self.camera.position).length() <= VIEWDISTANCE
+            ]
+            # Provide a ground height sampler so sprite shadows can conform to terrain
+            height_fn = getattr(self, "ground_height_at", None)
+            draw_sprites_batched(dist_culled, self.camera, height_fn)
+
+        end_draw_sprites_time = time.perf_counter()
+        if enable_timing:
+            print(f"Drawing sprites took {end_draw_sprites_time - start_draw_sprites_time:.6f} seconds")
    
     # Scenes can own their full render pipeline (projection, modelview, etc.)
     def render(self):  # pragma: no cover - visual
