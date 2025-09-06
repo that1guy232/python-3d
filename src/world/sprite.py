@@ -53,6 +53,15 @@ def _safe_normalize(v: Vector3) -> Vector3 | None:
     return v.normalize()
 
 
+#####################
+#   When we add the texture to the sprite maybe add it to some kind of dynamic texture atlas  that way  if /when we batch render we can auto 
+#   We could also check on batch draw but frist we would have to check if that texture we are attemping is in the atlas
+#
+#
+##############
+
+
+
 
 from core.consts import *
 @dataclass
@@ -121,7 +130,6 @@ class WorldSprite:
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         glBindTexture(GL_TEXTURE_2D, self.texture)
 
-        
         r, g, b = self.color
 
         glColor3f(r, g, b)
@@ -311,13 +319,13 @@ def draw_sprites_batched(
     if cur_batch:
         batches.append((cur_tex, cur_batch))
 
+    #print(f"Drawing {len(visible_sprites)} sprites in {len(batches)} batches")
     # GL state once
     glDepthMask_local(False)
     glEnable_local(GL_BLEND)
     glBlendFunc_local(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
     glEnable_local(GL_TEXTURE_2D)
 
-    # Main render: using glBegin/quads but minimized Python overhead
     for tex, batch in batches:
         glBindTexture_local(GL_TEXTURE_2D, tex)
         glBegin(GL_QUADS)
