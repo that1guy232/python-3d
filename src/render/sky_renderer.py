@@ -11,6 +11,31 @@ from textures.texture_utils import load_texture
 from textures.resoucepath import STAR_TEXTURE_PATH, MOON_TEXTURE_PATH
 from typing import Optional
 import time
+from OpenGL.GL import (
+            glPushMatrix,
+            glPopMatrix,
+            glBegin,
+            glEnd,
+            glVertex3f,
+            glTexCoord2f,
+            glBindTexture,
+            glEnable,
+            glDisable,
+            glBlendFunc,
+            glRotatef,
+            glColor3f,
+            GL_TEXTURE_2D,
+            GL_QUADS,
+            GL_BLEND,
+            GL_SRC_ALPHA,
+            GL_ONE_MINUS_SRC_ALPHA,
+            GL_DEPTH_TEST,
+            GL_FOG,
+        )
+
+
+##TODO: total rewrite
+
 
 class SkyRenderer:
     """Draws sky elements (star and moon) billboarded to the camera.
@@ -35,27 +60,7 @@ class SkyRenderer:
         the sky quads will be rotated so their apparent azimuth matches
         the sun direction (world->sun azimuth = negate sun_direction).
         """
-        from OpenGL.GL import (
-            glPushMatrix,
-            glPopMatrix,
-            glBegin,
-            glEnd,
-            glVertex3f,
-            glTexCoord2f,
-            glBindTexture,
-            glEnable,
-            glDisable,
-            glBlendFunc,
-            glRotatef,
-            glColor3f,
-            GL_TEXTURE_2D,
-            GL_QUADS,
-            GL_BLEND,
-            GL_SRC_ALPHA,
-            GL_ONE_MINUS_SRC_ALPHA,
-            GL_DEPTH_TEST,
-            GL_FOG,
-        )
+
         import math as _math
 
 
@@ -113,14 +118,7 @@ class SkyRenderer:
 
 
     def _draw_sky_quad(self, *, dist: float, half: float, y: float, camera: Camera) -> None:
-        from OpenGL.GL import (
-            glBegin,
-            glEnd,
-            glVertex3f,
-            glTexCoord2f,
-            glColor3f,
-            GL_QUADS,
-        )
+
 
         brightness = camera.brightness_default
         glColor3f(brightness, brightness, brightness)

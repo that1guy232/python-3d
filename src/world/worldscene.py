@@ -76,9 +76,6 @@ from OpenGL.GL import (
     glClearColor,
     
 )
-
-# let s add gluPerspective
-
 from OpenGL.GLU import gluPerspective
 
 class WorldScene(Scene):
@@ -90,7 +87,7 @@ class WorldScene(Scene):
         grid_count: int = 200,
         grid_tile_size: int = 25,
         grid_gap: int = 0,
-        tree_count: int = 1500,
+        tree_count: int = 1000,
         grass_count: int = 750,
         rock_count: int = 750,
     ) -> None:
@@ -106,7 +103,7 @@ class WorldScene(Scene):
 
         # If no camera provided (default), create one suitable for this scene
         cam = camera or Camera(
-            position=Vector3(STARTING_POS), width=WIDTH, height=HEIGHT, fov=FOV, default_brightness=0.1
+            position=Vector3(STARTING_POS), width=WIDTH, height=HEIGHT, fov=FOV, default_brightness=0.8
         )
 
         self.camera = cam
@@ -150,7 +147,7 @@ class WorldScene(Scene):
             1,
             4,
         ))
-        for i in range(55):
+        for i in range(0):
             cx = random.triangular(min_x, max_x, (min_x + max_x) * 0.5) + 1e-6
             cz = random.triangular(min_z, max_z, (min_z + max_z) * 0.5) + 1e-6
             radius = random.uniform(150.0, 250.0)
@@ -228,6 +225,9 @@ class WorldScene(Scene):
         glFogfv(GL_FOG_COLOR, LIGHT_BLUE)
         glHint(GL_FOG_HINT, GL_FASTEST)
 
+
+
+        #TODO:Total rewrite to work with #skyrenderer
         self.sun_pos = Vector3(self.world_center.x + 10000.0, 20000.0, self.world_center.z + 3000.0)
         _sd = Vector3(self.world_center.x, 0.0, self.world_center.z) - self.sun_pos
         sd_len = _sd.length()
@@ -597,7 +597,7 @@ class WorldScene(Scene):
 
     def draw_sky(self) -> None:  # pragma: no cover - visual
         """Draw sky elements (delegated from engine)."""
-        self.sky.draw(self.camera, getattr(self, "sun_direction", None))
+        self.sky.draw(self.camera, sun_direction=self.sun_direction)
 
     def draw(self, enable_timing: bool = False):  # pragma: no cover - visual
         self.ground_mesh.draw()
@@ -708,7 +708,7 @@ class WorldScene(Scene):
 
         if show_hud and text is not None and fps is not None:
             text.begin()
-            text.draw_text(f"FPS: {fps:5.1f}", 12, 10, key="fps", align="topleft")
+            text.draw_text(f"FPS: {fps:5.1f}", 12, 10, key="fps", align="topleft", color=[255,0,0,0])
             lorem = (
                 "Lore Epsum: Vivamus sed nibh.\n"
                 "Curabitur at leo quis nunc posuere congue.\n"

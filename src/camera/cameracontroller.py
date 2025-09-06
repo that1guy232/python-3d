@@ -15,7 +15,7 @@ from typing import Tuple
 
 from world.sprite import WorldSprite
 from world.world_collision import movement_blocked_by_wall
-from config import MOUSE_SENSITIVITY, SPRINT_SPEED, BASE_SPEED
+from config import MOUSE_SENSITIVITY, SPRINT_SPEED, BASE_SPEED, CAMERA_GROUND_OFFSET
 
 
 class CameraController:
@@ -109,12 +109,13 @@ class CameraController:
         meshes = getattr(self.scene, "static_meshes", None) or [] #.get_world_vertices
         ground = getattr(self.scene, "ground_mesh", None)         #. s
         pos_y_buff = 15
-        neg_y_buff = 60
+        neg_y_buff = CAMERA_GROUND_OFFSET
         # ground_height_sampler = getattr(ground, "height_sampler", None)
         # print(ground_height_sampler)
 
+        ground_height = ground.height_sampler.height_at(self.camera.position.x, self.camera.position.z)
 
-
+        
 
         # No ground-related processing implemented here yet; avoid side-effects.
         return False
@@ -188,6 +189,9 @@ class CameraController:
             speed *= road_multi
         # speed is in world units/sec; Camera.move_camera applies dt internally
 
+        old_position = self.camera.position.copy()
+        self.camera.move_camera(keys, speed, dt)
+
         moving = False
         if any_key_down:
             # Determine if translation movement keys are pressed
@@ -198,16 +202,7 @@ class CameraController:
                 or keys[pygame.K_d]
             )
 
-            # Always call move_camera when any relevant input is down so
-            # non-translation controls (e.g., Q/E manual height adjust) are
-            # processed even when the player isn't moving.
-            old_position = self.camera.position.copy()
-            # Perform movement/controls. Let exceptions propagate during dev.
-            self.camera.move_camera(keys, speed, dt)
 
-            # Only perform boundary/wall collision handling if we actually
-            # attempted a translation move (WASD). This avoids sliding when
-            # the user only adjusted height with Q/E.
             if moving:
                 if self._attempt_boundary_slide(old_position):
                     # Boundary slide handled (including revert) — nothing more to do.
