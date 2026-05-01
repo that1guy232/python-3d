@@ -98,15 +98,15 @@ class SkyRenderer:
         self._draw_sky_quad(camera=camera,dist=50000.0, half=6000.0, y=20000.0)
         glPopMatrix()
 
-        # Draw moon (apply optional offset so it doesn't occupy same azimuth)
-        glBindTexture(GL_TEXTURE_2D, self._moon_tex)
-        glPushMatrix()
-        if az is not None:
-            glRotatef((az + self.moon_offset_deg) % 360.0, 0.0, 1.0, 0.0)
-        else:
-            glRotatef(134.0, 0.0, 1.0, 0.0)
-        self._draw_sky_quad(camera=camera, dist=80000.0, half=4000.0, y=20000.0)
-        glPopMatrix()
+        # # Draw moon (apply optional offset so it doesn't occupy same azimuth)
+        # glBindTexture(GL_TEXTURE_2D, self._moon_tex)
+        # glPushMatrix()
+        # if az is not None:
+        #     glRotatef((az + self.moon_offset_deg) % 360.0, 0.0, 1.0, 0.0)
+        # else:
+        #     glRotatef(134.0, 0.0, 1.0, 0.0)
+        # self._draw_sky_quad(camera=camera, dist=80000.0, half=4000.0, y=20000.0)
+        # glPopMatrix()
 
         glPopMatrix()
 
