@@ -7,24 +7,55 @@ class Object3D:
         self.position = position or Vector3(0, 0, 0)
         self.rotation = rotation or Vector3(0, 0, 0)
         self.local_vertices = []
+        self._rotation_cache = (None, None, None)
+        self._rotation_matrix = None
+
+    def _update_rotation_matrix(self):
+        """Cache sin/cos values and the rotation matrix for the current rotation."""
+        rx = self.rotation.x
+        ry = self.rotation.y
+        rz = self.rotation.z
+
+        if self._rotation_cache == (rx, ry, rz) and self._rotation_matrix is not None:
+            return
+
+        self._rotation_cache = (rx, ry, rz)
+
+        cx = math.cos(rx)
+        sx = math.sin(rx)
+        cy = math.cos(ry)
+        sy = math.sin(ry)
+        cz = math.cos(rz)
+        sz = math.sin(rz)
+
+        # Compose rotation: yaw (Y), then pitch (X), then roll (Z).
+        self._rotation_matrix = (
+            cz * cy + sz * sx * sy,
+            -sz * cx,
+            -cz * sy + sz * sx * cy,
+            sz * cy - cz * sx * sy,
+            cz * cx,
+            -sz * sy - cz * sx * cy,
+            cx * sy,
+            sx,
+            cx * cy,
+        )
+
+    def _rotate_vertex(self, vertex: Vector3) -> Vector3:
+        """Rotate a vertex using the cached rotation matrix."""
+        self._update_rotation_matrix()
+        r00, r01, r02, r10, r11, r12, r20, r21, r22 = self._rotation_matrix
+
+        return Vector3(
+            vertex.x * r00 + vertex.y * r01 + vertex.z * r02,
+            vertex.x * r10 + vertex.y * r11 + vertex.z * r12,
+            vertex.x * r20 + vertex.y * r21 + vertex.z * r22,
+        )
 
     def get_world_vertices(self):
         """Get vertices in world space (with rotation and position)"""
         world_vertices = []
         for vertex in self.local_vertices:
-            # Apply rotation
-            rotated = Vector3(
-                vertex.x * math.cos(self.rotation.y)
-                - vertex.z * math.sin(self.rotation.y),
-                vertex.y,
-                vertex.x * math.sin(self.rotation.y)
-                + vertex.z * math.cos(self.rotation.y),
-            )
-            # Apply position
-            world_vertex = Vector3(
-                rotated.x + self.position.x,
-                rotated.y + self.position.y,
-                rotated.z + self.position.z,
-            )
-            world_vertices.append(world_vertex)
+            rotated = self._rotate_vertex(vertex)
+            world_vertices.append(rotated + self.position)
         return world_vertices
