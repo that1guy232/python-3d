@@ -78,7 +78,7 @@ class Engine:
     def handle_events(self, dt: float) -> bool:
         keys = pygame.key.get_pressed()
         for event in pygame.event.get():
-            if event.type == pygame.QUIT or keys[pygame.K_ESCAPE]:
+            if event.type == pygame.QUIT:
                 return False
             # Forward events to the active scene
             if hasattr(self.scene, "handle_event"):
