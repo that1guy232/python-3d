@@ -433,10 +433,10 @@ class WorldScene(Scene):
             textures=self.tree_textures,
             px_to_world=1.2,
             camera=self.camera,
-            x_off=(self.ground_bounds[0] + self.ground_bounds[1]) / 2 + 25,
-            z_off=(self.ground_bounds[2] + self.ground_bounds[3]) / 2 + 25,
-            max_spawn_x=(self.ground_bounds[1] - self.ground_bounds[0]) / 2,
-            max_spawn_z=(self.ground_bounds[3] - self.ground_bounds[2]) / 2,
+            x_off=(self.ground_bounds[0] + self.ground_bounds[1]) / 2 + 35,
+            z_off=(self.ground_bounds[2] + self.ground_bounds[3]) / 2 + 35,
+            max_spawn_x=(self.ground_bounds[1] - self.ground_bounds[0]) / 2 - 35,
+            max_spawn_z=(self.ground_bounds[3] - self.ground_bounds[2]) / 2 - 35,
             avoid_roads=[self.road],
             avoid_areas=self.buildings,
         )
@@ -659,11 +659,20 @@ class WorldScene(Scene):
 
         manual_offset = getattr(self.camera, "manual_height_offset", 0.0)
         target_cam_y = ground_y_here + CAMERA_GROUND_OFFSET + float(manual_offset)
-        if CAMERA_FOLLOW_SMOOTH_HZ <= 0 or dt <= 0:
-            self.camera.position.y = target_cam_y
+
+        if self.camera.is_jumping:
+            self.camera.vertical_velocity -= GRAVITY * dt
+            self.camera.position.y += self.camera.vertical_velocity * dt
+            if self.camera.position.y <= target_cam_y:
+                self.camera.position.y = target_cam_y
+                self.camera.vertical_velocity = 0.0
+                self.camera.is_jumping = False
         else:
-            a = 1.0 - math.exp(-CAMERA_FOLLOW_SMOOTH_HZ * dt)
-            self.camera.position.y += (target_cam_y - self.camera.position.y) * a
+            if CAMERA_FOLLOW_SMOOTH_HZ <= 0 or dt <= 0:
+                self.camera.position.y = target_cam_y
+            else:
+                a = 1.0 - math.exp(-CAMERA_FOLLOW_SMOOTH_HZ * dt)
+                self.camera.position.y += (target_cam_y - self.camera.position.y) * a
 
         self._hud.update(dt)
         self._headbob.update(moving=moving, sprinting=sprinting, dt=dt)

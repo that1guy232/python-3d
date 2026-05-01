@@ -15,7 +15,7 @@ from typing import Tuple
 
 from world.sprite import WorldSprite
 from world.world_collision import movement_blocked_by_wall
-from config import MOUSE_SENSITIVITY, SPRINT_SPEED, BASE_SPEED, CAMERA_GROUND_OFFSET
+from config import MOUSE_SENSITIVITY, SPRINT_SPEED, BASE_SPEED, CAMERA_GROUND_OFFSET, JUMP_SPEED
 
 
 class CameraController:
@@ -115,10 +115,17 @@ class CameraController:
 
         ground_height = ground.height_sampler.height_at(self.camera.position.x, self.camera.position.z)
 
-        
+        min_y = ground_height + neg_y_buff
+        max_y = ground_height + pos_y_buff +(500)
+        collided = False
+        if self.camera.position.y < min_y:
+            self.camera.position.y = min_y
+            collided = True
+        elif self.camera.position.y > max_y:
+            self.camera.position.y = max_y
+            collided = True
 
-        # No ground-related processing implemented here yet; avoid side-effects.
-        return False
+        return collided
 
     def on_mouse_delta(self, dx: float, dy: float, dt: float | None = None) -> None:
         """Accept raw mouse delta and update rotation targets.
@@ -173,8 +180,7 @@ class CameraController:
             or keys[pygame.K_s]
             or keys[pygame.K_d]
             or keys[pygame.K_LSHIFT]
-            or keys[pygame.K_q]
-            or keys[pygame.K_e]
+            or keys[pygame.K_SPACE]
         )
         # (no debug prints) check movement keys explicitly
         sprinting = bool(keys[pygame.K_LSHIFT])
@@ -188,6 +194,18 @@ class CameraController:
         if self.scene.is_on_road(self.camera.position.x, self.camera.position.z):
             speed *= road_multi
         # speed is in world units/sec; Camera.move_camera applies dt internally
+
+        jump_pressed = bool(keys[pygame.K_SPACE])
+        if jump_pressed and not self.camera.is_jumping:
+            ground_y = self.scene.ground_height_at(
+                self.camera.position.x, self.camera.position.z
+            )
+            desired_ground_y = (
+                ground_y + CAMERA_GROUND_OFFSET + float(self.camera.manual_height_offset)
+            )
+            if self.camera.position.y <= desired_ground_y + 0.1:
+                self.camera.is_jumping = True
+                self.camera.vertical_velocity = JUMP_SPEED
 
         old_position = self.camera.position.copy()
         self.camera.move_camera(keys, speed, dt)

@@ -36,6 +36,8 @@ class Camera:
         # the terrain-following camera Y). WorldScene will add this when computing
         # the target camera height.
         self.manual_height_offset = 0.0
+        self.vertical_velocity = 0.0
+        self.is_jumping = False
 
         # Speed used when adjusting manual height offset with Q/E (world units/sec).
         # Chosen to be relatively small so Q/E can be used for fine screenshot tweaks.
@@ -326,12 +328,5 @@ class Camera:
 
         
 
-
-        if keys[pygame.K_q]:
-            delta = self.height_adjust_speed * dt
-            self.manual_height_offset += delta
-        if keys[pygame.K_e]:
-            delta = self.height_adjust_speed * dt
-            self.manual_height_offset -= delta
 
         return self.position
