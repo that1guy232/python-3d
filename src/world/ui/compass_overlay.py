@@ -1,3 +1,5 @@
+"""World compass overlay."""
+
 from __future__ import annotations
 from typing import Tuple
 import math

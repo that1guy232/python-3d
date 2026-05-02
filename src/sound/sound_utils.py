@@ -38,6 +38,7 @@ class Sounds:
     _inited: bool = False
     _failed_init: bool = False
     _sounds: Dict[str, pygame.mixer.Sound] = {}
+    _muted: bool = bool(MUTE)
 
     @classmethod
     def ensure_init(
@@ -145,7 +146,7 @@ class Sounds:
         fade_ms : int
             Fade-in time in milliseconds.
         """
-        if MUTE:
+        if cls._muted:
             return None
         if not cls.is_available():
             return None
@@ -207,6 +208,24 @@ class Sounds:
             if ch.get_sound() == snd and ch.get_busy():
                 return True
         return False
+
+    @classmethod
+    def is_muted(cls) -> bool:
+        return cls._muted
+
+    @classmethod
+    def set_muted(cls, muted: bool) -> None:
+        cls._muted = bool(muted)
+        if cls._muted and cls.is_available():
+            try:
+                pygame.mixer.stop()
+            except Exception:
+                pass
+
+    @classmethod
+    def toggle_muted(cls) -> bool:
+        cls.set_muted(not cls._muted)
+        return cls._muted
 
 
 __all__ = ["Sounds"]

@@ -11,8 +11,6 @@ in shader pipeline later.
 
 from __future__ import annotations
 
-from world.worldscene import WorldScene
-
 import pygame
 from OpenGL.GL import (
     glEnable,
@@ -32,7 +30,7 @@ from ui.text_renderer import TextRenderer
 # Engine
 # ---------------------------------------------------------------------------
 class Engine:
-    def __init__(self):
+    def __init__(self, *, initial_scene=None, initial_scene_factory=None):
         pygame.init()
         pygame.display.gl_set_attribute(pygame.GL_DEPTH_SIZE, 24)
         pygame.display.gl_set_attribute(pygame.GL_MULTISAMPLEBUFFERS, 1)
@@ -60,13 +58,17 @@ class Engine:
         glDisable(GL_CULL_FACE)
         glClearColor(*LIGHT_BLUE)
 
-        # Active scene (owns camera & input)
-        self.scene = WorldScene()
+        self.text = TextRenderer(WIDTH, HEIGHT)
 
+        if initial_scene is None:
+            if initial_scene_factory is None:
+                raise ValueError("Engine requires an initial_scene or initial_scene_factory")
+            initial_scene = initial_scene_factory()
+
+        # Active scene (owns camera & input)
+        self.scene = initial_scene
         pygame.mouse.set_visible(False)
         pygame.event.set_grab(True)
-
-        self.text = TextRenderer(WIDTH, HEIGHT)
 
     def _is_over_any_mesh(self, pos):
         # Kept for compatibility if needed elsewhere; scene now owns bounds
@@ -76,7 +78,6 @@ class Engine:
 
     # ------------------------------------------------------------------
     def handle_events(self, dt: float) -> bool:
-        keys = pygame.key.get_pressed()
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return False
@@ -101,6 +102,12 @@ class Engine:
     def update(self, dt: float):
         # Scene owns all gameplay updates
         self.scene.update(dt)
+        next_scene = getattr(self.scene, "next_scene", None)
+        if next_scene is not None:
+            self.scene = next_scene
+            pygame.mouse.set_visible(False)
+            pygame.event.set_grab(True)
+            pygame.mouse.get_rel()
 
     # ------------------------------------------------------------------
     def render(self):  # pragma: no cover - visual

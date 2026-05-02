@@ -8,9 +8,9 @@ from __future__ import annotations
 import random
 from pygame.math import Vector3
 from world.sprite import WorldSprite
-from ui.compass_overlay import CompassOverlay
+from world.ui.compass_overlay import CompassOverlay
 from textures.texture_utils import load_texture
-from textures.resoucepath import (
+from textures.resource_path import (
     COMPASS_BASE_TEXTURE_PATH,
     COMPASS_NEEDLE_TEXTURE_PATH,
     SWORD_TEXTURE_PATH,
@@ -65,12 +65,10 @@ class WorldHUD:
             dist=5.0, nx=-0.85, ny=0.85
         )
 
-        # Apply headbob offsets if enabled
-        if HEADBOB_ENABLED:
-            try:
-                off_x, off_y = self.scene._headbob.offsets()
-            except Exception:
-                off_x, off_y = 0.0, 0.0
+        # Apply headbob offsets if the active controller is enabled.
+        hb = getattr(self.scene, "_headbob", None)
+        if hb is not None and getattr(hb, "enabled", HEADBOB_ENABLED):
+            off_x, off_y = hb.offsets()
             off_y = off_y * 0.85
             off_x = off_x * 0.75
             self.sword.position += Vector3(+off_x, +off_y, 0)
@@ -110,13 +108,16 @@ class WorldHUD:
 
     def draw(self) -> None:
         # Draw held item and compass (world-space sprites with pitch effect)
-        try:
-            self.sword.draw(pitch_effect=True)
-        except Exception:
-            pass
-        try:
-            self._compass.draw(pitch_effect=True)
-        except Exception:
-            pass
+        if getattr(self.scene, "held_item_visible", True):
+            try:
+                self.sword.draw(pitch_effect=True)
+            except Exception:
+                pass
+        if getattr(self.scene, "compass_visible", True):
+            try:
+                self._compass.draw(pitch_effect=True)
+            except Exception:
+                pass
 
-        self.test_light.draw(pitch_effect=True)
+        if getattr(self.scene, "test_light_visible", True):
+            self.test_light.draw(pitch_effect=True)

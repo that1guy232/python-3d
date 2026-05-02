@@ -161,6 +161,13 @@ class TextRenderer:
              when the text changes.
         align: 'topleft' | 'topright' | 'bottomleft' | 'bottomright' | 'center'
         """
+        # Ensure color is hashable for use in cache keys (callers may pass list)
+        try:
+            color = tuple(color)
+        except Exception:
+            # Fallback: coerce elements to int then tuple
+            color = tuple(int(c) for c in color)
+
         if key is not None:
             slot = self._get_slot_for_key(key)
             if slot.last_text != text:

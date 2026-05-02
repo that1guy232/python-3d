@@ -1,4 +1,4 @@
-"""CameraController: handles mouse look smoothing, movement input, and wall blocking.
+"""PlayerCameraController: handles mouse look, movement input, and wall blocking.
 
 This isolates input and movement from WorldScene. It reads keys, updates
 rotation smoothing toward targets set by mouse deltas, moves the camera via
@@ -13,12 +13,11 @@ import pygame
 from pygame.math import Vector3
 from typing import Tuple
 
-from world.sprite import WorldSprite
 from world.world_collision import movement_blocked_by_wall
 from config import MOUSE_SENSITIVITY, SPRINT_SPEED, BASE_SPEED, CAMERA_GROUND_OFFSET, JUMP_SPEED
 
 
-class CameraController:
+class PlayerCameraController:
     def __init__(self, scene, camera, *, rot_smooth_hz: float = 4.0):
         self.scene = scene
         self.camera = camera
@@ -102,18 +101,17 @@ class CameraController:
         return slid
 
     def _attempt_y_collision(self, old_position: Vector3) -> bool:
-        attempted = self.camera.position - old_position
-        # are we going up or down on y
-        # Build a shallow copy of the scene meshes so we don't mutate
-        # the scene's static_meshes list when appending the ground mesh.
-        meshes = getattr(self.scene, "static_meshes", None) or [] #.get_world_vertices
-        ground = getattr(self.scene, "ground_mesh", None)         #. s
         pos_y_buff = 15
         neg_y_buff = CAMERA_GROUND_OFFSET
-        # ground_height_sampler = getattr(ground, "height_sampler", None)
-        # print(ground_height_sampler)
-
-        ground_height = ground.height_sampler.height_at(self.camera.position.x, self.camera.position.z)
+        height_at = getattr(self.scene, "ground_height_at", None)
+        if callable(height_at):
+            ground_height = height_at(self.camera.position.x, self.camera.position.z)
+        else:
+            ground = getattr(self.scene, "ground_mesh", None)
+            sampler = getattr(ground, "height_sampler", None)
+            if sampler is None or not hasattr(sampler, "height_at"):
+                return False
+            ground_height = sampler.height_at(self.camera.position.x, self.camera.position.z)
 
         min_y = ground_height + neg_y_buff
         max_y = ground_height + pos_y_buff +(500)
@@ -135,8 +133,9 @@ class CameraController:
         """
 
         # Accept normalized (or raw) deltas
-        self.rot_target_y -= dx * MOUSE_SENSITIVITY
-        cand_x = self.rot_target_x - dy * MOUSE_SENSITIVITY
+        sensitivity = float(getattr(self.scene, "mouse_sensitivity", MOUSE_SENSITIVITY))
+        self.rot_target_y -= dx * sensitivity
+        cand_x = self.rot_target_x - dy * sensitivity
         self.rot_target_x = max(-math.pi / 2 + 0.001, min(math.pi / 2 - 0.001, cand_x))
         # Forward mouse delta into sway controller if present
         sc = getattr(self.scene, "_sway_controller", None)
@@ -189,8 +188,10 @@ class CameraController:
         if hb is not None:
             hb.notify_input_active(any_key_down)
 
-        road_multi = 1.5
-        speed = SPRINT_SPEED if sprinting else BASE_SPEED
+        road_multi = float(getattr(self.scene, "road_speed_multiplier", 1.5))
+        base_speed = float(getattr(self.scene, "walk_speed", BASE_SPEED))
+        sprint_speed = float(getattr(self.scene, "sprint_speed", SPRINT_SPEED))
+        speed = sprint_speed if sprinting else base_speed
         if self.scene.is_on_road(self.camera.position.x, self.camera.position.z):
             speed *= road_multi
         # speed is in world units/sec; Camera.move_camera applies dt internally
@@ -205,7 +206,7 @@ class CameraController:
             )
             if self.camera.position.y <= desired_ground_y + 0.1:
                 self.camera.is_jumping = True
-                self.camera.vertical_velocity = JUMP_SPEED
+                self.camera.vertical_velocity = float(getattr(self.scene, "jump_speed", JUMP_SPEED))
 
         old_position = self.camera.position.copy()
         self.camera.move_camera(keys, speed, dt)
@@ -234,4 +235,6 @@ class CameraController:
         return moving, sprinting
 
 
-__all__ = ["CameraController"]
+CameraController = PlayerCameraController
+
+__all__ = ["PlayerCameraController", "CameraController"]

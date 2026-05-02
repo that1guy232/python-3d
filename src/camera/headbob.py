@@ -56,6 +56,7 @@ class HeadBob:
         self._idle_breath_amplitude = 1.0
         self._idle_offset_y = 0.0
         self._idle_smooth_hz = 3.0
+        self.idle_enabled = True
 
     @staticmethod
     def _phase_crossed(prev: float, curr: float, target: float) -> bool:
@@ -131,29 +132,33 @@ class HeadBob:
 
         # Idle camera sway: starts when no keyboard or mouse input for a while.
         try:
-            if not getattr(self, "_any_key_down", False) and not getattr(
-                self, "_mouse_moved", False
-            ):
-                self._idle_elapsed += dt
-            else:
+            if not getattr(self, "idle_enabled", True):
                 self._idle_elapsed = 0.0
-
-            idle_active = self._idle_elapsed >= self._idle_threshold
-            if idle_active:
-                # regular small idle sway
-                self._idle_phase += (2.0 * math.pi * self._idle_frequency) * dt
-                sway_y = math.sin(self._idle_phase) * self._idle_amplitude
-                # slower breathing motion
-                self._idle_breath_phase += (
-                    2.0 * math.pi * self._idle_breath_frequency
-                ) * dt
-                breath_y = (
-                    math.sin(self._idle_breath_phase) * self._idle_breath_amplitude
-                )
-                # combine sway + breathing for final target
-                target_idle_y = sway_y + breath_y
-            else:
                 target_idle_y = 0.0
+            else:
+                if not getattr(self, "_any_key_down", False) and not getattr(
+                    self, "_mouse_moved", False
+                ):
+                    self._idle_elapsed += dt
+                else:
+                    self._idle_elapsed = 0.0
+
+                idle_active = self._idle_elapsed >= self._idle_threshold
+                if idle_active:
+                    # regular small idle sway
+                    self._idle_phase += (2.0 * math.pi * self._idle_frequency) * dt
+                    sway_y = math.sin(self._idle_phase) * self._idle_amplitude
+                    # slower breathing motion
+                    self._idle_breath_phase += (
+                        2.0 * math.pi * self._idle_breath_frequency
+                    ) * dt
+                    breath_y = (
+                        math.sin(self._idle_breath_phase) * self._idle_breath_amplitude
+                    )
+                    # combine sway + breathing for final target
+                    target_idle_y = sway_y + breath_y
+                else:
+                    target_idle_y = 0.0
 
             if dt > 0.0:
                 a_idle = 1.0 - math.exp(-self._idle_smooth_hz * dt)

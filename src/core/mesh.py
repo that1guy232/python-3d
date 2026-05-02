@@ -29,9 +29,12 @@ from OpenGL.GL import (
     GL_TEXTURE_COORD_ARRAY,
     GL_TEXTURE_2D,
     GL_BLEND,
+    GL_ALPHA_TEST,
     GL_SRC_ALPHA,
     GL_ONE_MINUS_SRC_ALPHA,
+    GL_GREATER,
     glBlendFunc,
+    glAlphaFunc,
     glTexEnvi,
     GL_TEXTURE_ENV_MODE,
     GL_MODULATE,
@@ -46,6 +49,7 @@ class BatchedMesh:
     vertex_count: int
     texture: int | None = None
     height_sampler: Optional[object] = None
+    alpha_test: bool = False
 
 
     def draw(self):
@@ -72,6 +76,9 @@ class BatchedMesh:
             glEnable(GL_TEXTURE_2D)
             glEnable(GL_BLEND)
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+            if self.alpha_test:
+                glEnable(GL_ALPHA_TEST)
+                glAlphaFunc(GL_GREATER, 0.01)
             glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE)
             glBindTexture(GL_TEXTURE_2D, self.texture)
 
@@ -79,6 +86,8 @@ class BatchedMesh:
             glDrawArrays(GL_TRIANGLES, 0, self.vertex_count)
 
             # Clean up
+            if self.alpha_test:
+                glDisable(GL_ALPHA_TEST)
             glDisable(GL_BLEND)
             glDisable(GL_TEXTURE_2D)
             glDisableClientState(GL_TEXTURE_COORD_ARRAY)
@@ -102,6 +111,25 @@ class BatchedMesh:
             glDisable(GL_BLEND)
             glDisableClientState(GL_COLOR_ARRAY)
             glDisableClientState(GL_VERTEX_ARRAY)
+
+    def draw_textured_prepared(self, *, bind_texture: bool = True):
+        """Draw a textured VBO while caller owns shared GL state.
+
+        Decal batches can draw many small meshes in a row; setting texture,
+        blend, and client-array state once around the loop avoids a surprising
+        amount of driver churn.
+        """
+        if self.vertex_count == 0 or self.texture is None:
+            return
+
+        stride = 8 * 4
+        glBindBuffer(GL_ARRAY_BUFFER, self.vbo_vertices)
+        glVertexPointer(3, GL_FLOAT, stride, None)
+        glColorPointer(3, GL_FLOAT, stride, ctypes.c_void_p(3 * 4))
+        glTexCoordPointer(2, GL_FLOAT, stride, ctypes.c_void_p(6 * 4))
+        if bind_texture:
+            glBindTexture(GL_TEXTURE_2D, self.texture)
+        glDrawArrays(GL_TRIANGLES, 0, self.vertex_count)
 
 class GroundHeightSampler:
     __slots__ = ("_count", "_spacing", "_w", "_heights")

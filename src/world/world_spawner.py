@@ -18,8 +18,6 @@ import numpy as np
 from pygame.math import Vector3
 from world.sprite import WorldSprite
 from textures.texture_utils import get_texture_size
-from concurrent.futures import ThreadPoolExecutor, Future
-from typing import Callable, Optional
 from collections import defaultdict
 
 
@@ -61,6 +59,35 @@ class SpatialGrid:
         return False
 
 
+def _object_bounds(obj):
+    for method_name in ("get_bounds", "get_bounding_box"):
+        method = getattr(obj, method_name, None)
+        if callable(method):
+            try:
+                return method()
+            except Exception:
+                return None
+    return getattr(obj, "bounds", None)
+
+
+def _contains_point(obj, x, z, margin) -> bool:
+    contains = getattr(obj, "contains_point", None)
+    if not callable(contains):
+        return False
+    try:
+        return bool(contains(x, z, margin=margin))
+    except TypeError:
+        return bool(contains(x, z))
+
+
+def _texture_id(tex) -> int:
+    return int(getattr(tex, "texture", tex))
+
+
+def _texture_uv_rect(tex) -> tuple[float, float, float, float]:
+    return getattr(tex, "uv_rect", (0.0, 0.0, 1.0, 1.0))
+
+
 def _prefilter_collision_objects(avoid_objects, x_center, z_center, max_spawn_x, max_spawn_z, margin):
     """Pre-filter collision objects to only those that could intersect the spawn area."""
     if not avoid_objects:
@@ -77,10 +104,8 @@ def _prefilter_collision_objects(avoid_objects, x_center, z_center, max_spawn_x,
         if obj is None:
             continue
         
-        # Check if object has bounding box method
-        if hasattr(obj, 'get_bounds'):
-            # Expect get_bounds() -> (min_x, max_x, min_z, max_z)
-            obj_bounds = obj.get_bounds()
+        obj_bounds = _object_bounds(obj)
+        if obj_bounds:
             try:
                 o_min_x, o_max_x, o_min_z, o_max_z = obj_bounds
             except Exception:
@@ -152,6 +177,9 @@ def spawn_world_sprites(
     list[WorldSprite]
         Newly created sprites positioned on the ground.
     """
+    if count <= 0 or not textures:
+        return []
+
     # Pre-compute texture sizes to avoid repeated lookups
     texture_sizes = {}
     for tex in set(textures):  # Remove duplicates
@@ -177,7 +205,7 @@ def spawn_world_sprites(
     )
 
     # Use spatial grid for sprite-sprite collision detection
-    spatial_grid = SpatialGrid(cell_size=max_sprite_radius * 4)
+    spatial_grid = SpatialGrid(cell_size=max(1.0, max_sprite_radius * 4))
 
     if use_batch_generation and count > 20:
         # Generate positions in batches for better performance
@@ -187,7 +215,64 @@ def spawn_world_sprites(
             pad_margin, max_retries, spatial_grid
         )
 
+    return _spawn_sprites_serial(
+        scene, count, textures, texture_sizes, camera, x_off, z_off,
+        max_spawn_x, max_spawn_z, filtered_roads, filtered_areas,
+        pad_margin, max_retries, spatial_grid
+    )
 
+
+def _can_place_sprite(x, z, radius, pad_margin, spatial_grid, filtered_roads, filtered_areas) -> bool:
+    if spatial_grid.check_collision(x, z, radius, pad_margin):
+        return False
+
+    margin = 2.0 + pad_margin + radius
+    if any(_contains_point(r, x, z, margin) for r in filtered_roads):
+        return False
+    if any(_contains_point(a, x, z, margin) for a in filtered_areas):
+        return False
+    return True
+
+
+def _create_sprite(scene, tex, width, height, camera, x, z) -> WorldSprite:
+    y_center = scene.ground_height_at(x, z) + (height * 0.5)
+    return WorldSprite(
+        position=Vector3(x, y_center, z),
+        size=(width, height),
+        texture=_texture_id(tex),
+        camera=camera,
+        uv_rect=_texture_uv_rect(tex),
+    )
+
+
+def _spawn_sprites_serial(
+    scene, count, textures, texture_sizes, camera, x_off, z_off,
+    max_spawn_x, max_spawn_z, filtered_roads, filtered_areas,
+    pad_margin, max_retries, spatial_grid
+):
+    """Generate sprites one at a time for small counts or deterministic fallback."""
+    sprites = []
+    attempts_per_sprite = max(1, int(max_retries))
+
+    for _ in range(count):
+        for _attempt in range(attempts_per_sprite):
+            x = random.uniform(-max_spawn_x, max_spawn_x) + x_off
+            z = random.uniform(-max_spawn_z, max_spawn_z) + z_off
+            tex = random.choice(textures)
+            width, height = texture_sizes[tex]
+            radius = width * 0.5
+
+            if not _can_place_sprite(
+                x, z, radius, pad_margin, spatial_grid, filtered_roads, filtered_areas
+            ):
+                continue
+
+            sprite = _create_sprite(scene, tex, width, height, camera, x, z)
+            sprites.append(sprite)
+            spatial_grid.add_sprite(sprite, x, z, radius)
+            break
+
+    return sprites
 
 
 def _spawn_sprites_batch(
@@ -200,10 +285,15 @@ def _spawn_sprites_batch(
     
     # Generate more candidates than needed to account for rejections
     batch_size = min(count * 3, 1000)  # Generate 3x candidates, capped at 1000
+    candidate_budget = max(count * max(1, int(max_retries)) * 10, count * 2, 100)
+    candidates_tried = 0
     
-    while len(sprites) < count:
+    while len(sprites) < count and candidates_tried < candidate_budget:
         remaining = count - len(sprites)
-        current_batch = min(batch_size, remaining * 2)
+        current_batch = min(batch_size, remaining * 2, candidate_budget - candidates_tried)
+        if current_batch <= 0:
+            break
+        candidates_tried += current_batch
         
         # Generate batch of candidate positions
         x_candidates = np.random.uniform(-max_spawn_x, max_spawn_x, current_batch) + x_off
@@ -222,27 +312,12 @@ def _spawn_sprites_batch(
             width, height = texture_sizes[tex]
             half_w = width * 0.5
             
-            # Check all collision conditions
-            if spatial_grid.check_collision(x, z, half_w, pad_margin):
-                continue
-                
-            road_margin = 2.0 + pad_margin + half_w
-            if any(r.contains_point(x, z, margin=road_margin) for r in filtered_roads):
-                continue
-                
-            area_margin = 2.0 + pad_margin + half_w
-            if any(a.contains_point(x, z, margin=area_margin) for a in filtered_areas):
+            if not _can_place_sprite(
+                x, z, half_w, pad_margin, spatial_grid, filtered_roads, filtered_areas
+            ):
                 continue
             
-            # Valid position - create sprite
-            y_center = scene.ground_height_at(x, z) + (height * 0.5)
-            sprite = WorldSprite(
-                position=Vector3(x, y_center, z),
-                size=(width, height),
-                texture=tex,
-                camera=camera,
-            )
-            
+            sprite = _create_sprite(scene, tex, width, height, camera, x, z)
             sprites.append(sprite)
             spatial_grid.add_sprite(sprite, x, z, half_w)
     

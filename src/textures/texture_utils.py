@@ -8,6 +8,7 @@ pygame surfaces.
 import math
 import random
 import pygame
+from dataclasses import dataclass
 from typing import Optional, Tuple, Dict
 from OpenGL.GL import (
     glGenTextures,
@@ -33,8 +34,19 @@ _SHADOW_TEX_CACHE: Dict[Tuple[int, int, float, float, float, float], int] = {}
 _POLY_SHADOW_CACHE: Dict[Tuple[Tuple[float, float], ...], int] = {}
 
 
+@dataclass(frozen=True)
+class TextureRegion:
+    """A rectangular sub-image inside a larger OpenGL texture."""
+
+    texture: int
+    uv_rect: Tuple[float, float, float, float]
+    size: Tuple[int, int]
+
+
 def get_texture_size(tex_id: int) -> Optional[Tuple[int, int]]:
     """Return (width, height) for a loaded texture ID, if known."""
+    if isinstance(tex_id, TextureRegion):
+        return tex_id.size
     return _TEXTURE_SIZES.get(tex_id)
 
 
@@ -43,11 +55,43 @@ def get_texture_aspect(tex_id: int, default: float = 1.0) -> float:
 
     Falls back to `default` if the ID isn't known.
     """
+    if isinstance(tex_id, TextureRegion):
+        w, h = tex_id.size
+        return (w / h) if h else default
     wh = _TEXTURE_SIZES.get(tex_id)
     if not wh:
         return default
     w, h = wh
     return (w / h) if h else default
+
+
+def _upload_texture_surface(surface, *, nearest: bool = True, repeat: bool = False) -> int:
+    texture_data = pygame.image.tostring(surface, "RGBA", True)
+    width, height = surface.get_size()
+
+    texture_id = glGenTextures(1)
+    glBindTexture(GL_TEXTURE_2D, texture_id)
+    glTexImage2D(
+        GL_TEXTURE_2D,
+        0,
+        GL_RGBA,
+        width,
+        height,
+        0,
+        GL_RGBA,
+        GL_UNSIGNED_BYTE,
+        texture_data,
+    )
+
+    filt = GL_NEAREST if nearest else GL_LINEAR
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filt)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filt)
+    wrap = GL_REPEAT if repeat else GL_CLAMP_TO_EDGE
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap)
+
+    _TEXTURE_SIZES[int(texture_id)] = (int(width), int(height))
+    return int(texture_id)
 
 
 def load_texture(filename):
@@ -70,36 +114,7 @@ def load_texture(filename):
         # Convert to RGBA format
         surface = surface.convert_alpha()
 
-        # Get image data
-        texture_data = pygame.image.tostring(surface, "RGBA", True)
-        width, height = surface.get_size()
-
-        # Generate OpenGL texture
-        texture_id = glGenTextures(1)
-        glBindTexture(GL_TEXTURE_2D, texture_id)
-
-        # Upload texture data
-        glTexImage2D(
-            GL_TEXTURE_2D,
-            0,
-            GL_RGBA,
-            width,
-            height,
-            0,
-            GL_RGBA,
-            GL_UNSIGNED_BYTE,
-            texture_data,
-        )
-
-        # Set texture parameters (use nearest to keep pixel art crisp)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
-        # Clamp edges to avoid sampling from opposite sides (prevents sprite seams)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
-
-        # Track texture size for later aspect-correct rendering
-        _TEXTURE_SIZES[int(texture_id)] = (int(width), int(height))
+        texture_id = _upload_texture_surface(surface, nearest=True, repeat=False)
 
         # print(f"Loaded texture: {filename} (ID: {texture_id}, Size: {width}x{height})")
         return texture_id
@@ -107,6 +122,83 @@ def load_texture(filename):
     except Exception as e:
         print(f"Failed to load texture {filename}: {e}")
         return create_test_texture()  # Fallback to test texture
+
+
+def _load_surface_or_fallback(filename: str):
+    try:
+        surface = pygame.image.load(filename)
+        try:
+            return surface.convert_alpha()
+        except pygame.error:
+            return surface.copy()
+    except Exception as e:
+        print(f"Failed to load atlas texture {filename}: {e}")
+        size = 64
+        surface = pygame.Surface((size, size), pygame.SRCALPHA)
+        red = (255, 0, 0, 255)
+        transparent = (0, 0, 0, 0)
+        for y in range(size):
+            for x in range(size):
+                color = red if ((x // 8) + (y // 8)) % 2 == 0 else transparent
+                surface.set_at((x, y), color)
+        return surface
+
+
+def load_texture_atlas(
+    filenames: list[str],
+    *,
+    padding: int = 2,
+    max_width: int = 1024,
+) -> list[TextureRegion]:
+    """Load several images into one texture and return per-image UV regions."""
+    if not filenames:
+        return []
+
+    padding = max(0, int(padding))
+    max_width = max(64, int(max_width))
+    surfaces = [_load_surface_or_fallback(filename) for filename in filenames]
+
+    placements: list[tuple[int, int, int, int]] = []
+    x = padding
+    y = padding
+    row_h = 0
+    atlas_w = padding
+
+    for surface in surfaces:
+        w, h = surface.get_size()
+        if x > padding and x + w + padding > max_width:
+            atlas_w = max(atlas_w, x)
+            x = padding
+            y += row_h + padding
+            row_h = 0
+        placements.append((x, y, w, h))
+        x += w + padding
+        row_h = max(row_h, h)
+
+    atlas_w = max(atlas_w, x)
+    atlas_h = y + row_h + padding
+    atlas = pygame.Surface((atlas_w, atlas_h), pygame.SRCALPHA)
+    atlas.fill((0, 0, 0, 0))
+
+    for surface, (px, py, _, _) in zip(surfaces, placements):
+        atlas.blit(surface, (px, py))
+
+    atlas_tex = _upload_texture_surface(atlas, nearest=True, repeat=False)
+    regions: list[TextureRegion] = []
+    for px, py, w, h in placements:
+        u0 = (px + 0.5) / atlas_w
+        u1 = (px + w - 0.5) / atlas_w
+        v0 = 1.0 - ((py + h - 0.5) / atlas_h)
+        v1 = 1.0 - ((py + 0.5) / atlas_h)
+        regions.append(
+            TextureRegion(
+                texture=atlas_tex,
+                uv_rect=(u0, v0, u1, v1),
+                size=(w, h),
+            )
+        )
+
+    return regions
 
 
 def create_test_texture():

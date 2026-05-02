@@ -6,7 +6,7 @@ import numpy as np
 import pygame
 from pygame.math import Vector3
 from world.ground_tile import GroundTile
-from textures.resoucepath import TEXTURES_PATH
+from textures.resource_path import TEXTURES_PATH
 from textures.texture_utils import get_texture_size
 from OpenGL.GL import (
     glGenBuffers,

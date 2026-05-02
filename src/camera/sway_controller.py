@@ -25,6 +25,7 @@ class SwayController:
     ) -> None:
         # Public sway vector in (right, up) space
         self.sway = Vector2(0.0, 0.0)
+        self.enabled = True
         # Internal target that accumulates raw mouse deltas then decays
         self._target = Vector2(0.0, 0.0)
 
@@ -40,6 +41,8 @@ class SwayController:
 
     def on_mouse_delta(self, dx: float, dy: float) -> None:
         """Called with raw mouse delta (dx, dy) to nudge sway target."""
+        if not self.enabled:
+            return
         self._target.x += dx * self.mouse_scale
         self._target.y += dy * self.mouse_scale
         # Clamp target to configured maximums
@@ -50,6 +53,12 @@ class SwayController:
         """Smoothly update the sway toward the target and decay the target."""
         if dt <= 0.0:
             return
+        if not self.enabled:
+            self.sway.x = 0.0
+            self.sway.y = 0.0
+            self._target.x = 0.0
+            self._target.y = 0.0
+            return
         a = 1.0 - math.exp(-self.responsiveness * dt)
         # Ease current sway toward target
         self.sway += (self._target - self.sway) * a
@@ -58,6 +67,8 @@ class SwayController:
         self._target *= decay
 
     def get_sway(self) -> Vector2:
+        if not self.enabled:
+            return Vector2(0.0, 0.0)
         return self.sway.copy()
 
 

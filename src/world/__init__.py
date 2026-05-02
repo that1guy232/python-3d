@@ -1,34 +1,37 @@
-"""World package: re-export common symbols for simpler imports.
+"""World package public exports.
 
-Callers can import public types from `world` directly, e.g.:
-
-    from world import WorldScene, WorldSprite, Decal
-
-This file intentionally keeps the public surface small and stable while the
-implementation files remain under `world/*.py`.
+Exports are resolved lazily so low-level modules can import each other without
+loading the full world scene as a side effect of importing the package.
 """
 
-from .worldscene import WorldScene
-from .sprite import WorldSprite, draw_sprites_batched
-from .decal import Decal
-from .decal_batch import DecalBatch
-from .ground_tile import GroundTile
-from .objects import WallTile, Road
-from .world_spawner import spawn_world_sprites
-from .world_hud import WorldHUD
-from .world_collision import movement_blocked_by_wall
+from __future__ import annotations
 
-__all__ = [
-    "WorldScene",
-    "WorldSprite",
-    "draw_sprites_batched",
-    "Decal",
-    "DecalBatch",
-    "GroundTile",
-    "WallTile",
-    "Road",
-    "spawn_world_sprites",
-    "WorldHUD",
-    "WorldShadeOverlay",
-    "movement_blocked_by_wall",
-]
+from importlib import import_module
+
+
+_EXPORTS = {
+    "WorldScene": (".worldscene", "WorldScene"),
+    "WorldSprite": (".sprite", "WorldSprite"),
+    "draw_sprites_batched": (".sprite", "draw_sprites_batched"),
+    "Decal": (".decal", "Decal"),
+    "DecalBatch": (".decal_batch", "DecalBatch"),
+    "GroundTile": (".ground_tile", "GroundTile"),
+    "WallTile": (".objects", "WallTile"),
+    "Road": (".objects", "Road"),
+    "spawn_world_sprites": (".world_spawner", "spawn_world_sprites"),
+    "WorldHUD": (".world_hud", "WorldHUD"),
+    "movement_blocked_by_wall": (".world_collision", "movement_blocked_by_wall"),
+}
+
+__all__ = list(_EXPORTS)
+
+
+def __getattr__(name: str):
+    try:
+        module_name, attr_name = _EXPORTS[name]
+    except KeyError as exc:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc
+
+    value = getattr(import_module(module_name, __name__), attr_name)
+    globals()[name] = value
+    return value

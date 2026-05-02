@@ -25,6 +25,21 @@ def movement_blocked_by_wall(
     """
     seg = new_pos - old_pos
     eps = 1e-6
+    query_min_x = min(old_pos.x, new_pos.x) - player_radius
+    query_max_x = max(old_pos.x, new_pos.x) + player_radius
+    query_min_z = min(old_pos.z, new_pos.z) - player_radius
+    query_max_z = max(old_pos.z, new_pos.z) + player_radius
+
+    def bounds_overlap(bounds) -> bool:
+        if not bounds:
+            return True
+        min_x, max_x, min_z, max_z = bounds
+        return (
+            min_x <= query_max_x
+            and max_x >= query_min_x
+            and min_z <= query_max_z
+            and max_z >= query_min_z
+        )
 
     def point_in_poly_2d(px: float, py: float, poly: list[tuple[float, float]]) -> bool:
         """Ray-casting point-in-polygon test (2D)."""
@@ -112,6 +127,13 @@ def movement_blocked_by_wall(
         return None
 
     for m in meshes:
+        if hasattr(m, "get_bounding_box"):
+            try:
+                if not bounds_overlap(m.get_bounding_box()):
+                    continue
+            except Exception:
+                pass
+
         # if it has #get_world_Vertices() we can continues 
         if not hasattr(m, 'get_world_vertices'):
             print(m)

@@ -9,6 +9,9 @@ class Object3D:
         self.local_vertices = []
         self._rotation_cache = (None, None, None)
         self._rotation_matrix = None
+        self._world_vertices_cache = None
+        self._world_vertices_cache_key = None
+        self._bounds_cache = None
 
     def _update_rotation_matrix(self):
         """Cache sin/cos values and the rotation matrix for the current rotation."""
@@ -54,8 +57,49 @@ class Object3D:
 
     def get_world_vertices(self):
         """Get vertices in world space (with rotation and position)"""
+        cache_key = self._transform_cache_key()
+        if (
+            self._world_vertices_cache_key == cache_key
+            and self._world_vertices_cache is not None
+        ):
+            return self._world_vertices_cache
+
         world_vertices = []
         for vertex in self.local_vertices:
             rotated = self._rotate_vertex(vertex)
             world_vertices.append(rotated + self.position)
+        self._world_vertices_cache_key = cache_key
+        self._world_vertices_cache = world_vertices
+        self._bounds_cache = None
         return world_vertices
+
+    def _transform_cache_key(self):
+        return (
+            self.position.x,
+            self.position.y,
+            self.position.z,
+            self.rotation.x,
+            self.rotation.y,
+            self.rotation.z,
+            id(self.local_vertices),
+            len(self.local_vertices),
+        )
+
+    def get_bounding_box(self):
+        """Return cached XZ bounds as (min_x, max_x, min_z, max_z)."""
+        if (
+            self._bounds_cache is not None
+            and self._world_vertices_cache_key == self._transform_cache_key()
+        ):
+            return self._bounds_cache
+
+        verts = self.get_world_vertices()
+        if not verts:
+            return None
+
+        min_x = min(v.x for v in verts)
+        max_x = max(v.x for v in verts)
+        min_z = min(v.z for v in verts)
+        max_z = max(v.z for v in verts)
+        self._bounds_cache = (min_x, max_x, min_z, max_z)
+        return self._bounds_cache

@@ -72,6 +72,13 @@ class WorldSprite:
     texture: int
     camera: any  # expects Camera with _right and _forward vectors updated via update_rotation()
     color: tuple[float, float, float] = (1.0, 1.0, 1.0)
+    uv_rect: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0)
+
+    def __post_init__(self):
+        texture_id = getattr(self.texture, "texture", None)
+        if texture_id is not None:
+            self.uv_rect = getattr(self.texture, "uv_rect", self.uv_rect)
+            self.texture = int(texture_id)
     
     @property
     def faces(self):
@@ -131,18 +138,19 @@ class WorldSprite:
         glBindTexture(GL_TEXTURE_2D, self.texture)
 
         r, g, b = self.color
+        u0, v0, u1, v1 = self.uv_rect
 
         glColor3f(r, g, b)
 
         glBegin(GL_QUADS)
         # t,v ordering: (u, v) then vertex
-        glTexCoord2f(0.0, 1.0)
+        glTexCoord2f(u0, v1)
         glVertex3f(tl.x, tl.y, tl.z)
-        glTexCoord2f(1.0, 1.0)
+        glTexCoord2f(u1, v1)
         glVertex3f(tr.x, tr.y, tr.z)
-        glTexCoord2f(1.0, 0.0)
+        glTexCoord2f(u1, v0)
         glVertex3f(br.x, br.y, br.z)
-        glTexCoord2f(0.0, 0.0)
+        glTexCoord2f(u0, v0)
         glVertex3f(bl.x, bl.y, bl.z)
         glEnd()
 
@@ -304,12 +312,13 @@ def draw_sprites_batched(
 
     
 
-    # Group by texture
+    # Group adjacent depth-sorted sprites by texture. If callers provide atlas
+    # regions, many logical sprites share the same underlying GL texture.
     batches = []
     cur_tex = None
     cur_batch = None
     for _, tex, s in visible_sprites:
-        if tex is not cur_tex:
+        if tex != cur_tex:
             if cur_batch:
                 batches.append((cur_tex, cur_batch))
             cur_tex = tex
@@ -347,6 +356,7 @@ def draw_sprites_batched(
                 brightness = brightness_default
 
             cr, cg, cb = s.color
+            u0, v0, u1, v1 = s.uv_rect
             r = cr * brightness
             g = cg * brightness
             b = cb * brightness
@@ -391,16 +401,16 @@ def draw_sprites_batched(
             # draw (single color call per quad)
             glColor4f_local(r, g, b, 1.0)
 
-            glTexCoord2f_local(0.0, 1.0)
+            glTexCoord2f_local(u0, v1)
             glVertex3f_local(tl_x, tl_y, tl_z)
 
-            glTexCoord2f_local(1.0, 1.0)
+            glTexCoord2f_local(u1, v1)
             glVertex3f_local(tr_x, tr_y, tr_z)
 
-            glTexCoord2f_local(1.0, 0.0)
+            glTexCoord2f_local(u1, v0)
             glVertex3f_local(br_x, br_y, br_z)
 
-            glTexCoord2f_local(0.0, 0.0)
+            glTexCoord2f_local(u0, v0)
             glVertex3f_local(bl_x, bl_y, bl_z)
 
         glEnd()
