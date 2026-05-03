@@ -68,10 +68,15 @@ class WorldRenderer:
 
     def draw_sky(self) -> None:  # pragma: no cover - visual
         scene = self.scene
+        lighting = getattr(scene, "lighting", None)
         scene.sky.draw(
             scene.camera,
-            sun_direction=scene.sun_direction,
-            lighting=getattr(scene, "lighting", None),
+            sun_direction=getattr(
+                lighting,
+                "sun_direction",
+                getattr(scene, "sun_direction", None),
+            ),
+            lighting=lighting,
             fog_enabled=self._fog_enabled(),
         )
 

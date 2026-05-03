@@ -6,9 +6,9 @@ colors, so keeping the sun math here helps every mesh agree on the same source.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
-from typing import Sequence
+from typing import Any, Sequence
 
 import numpy as np
 from pygame.math import Vector3
@@ -21,7 +21,7 @@ INDOOR_NORMAL = (0.0, -1.0, 0.0)
 
 @dataclass
 class SceneLighting:
-    """Directional sunlight settings shared by sky, meshes, sprites, and shadows.
+    """Shared lighting state for sun, indoor dimming, and local light areas.
 
     ``sun_direction`` follows the existing scene convention: it points from the
     sun toward the world. Surface lighting uses the inverse direction.
@@ -34,6 +34,9 @@ class SceneLighting:
     diffuse: float = 0.48
     max_factor: float = 1.15
     sun_tint: tuple[float, float, float] = (1.0, 0.96, 0.86)
+    base_brightness: float = 1.0
+    brightness_modifiers: list[dict[str, Any]] = field(default_factory=list)
+    covered_regions: list[object] = field(default_factory=list)
 
     @classmethod
     def from_world_center(
@@ -42,6 +45,7 @@ class SceneLighting:
         *,
         sky_color: tuple[float, float, float, float],
         sun_offset: Vector3 | Sequence[float] = (36000.0, 22000.0, 18000.0),
+        base_brightness: float = 1.0,
     ) -> "SceneLighting":
         offset = _as_vector3(sun_offset, Vector3(36000.0, 22000.0, 18000.0))
         target = Vector3(float(world_center.x), 0.0, float(world_center.z))
@@ -50,7 +54,12 @@ class SceneLighting:
             float(world_center.y) + offset.y,
             float(world_center.z) + offset.z,
         )
-        return cls(sun_position=position, sun_target=target, sky_color=sky_color)
+        return cls(
+            sun_position=position,
+            sun_target=target,
+            sky_color=sky_color,
+            base_brightness=float(base_brightness),
+        )
 
     @property
     def sun_direction(self) -> Vector3:
@@ -64,6 +73,71 @@ class SceneLighting:
         direction = self.sun_direction
         return Vector3(-direction.x, -direction.y, -direction.z)
 
+    def set_base_brightness(self, value: float) -> float:
+        self.base_brightness = float(value)
+        return self.base_brightness
+
+    def set_covered_regions(self, regions: Sequence[object] | None) -> list[object]:
+        self.covered_regions = list(regions or ())
+        return self.covered_regions
+
+    def set_brightness_modifiers(
+        self,
+        modifiers: Sequence[object] | None,
+        *,
+        camera: object | None = None,
+        install_on_camera: bool = False,
+    ) -> list[dict[str, Any]]:
+        source = list(modifiers or ())
+        self.brightness_modifiers = []
+        self.extend_brightness_modifiers(
+            source,
+            camera=camera,
+            install_on_camera=install_on_camera,
+        )
+        return self.brightness_modifiers
+
+    def extend_brightness_modifiers(
+        self,
+        modifiers: Sequence[object],
+        *,
+        camera: object | None = None,
+        install_on_camera: bool = True,
+    ) -> list[dict[str, Any]]:
+        added: list[dict[str, Any]] = []
+        for modifier in modifiers or ():
+            try:
+                added.append(
+                    self.add_brightness_modifier(
+                        modifier,
+                        camera=camera,
+                        install_on_camera=install_on_camera,
+                    )
+                )
+            except (KeyError, TypeError, ValueError, AttributeError):
+                continue
+        return added
+
+    def add_brightness_modifier(
+        self,
+        modifier: object,
+        *,
+        camera: object | None = None,
+        install_on_camera: bool = True,
+    ) -> dict[str, Any]:
+        normalized = normalize_brightness_modifier(modifier)
+        self.brightness_modifiers.append(normalized)
+        if install_on_camera:
+            install_brightness_modifier_on_camera(camera, normalized)
+        return normalized
+
+    def sync_brightness_modifiers_from_camera(
+        self,
+        camera: object | None,
+    ) -> list[dict[str, Any]]:
+        areas = getattr(camera, "brightness_areas", ()) if camera is not None else ()
+        return self.set_brightness_modifiers(areas, install_on_camera=False)
+
 
 def _as_vector3(value, fallback: Vector3 | None = None) -> Vector3:
     if value is None:
@@ -73,9 +147,69 @@ def _as_vector3(value, fallback: Vector3 | None = None) -> Vector3:
         return Vector3(float(value.x), float(value.y), float(value.z))
     except Exception:
         try:
+            if len(value) == 2:
+                return Vector3(float(value[0]), 0.0, float(value[1]))
             return Vector3(float(value[0]), float(value[1]), float(value[2]))
         except Exception:
             return Vector3(fallback or (0.0, 0.0, 0.0))
+
+
+def normalize_brightness_modifier(modifier: object) -> dict[str, Any]:
+    """Normalize tuple/dict/object brightness areas into the shared contract."""
+
+    if isinstance(modifier, dict):
+        center = _as_vector3(modifier["center"])
+        return {
+            "center": center,
+            "radius": float(modifier["radius"]),
+            "value": float(modifier["value"]),
+            "falloff": float(modifier.get("falloff", 1.0)),
+            "bounds": modifier.get("bounds"),
+            "indoor_only": bool(modifier.get("indoor_only", False)),
+            "floor_scale": float(modifier.get("floor_scale", 1.0)),
+        }
+
+    if all(hasattr(modifier, name) for name in ("center", "radius", "value")):
+        return {
+            "center": _as_vector3(getattr(modifier, "center")),
+            "radius": float(getattr(modifier, "radius")),
+            "value": float(getattr(modifier, "value")),
+            "falloff": float(getattr(modifier, "falloff", 1.0)),
+            "bounds": getattr(modifier, "bounds", None),
+            "indoor_only": bool(getattr(modifier, "indoor_only", False)),
+            "floor_scale": float(getattr(modifier, "floor_scale", 1.0)),
+        }
+
+    values = list(modifier)  # type: ignore[arg-type]
+    return {
+        "center": _as_vector3(values[0]),
+        "radius": float(values[1]),
+        "value": float(values[2]),
+        "falloff": float(values[3]) if len(values) > 3 else 1.0,
+        "bounds": values[4] if len(values) > 4 else None,
+        "indoor_only": bool(values[5]) if len(values) > 5 else False,
+        "floor_scale": float(values[6]) if len(values) > 6 else 1.0,
+    }
+
+
+def install_brightness_modifier_on_camera(
+    camera: object | None,
+    modifier: object,
+) -> None:
+    add_area = getattr(camera, "add_brightness_area", None)
+    if not callable(add_area):
+        return
+
+    normalized = normalize_brightness_modifier(modifier)
+    add_area(
+        normalized["center"],
+        normalized["radius"],
+        normalized["value"],
+        normalized["falloff"],
+        bounds=normalized["bounds"],
+        indoor_only=normalized["indoor_only"],
+        floor_scale=normalized["floor_scale"],
+    )
 
 
 def _normalized(value, fallback: Vector3 | None = None) -> Vector3:
@@ -244,19 +378,14 @@ def apply_brightness_modifiers(
 
     for modifier in modifiers:
         try:
-            if isinstance(modifier, dict):
-                position = modifier["center"]
-                radius = modifier["radius"]
-                brightness_value = modifier["value"]
-                fall_off = modifier.get("falloff", 1.0)
-                bounds = modifier.get("bounds")
-                indoor_only = bool(modifier.get("indoor_only", False))
-                floor_scale = float(modifier.get("floor_scale", 1.0))
-            else:
-                position, radius, brightness_value, fall_off = modifier[:4]
-                bounds = modifier[4] if len(modifier) > 4 else None
-                indoor_only = False
-                floor_scale = 1.0
+            normalized = normalize_brightness_modifier(modifier)
+            position = normalized["center"]
+            radius = normalized["radius"]
+            brightness_value = normalized["value"]
+            fall_off = normalized["falloff"]
+            bounds = normalized["bounds"]
+            indoor_only = bool(normalized["indoor_only"])
+            floor_scale = float(normalized["floor_scale"])
             radius = max(float(radius), _EPSILON)
             center_x = float(position.x)
             center_z = float(position.z)

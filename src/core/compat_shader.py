@@ -610,6 +610,12 @@ def set_texture_lighting_state(
 
     global _texture_lighting_state
 
+    if lighting is not None:
+        if base_brightness is None and hasattr(lighting, "base_brightness"):
+            base_brightness = getattr(lighting, "base_brightness")
+        if brightness_areas is None and hasattr(lighting, "brightness_modifiers"):
+            brightness_areas = getattr(lighting, "brightness_modifiers")
+
     current = _texture_lighting_state
     (
         area_values,

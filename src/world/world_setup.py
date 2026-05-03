@@ -66,6 +66,9 @@ def setup_brightness_areas(scene, grid_count: int, spacing: float, half: float) 
         except Exception:
             pass
     scene.brightness_modifiers = brightness_modifiers
+    lighting = getattr(scene, "lighting", None)
+    if lighting is not None:
+        lighting.set_brightness_modifiers(brightness_modifiers)
 
 
 def setup_controllers(scene) -> None:
@@ -134,10 +137,18 @@ def setup_graphics(scene) -> None:
     scene.lighting = SceneLighting.from_world_center(
         scene.world_center,
         sky_color=LIGHT_BLUE,
+        base_brightness=getattr(scene.camera, "brightness_default", 1.0),
     )
-    # Backward-compatible aliases used by shadows and a few older render paths.
-    scene.sun_pos = scene.lighting.sun_position
-    scene.sun_direction = scene.lighting.sun_direction
+    scene.lighting.set_brightness_modifiers(
+        getattr(scene, "brightness_modifiers", ()),
+    )
+    scene.lighting.set_covered_regions(getattr(scene, "covered_regions", ()))
+    sync_aliases = getattr(scene, "_sync_lighting_aliases", None)
+    if callable(sync_aliases):
+        sync_aliases()
+    else:
+        scene.sun_pos = scene.lighting.sun_position
+        scene.sun_direction = scene.lighting.sun_direction
 
 
 def load_assets(scene) -> None:

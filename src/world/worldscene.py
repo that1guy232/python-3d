@@ -226,6 +226,17 @@ class WorldScene(Scene):
         if log:
             print(f"{message} took {end_time - start_time:.6f} seconds")
 
+    def _sync_lighting_aliases(self):
+        """Keep older scene attributes pointing at the shared lighting model."""
+        lighting = getattr(self, "lighting", None)
+        if lighting is None:
+            return None
+        self.sun_pos = lighting.sun_position
+        self.sun_direction = lighting.sun_direction
+        self.brightness_modifiers = lighting.brightness_modifiers
+        self.covered_regions = lighting.covered_regions
+        return lighting
+
     def draw_sky(self) -> None:  # pragma: no cover - visual
         return self.renderer.draw_sky()
 
@@ -436,6 +447,10 @@ class WorldScene(Scene):
             if cache is not None:
                 cache.clear()
 
+        lighting = getattr(self, "lighting", None)
+        if lighting is not None:
+            lighting.set_base_brightness(brightness)
+
         if (
             getattr(self, "_initialized", False)
             and getattr(self, "_last_static_lighting_brightness", None) == brightness
@@ -476,7 +491,13 @@ class WorldScene(Scene):
                 )
             except (KeyError, TypeError, ValueError):
                 continue
-        self.brightness_modifiers = modifiers
+
+        lighting = getattr(self, "lighting", None)
+        if lighting is not None:
+            lighting.set_brightness_modifiers(modifiers)
+            self._sync_lighting_aliases()
+        else:
+            self.brightness_modifiers = modifiers
 
     @staticmethod
     def _dispose_renderable(obj) -> None:
@@ -496,7 +517,15 @@ class WorldScene(Scene):
         camera = self.camera
         brightness = float(getattr(camera, "brightness_default", 1.0))
         lighting = getattr(self, "lighting", None)
-        sun_direction = getattr(lighting, "sun_direction", getattr(self, "sun_direction", None))
+        if lighting is not None:
+            lighting.set_base_brightness(brightness)
+            lighting.set_covered_regions(getattr(self, "covered_regions", ()))
+            self._sync_lighting_aliases()
+        sun_direction = getattr(
+            lighting,
+            "sun_direction",
+            getattr(self, "sun_direction", None),
+        )
         self.sun_direction = sun_direction
 
         builder = getattr(self, "builder", None)
@@ -569,11 +598,22 @@ class WorldScene(Scene):
             if base_brightness is not None
             else float(getattr(camera, "brightness_default", 1.0))
         )
+        if lighting is not None:
+            lighting.set_base_brightness(brightness)
+            self._sync_lighting_aliases()
         return set_texture_lighting_state(
             base_brightness=brightness,
             lighting=lighting,
-            sun_direction=getattr(lighting, "sun_direction", getattr(self, "sun_direction", None)),
-            brightness_areas=getattr(camera, "brightness_areas", ()),
+            sun_direction=getattr(
+                lighting,
+                "sun_direction",
+                getattr(self, "sun_direction", None),
+            ),
+            brightness_areas=getattr(
+                lighting,
+                "brightness_modifiers",
+                getattr(camera, "brightness_areas", ()),
+            ),
             exposure_scale=1.0,
             compile_shader=compile_shader,
         )

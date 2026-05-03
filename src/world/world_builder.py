@@ -138,6 +138,19 @@ def _install_building_torch_lights(scene) -> None:
     )
     scene.torch_light_modifiers = modifiers
     scene.doorway_light_modifiers = []
+    lighting = getattr(scene, "lighting", None)
+    if lighting is not None:
+        lighting.extend_brightness_modifiers(
+            modifiers,
+            camera=getattr(scene, "camera", None),
+        )
+        sync_aliases = getattr(scene, "_sync_lighting_aliases", None)
+        if callable(sync_aliases):
+            sync_aliases()
+        else:
+            scene.brightness_modifiers = lighting.brightness_modifiers
+        return
+
     if not hasattr(scene, "brightness_modifiers") or scene.brightness_modifiers is None:
         scene.brightness_modifiers = []
     scene.brightness_modifiers.extend(modifiers)
@@ -264,6 +277,12 @@ def create_world_objects_steps(
     for spec in scene.building_specs:
         scene.buildings.append(Building(position=spec["position"]))
     scene.covered_regions = _building_covered_regions(scene)
+    lighting = getattr(scene, "lighting", None)
+    if lighting is not None:
+        lighting.set_covered_regions(scene.covered_regions)
+        sync_aliases = getattr(scene, "_sync_lighting_aliases", None)
+        if callable(sync_aliases):
+            sync_aliases()
     _install_building_torch_lights(scene)
 
     scene.builder = TexturedGroundGridBuilder(
@@ -678,7 +697,8 @@ def _build_shadow_decals(scene) -> None:
         size_w = w * rng.uniform(0.45, 0.75)
         size_h = h * rng.uniform(0.45, 0.75)
 
-        sun = getattr(scene, "sun_direction", None)
+        lighting = getattr(scene, "lighting", None)
+        sun = getattr(lighting, "sun_direction", getattr(scene, "sun_direction", None))
         final_w, final_h = size_w, size_h
         offset_x, offset_z = 0.0, 0.0
         rot = 0.0

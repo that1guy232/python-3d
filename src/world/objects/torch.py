@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any, Callable, Iterable
 
 from pygame.math import Vector3
 
+from engine.rendering.lighting import (
+    install_brightness_modifier_on_camera,
+    normalize_brightness_modifier,
+)
 from engine.rendering.sprite import WorldSprite
 from textures.resource_path import TORCH_TEXTURE_PATH
 from textures.texture_utils import get_texture_size, load_texture
@@ -34,14 +38,6 @@ _OPPOSITE_SIDE = {
     "south": "north",
     "west": "east",
 }
-
-
-def _coerce_vector3(value: Vector3 | Sequence[float]) -> Vector3:
-    if isinstance(value, Vector3):
-        return value
-    if len(value) == 2:
-        return Vector3(float(value[0]), 0.0, float(value[1]))
-    return Vector3(float(value[0]), float(value[1]), float(value[2]))
 
 
 @dataclass
@@ -122,46 +118,11 @@ class Torch(WorldSprite):
 
     @staticmethod
     def normalize_brightness_modifier(modifier: object) -> dict[str, Any]:
-        if isinstance(modifier, dict):
-            center = _coerce_vector3(modifier["center"])
-            return {
-                "center": center,
-                "radius": float(modifier["radius"]),
-                "value": float(modifier["value"]),
-                "falloff": float(modifier.get("falloff", 1.0)),
-                "bounds": modifier.get("bounds"),
-                "indoor_only": bool(modifier.get("indoor_only", False)),
-                "floor_scale": float(modifier.get("floor_scale", 1.0)),
-            }
-
-        values = list(modifier)  # type: ignore[arg-type]
-        center = _coerce_vector3(values[0])
-        return {
-            "center": center,
-            "radius": float(values[1]),
-            "value": float(values[2]),
-            "falloff": float(values[3]),
-            "bounds": values[4] if len(values) > 4 else None,
-            "indoor_only": False,
-            "floor_scale": 1.0,
-        }
+        return normalize_brightness_modifier(modifier)
 
     @staticmethod
     def install_brightness_modifier(camera: object, modifier: object) -> None:
-        add_area = getattr(camera, "add_brightness_area", None)
-        if not callable(add_area):
-            return
-
-        normalized = Torch.normalize_brightness_modifier(modifier)
-        add_area(
-            normalized["center"],
-            normalized["radius"],
-            normalized["value"],
-            normalized["falloff"],
-            bounds=normalized["bounds"],
-            indoor_only=normalized["indoor_only"],
-            floor_scale=normalized["floor_scale"],
-        )
+        install_brightness_modifier_on_camera(camera, modifier)
 
     @staticmethod
     def sprite_size_for_texture(
