@@ -14,6 +14,7 @@ from OpenGL.GL import (
     glEnd,
     glFogf,
     glFogfv,
+    glFogi,
     glLoadIdentity,
     glMatrixMode,
     glRotatef,
@@ -21,9 +22,11 @@ from OpenGL.GL import (
     glVertex2f,
     GL_COLOR_BUFFER_BIT,
     GL_DEPTH_BUFFER_BIT,
+    GL_EXP2,
     GL_FOG,
     GL_FOG_COLOR,
     GL_FOG_DENSITY,
+    GL_FOG_MODE,
     GL_MODELVIEW,
     GL_PROJECTION,
     GL_QUADS,
@@ -32,6 +35,7 @@ from OpenGL.GL import (
 from OpenGL.GLU import gluPerspective
 
 from config import FOGDENSITY, FOV, HEADBOB_ENABLED, HEIGHT, LIGHT_BLUE, WIDTH
+from core.compat_shader import set_texture_fog_state
 
 
 class WorldRenderer:
@@ -94,14 +98,23 @@ class WorldRenderer:
     ) -> None:  # pragma: no cover - visual
         scene = self.scene
         rgba = self._sky_rgba()
+        fog_enabled = self._fog_enabled()
+        fog_density = max(0.0, float(getattr(scene, "fog_density", FOGDENSITY)))
 
-        if self._fog_enabled():
+        if fog_enabled:
             glEnable(GL_FOG)
-            glFogf(GL_FOG_DENSITY, float(getattr(scene, "fog_density", FOGDENSITY)))
+            glFogi(GL_FOG_MODE, GL_EXP2)
+            glFogf(GL_FOG_DENSITY, fog_density)
         else:
             glDisable(GL_FOG)
 
         glFogfv(GL_FOG_COLOR, rgba)
+        set_texture_fog_state(
+            enabled=fog_enabled,
+            density=fog_density,
+            color=rgba,
+            compile_shader=False,
+        )
         glClearColor(*rgba)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 

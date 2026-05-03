@@ -42,6 +42,7 @@ varying vec4 v_color;
 varying vec2 v_uv;
 varying vec3 v_normal;
 varying vec3 v_world_pos;
+varying float v_fog_distance;
 
 void main()
 {
@@ -50,6 +51,8 @@ void main()
     v_uv = gl_MultiTexCoord0.xy;
     v_normal = gl_Normal;
     v_world_pos = gl_Vertex.xyz;
+    vec4 eye_pos = gl_ModelViewMatrix * gl_Vertex;
+    v_fog_distance = length(eye_pos.xyz);
 }
 """
 
@@ -70,11 +73,15 @@ uniform vec4 u_brightness_areas[16];
 uniform float u_brightness_falloffs[16];
 uniform vec4 u_brightness_bounds[16];
 uniform float u_brightness_indoor_only[16];
+uniform int u_fog_enabled;
+uniform float u_fog_density;
+uniform vec4 u_fog_color;
 
 varying vec4 v_color;
 varying vec2 v_uv;
 varying vec3 v_normal;
 varying vec3 v_world_pos;
+varying float v_fog_distance;
 
 float brightness_at(vec3 world_pos, float receiver_factor)
 {
@@ -124,6 +131,17 @@ float sunlight_factor()
     );
 }
 
+vec3 apply_fog(vec3 rgb)
+{
+    if (u_fog_enabled == 0) {
+        return rgb;
+    }
+    float density = max(u_fog_density, 0.0);
+    float fog_factor = exp(-pow(density * v_fog_distance, 2.0));
+    fog_factor = clamp(fog_factor, 0.0, 1.0);
+    return mix(u_fog_color.rgb, rgb, fog_factor);
+}
+
 void main()
 {
     vec4 texel = texture2D(u_texture, v_uv);
@@ -132,6 +150,7 @@ void main()
         ? u_exposure
         : brightness_at(v_world_pos, receiver_factor) * u_exposure;
     vec3 rgb = texel.rgb * v_color.rgb * brightness * sunlight_factor();
+    rgb = apply_fog(rgb);
     gl_FragColor = vec4(rgb, texel.a * v_color.a);
 }
 """
@@ -154,6 +173,9 @@ class TextureColorExposureShader:
     brightness_falloff_locations: tuple[int, ...]
     brightness_bound_locations: tuple[int, ...]
     brightness_indoor_only_locations: tuple[int, ...]
+    fog_enabled_location: int
+    fog_density_location: int
+    fog_color_location: int
 
     def bind(
         self,
@@ -176,6 +198,7 @@ class TextureColorExposureShader:
                 self.directional_enabled_location,
                 1 if directional_enabled else 0,
             )
+        self.apply_fog_state(_texture_fog_state)
 
     def set_exposure_scale(self, exposure_scale: float) -> None:
         if self.exposure_location >= 0:
@@ -231,6 +254,14 @@ class TextureColorExposureShader:
             )
             glUniform1f(location, value)
 
+    def apply_fog_state(self, state: "TextureFogState") -> None:
+        if self.fog_enabled_location >= 0:
+            glUniform1i(self.fog_enabled_location, 1 if state.enabled else 0)
+        if self.fog_density_location >= 0:
+            glUniform1f(self.fog_density_location, max(0.0, state.density))
+        if self.fog_color_location >= 0:
+            glUniform4f(self.fog_color_location, *state.color)
+
 
 @dataclass(frozen=True)
 class TextureLightingState:
@@ -245,10 +276,18 @@ class TextureLightingState:
     brightness_indoor_only: tuple[float, ...] = ()
 
 
+@dataclass(frozen=True)
+class TextureFogState:
+    enabled: bool = False
+    density: float = 0.0
+    color: tuple[float, float, float, float] = (0.7, 0.8, 1.0, 1.0)
+
+
 _texture_color_exposure_shader: TextureColorExposureShader | None = None
 _texture_color_exposure_failed = False
 _texture_color_exposure_scale = 1.0
 _texture_lighting_state = TextureLightingState()
+_texture_fog_state = TextureFogState()
 
 
 def _decode_log(log) -> str:
@@ -360,8 +399,12 @@ def get_texture_color_exposure_shader() -> TextureColorExposureShader | None:
                 )
                 for index in range(MAX_BRIGHTNESS_AREAS)
             ),
+            fog_enabled_location=int(glGetUniformLocation(program, "u_fog_enabled")),
+            fog_density_location=int(glGetUniformLocation(program, "u_fog_density")),
+            fog_color_location=int(glGetUniformLocation(program, "u_fog_color")),
         )
         set_texture_lighting_state(compile_shader=False)
+        set_texture_fog_state(compile_shader=False)
         return _texture_color_exposure_shader
     except Exception as exc:
         _texture_color_exposure_failed = True
@@ -424,6 +467,22 @@ def _vector3_tuple(value, fallback: tuple[float, float, float]) -> tuple[float, 
             return (float(value[0]), float(value[1]), float(value[2]))
         except Exception:
             return fallback
+
+
+def _rgba_tuple(
+    value,
+    fallback: tuple[float, float, float, float],
+) -> tuple[float, float, float, float]:
+    try:
+        components = tuple(float(part) for part in value)
+    except Exception:
+        return fallback
+
+    if len(components) == 3:
+        return (components[0], components[1], components[2], 1.0)
+    if len(components) >= 4:
+        return components[:4]
+    return fallback
 
 
 def _light_direction_from(lighting=None, sun_direction=None) -> tuple[float, float, float]:
@@ -576,6 +635,45 @@ def set_texture_lighting_state(
 
 def get_texture_lighting_state() -> TextureLightingState:
     return _texture_lighting_state
+
+
+def set_texture_fog_state(
+    *,
+    enabled: bool | None = None,
+    density: float | None = None,
+    color=None,
+    compile_shader: bool = True,
+) -> bool:
+    """Update shared fog uniforms for textured compatibility draws."""
+
+    global _texture_fog_state
+
+    current = _texture_fog_state
+    _texture_fog_state = TextureFogState(
+        enabled=bool(enabled) if enabled is not None else current.enabled,
+        density=max(0.0, float(density)) if density is not None else current.density,
+        color=_rgba_tuple(color, current.color) if color is not None else current.color,
+    )
+
+    shader = (
+        get_texture_color_exposure_shader()
+        if compile_shader
+        else _texture_color_exposure_shader
+    )
+    if shader is None:
+        return False
+
+    current_program = _current_program_id()
+    try:
+        glUseProgram(shader.program)
+        shader.apply_fog_state(_texture_fog_state)
+    finally:
+        glUseProgram(current_program)
+    return True
+
+
+def get_texture_fog_state() -> TextureFogState:
+    return _texture_fog_state
 
 
 def use_fixed_pipeline() -> None:

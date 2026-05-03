@@ -18,6 +18,7 @@ _EXPORTS = {
     "GroundTile": (".objects.ground_tile", "GroundTile"),
     "WallTile": (".objects", "WallTile"),
     "Road": (".objects", "Road"),
+    "Torch": (".objects", "Torch"),
     "spawn_world_sprites": (".world_spawner", "spawn_world_sprites"),
     "WorldHUD": (".ui.world_hud", "WorldHUD"),
     "movement_blocked_by_wall": (".world_collision", "movement_blocked_by_wall"),
