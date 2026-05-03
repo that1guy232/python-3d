@@ -80,6 +80,7 @@ class Camera:
         falloff,
         bounds=None,
         indoor_only=False,
+        floor_scale=1.0,
     ):
         """
         Add a circular brightness area.
@@ -90,6 +91,7 @@ class Camera:
         bounds: optional (min_x, max_x, min_z, max_z) clamp for enclosed lights.
         indoor_only: when True, static surface callers may skip this light for
             exterior surfaces. Point-based callers still receive the light.
+        floor_scale: optional 0..1 contribution scale for upward floor surfaces.
         """
         if not isinstance(center, Vector3):
             center = Vector3(*center)
@@ -104,6 +106,7 @@ class Camera:
             area["bounds"] = tuple(float(v) for v in bounds)
         if indoor_only:
             area["indoor_only"] = True
+        area["floor_scale"] = max(0.0, min(1.0, float(floor_scale)))
         self.brightness_areas.append(area)
         
         # OPTIMIZATION: Precompute squared radius and store optimized version
@@ -116,6 +119,7 @@ class Camera:
             "falloff": float(falloff),
             "bounds": area.get("bounds"),
             "indoor_only": bool(area.get("indoor_only", False)),
+            "floor_scale": area["floor_scale"],
             "original": area  # Keep reference to original for compatibility
         }
         self._brightness_areas_optimized.append(optimized_area)

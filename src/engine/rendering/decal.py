@@ -30,6 +30,7 @@ from core.mesh import BatchedMesh
 
 
 HeightFn = Callable[[float, float], float]
+ReceiverFn = Callable[[float, float], bool]
 
 
 @dataclass
@@ -58,6 +59,8 @@ class Decal:
         How many times to repeat the texture across (u, v).
     color: tuple[float, float, float]
         Per-vertex color multiplier (RGB), alpha comes from the texture.
+    receiver_fn: callable(x, z) -> bool
+        Optional mask; cells whose center or corners are rejected are omitted.
     """
 
     center: Vector3
@@ -75,6 +78,7 @@ class Decal:
     use_depth_offset: bool = True
     depth_offset_factor: float = -1.0
     depth_offset_units: float = -1.0
+    receiver_fn: Optional[ReceiverFn] = None
 
     # Internal
     _mesh: Optional[BatchedMesh] = None
@@ -214,6 +218,20 @@ class Decal:
                 y = sample_y(x, z)
                 verts_grid[iv][iu] = (x, y, z, r, g, b, u * u_rep, v * v_rep)
 
+        def cell_receives(*verts) -> bool:
+            if self.receiver_fn is None:
+                return True
+            center_x = sum(float(v[0]) for v in verts) * 0.25
+            center_z = sum(float(v[2]) for v in verts) * 0.25
+            samples = (
+                (center_x, center_z),
+                *((float(v[0]), float(v[2])) for v in verts),
+            )
+            try:
+                return all(bool(self.receiver_fn(x, z)) for x, z in samples)
+            except Exception:
+                return True
+
         # Triangulate cells into a flat vertex array (two tris per cell)
         tris: list[tuple[float, ...]] = []
         for iv in range(nv):
@@ -222,6 +240,8 @@ class Decal:
                 v10 = verts_grid[iv][iu + 1]
                 v01 = verts_grid[iv + 1][iu]
                 v11 = verts_grid[iv + 1][iu + 1]
+                if not cell_receives(v00, v10, v11, v01):
+                    continue
                 # Keep diagonal consistent to avoid cracks with terrain triangulation
                 # Tri 1: (v00, v10, v11)
                 tris.append(v00)
@@ -232,6 +252,8 @@ class Decal:
                 tris.append(v11)
                 tris.append(v01)
 
+        if not tris:
+            return np.zeros((0, 8), dtype=np.float32)
         vertex_data = np.array(tris, dtype=np.float32)
         return vertex_data
 

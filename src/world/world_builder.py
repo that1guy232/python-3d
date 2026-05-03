@@ -14,7 +14,11 @@ from engine.rendering.decal_batch import DecalBatch
 from engine.rendering.lighting import INDOOR_LIGHT_FACTOR
 from engine.rendering.sprite import WorldSprite
 from textures.resource_path import WALL1_TEXTURE_PATH
-from textures.texture_utils import create_shadow_texture, load_texture
+from textures.texture_utils import (
+    create_shadow_texture,
+    create_tree_shadow_texture,
+    load_texture,
+)
 from world.objects import Road, Torch
 from world.objects.building import Building
 from world.objects.fence import build_textured_fence_ring
@@ -27,6 +31,14 @@ from world.world_spawner import spawn_world_sprites
 
 CREATE_WORLD_OBJECT_STEPS = 10
 BUILDING_ROOF_OVERHANG = 6.0
+SHADOW_BUILDING_CLIP_MARGIN = 2.0
+
+_SIDE_NORMALS = {
+    "north": (0.0, 1.0),
+    "east": (1.0, 0.0),
+    "south": (0.0, -1.0),
+    "west": (-1.0, 0.0),
+}
 
 
 def _dispose_value(obj) -> None:
@@ -43,27 +55,81 @@ def _dispose_values(values) -> None:
         _dispose_value(value)
 
 
-def _building_covered_regions(scene) -> list[tuple[float, float, float, float, float]]:
-    regions: list[tuple[float, float, float, float, float]] = []
+def _building_covered_regions(scene) -> list[object]:
+    regions: list[dict] = []
     for spec in getattr(scene, "building_specs", ()) or ():
         try:
             position = spec["position"]
-            half_x = float(spec["width"]) * 0.5 + BUILDING_ROOF_OVERHANG
-            half_z = float(spec["depth"]) * 0.5 + BUILDING_ROOF_OVERHANG
+            half_x = float(spec["width"]) * 0.5
+            half_z = float(spec["depth"]) * 0.5
             x = float(position.x)
             z = float(position.z)
+            side = str(spec.get("doorway_side", "south")).lower()
+            doorway_width = float(spec.get("doorway_width", 48.0))
         except (KeyError, TypeError, ValueError, AttributeError):
             continue
+        min_x = x - half_x
+        max_x = x + half_x
+        min_z = z - half_z
+        max_z = z + half_z
+        doorway_depth = max(42.0, min(78.0, min(half_x, half_z) * 0.78))
         regions.append(
-            (
-                x - half_x,
-                x + half_x,
-                z - half_z,
-                z + half_z,
-                INDOOR_LIGHT_FACTOR,
-            )
+            {
+                "min_x": min_x,
+                "max_x": max_x,
+                "min_z": min_z,
+                "max_z": max_z,
+                "factor": INDOOR_LIGHT_FACTOR,
+                "doorway": {
+                    "side": side,
+                    "center_x": x,
+                    "center_z": z,
+                    "width": max(doorway_width * 1.16, doorway_width + 8.0),
+                    "depth": doorway_depth,
+                    "side_fade": max(10.0, doorway_width * 0.26),
+                    "edge_factor": 1.0,
+                },
+            }
         )
     return regions
+
+
+def _building_shadow_clip_bounds(
+    scene,
+) -> list[tuple[float, float, float, float]]:
+    bounds: list[tuple[float, float, float, float]] = []
+    margin = SHADOW_BUILDING_CLIP_MARGIN
+    for building in getattr(scene, "buildings", ()) or ():
+        try:
+            min_x, max_x, min_z, max_z = building.bounds
+        except (TypeError, ValueError, AttributeError):
+            continue
+        bounds.append(
+            (
+                float(min_x) - margin,
+                float(max_x) + margin,
+                float(min_z) - margin,
+                float(max_z) + margin,
+            )
+        )
+    return bounds
+
+
+def _outside_building_shadow_receiver(
+    bounds: list[tuple[float, float, float, float]],
+):
+    if not bounds:
+        return None
+
+    def receives_shadow(x: float, z: float) -> bool:
+        px = float(x)
+        pz = float(z)
+        for min_x, max_x, min_z, max_z in bounds:
+            if min_x <= px <= max_x and min_z <= pz <= max_z:
+                return False
+        return True
+
+    return receives_shadow
 
 
 def _install_building_torch_lights(scene) -> None:
@@ -71,6 +137,7 @@ def _install_building_torch_lights(scene) -> None:
         getattr(scene, "building_specs", ()) or ()
     )
     scene.torch_light_modifiers = modifiers
+    scene.doorway_light_modifiers = []
     if not hasattr(scene, "brightness_modifiers") or scene.brightness_modifiers is None:
         scene.brightness_modifiers = []
     scene.brightness_modifiers.extend(modifiers)
@@ -579,25 +646,34 @@ def _build_fences(scene) -> None:
 
 
 def _build_shadow_decals(scene) -> None:
-    shadow_subdiv = 4
+    tree_shadow_subdiv = 12
     start_time = time.perf_counter()
-    tree_shadow_texture = create_shadow_texture(
+    tree_shadow_texture = create_tree_shadow_texture(
         width_px=256,
         height_px=256,
-        max_alpha=0.8,
-        inner_ratio=0.02,
-        outer_ratio=1,
-        falloff_exp=0.55,
-        pixelated=True,
-        pixel_scale=16,
+        max_alpha=0.48,
+        variant_seed=0,
+        pixelated=False,
     )
-    print("Created shadow texture.")
-    scene.log_timing("Create shadow texture", start_time, time.perf_counter())
+    contact_shadow_texture = create_shadow_texture(
+        width_px=128,
+        height_px=128,
+        max_alpha=0.34,
+        inner_ratio=0.18,
+        outer_ratio=0.98,
+        falloff_exp=1.55,
+        pixelated=False,
+    )
+    print("Created shadow textures.")
+    scene.log_timing("Create shadow textures", start_time, time.perf_counter())
 
     decals: list[Decal] = []
     rng = random.Random()
+    shadow_receiver = _outside_building_shadow_receiver(
+        _building_shadow_clip_bounds(scene)
+    )
 
-    def make_decal_for_sprite(sprite: WorldSprite) -> Decal:
+    def make_tree_decal_for_sprite(sprite: WorldSprite) -> Decal:
         w, h = sprite.size
         size_w = w * rng.uniform(0.45, 0.75)
         size_h = h * rng.uniform(0.45, 0.75)
@@ -646,21 +722,77 @@ def _build_shadow_decals(scene) -> None:
             size=(final_w, final_h),
             texture=tree_shadow_texture,
             rotation_deg=rot,
-            subdiv_u=shadow_subdiv,
-            subdiv_v=shadow_subdiv,
+            subdiv_u=tree_shadow_subdiv,
+            subdiv_v=tree_shadow_subdiv,
             height_fn=scene.ground_height_at,
             elevation=1,
             uv_repeat=(1.0, 1.0),
             color=(1.0, 1.0, 1.0),
+            receiver_fn=shadow_receiver,
             # DecalBatch owns the final VBO; avoid building throwaway per-shadow VBOs.
+            build_vbo=False,
+        )
+
+    def make_contact_decal_for_sprite(
+        sprite: WorldSprite,
+        *,
+        scale_min: float,
+        scale_max: float,
+        min_size: float,
+        max_size: float,
+    ) -> Decal:
+        w, h = sprite.size
+        footprint = max(1.0, max(w, h))
+        diameter = max(
+            min_size,
+            min(max_size, footprint * rng.uniform(scale_min, scale_max)),
+        )
+        center_y = scene.ground_height_at(sprite.position.x, sprite.position.z)
+
+        return Decal(
+            center=Vector3(sprite.position.x, center_y, sprite.position.z),
+            size=(diameter, diameter),
+            texture=contact_shadow_texture,
+            rotation_deg=rng.uniform(0.0, 360.0),
+            subdiv_u=2,
+            subdiv_v=2,
+            height_fn=scene.ground_height_at,
+            elevation=0.75,
+            uv_repeat=(1.0, 1.0),
+            color=(1.0, 1.0, 1.0),
+            receiver_fn=shadow_receiver,
             build_vbo=False,
         )
 
     start_time = time.perf_counter()
     for sprite in scene.trees:
-        decals.append(make_decal_for_sprite(sprite))
+        decals.append(make_tree_decal_for_sprite(sprite))
+    for sprite in getattr(scene, "grasses", ()):
+        decals.append(
+            make_contact_decal_for_sprite(
+                sprite,
+                scale_min=.8,
+                scale_max=1,
+                min_size=8.0,
+                max_size=28.0,
+            )
+        )
+    for sprite in getattr(scene, "rocks", ()):
+        decals.append(
+            make_contact_decal_for_sprite(
+                sprite,
+                scale_min=1,
+                scale_max=1.05,
+                min_size=10.0,
+                max_size=42.0,
+            )
+        )
 
-    print(f"Created {len(scene.trees)} tree shadow decals.")
+    print(
+        f"Created {len(scene.trees)} tree, "
+        f"{len(getattr(scene, 'grasses', ()))} grass, "
+        f"and {len(getattr(scene, 'rocks', ()))} rock shadow decals."
+    )
     scene.log_timing("Create decals", start_time, time.perf_counter())
     _dispose_value(getattr(scene, "decal_batch", None))
     _dispose_values(getattr(scene, "decal_batches", ()))

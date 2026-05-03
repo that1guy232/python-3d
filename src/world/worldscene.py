@@ -471,6 +471,7 @@ class WorldScene(Scene):
                         "falloff": float(area.get("falloff", 1.0)),
                         "bounds": area.get("bounds"),
                         "indoor_only": bool(area.get("indoor_only", False)),
+                        "floor_scale": float(area.get("floor_scale", 1.0)),
                     }
                 )
             except (KeyError, TypeError, ValueError):

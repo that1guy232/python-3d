@@ -211,6 +211,7 @@ def apply_brightness_modifiers(
     modifiers: Sequence[object] | None,
     default_brightness: float,
     receiver_mask: np.ndarray | Sequence[bool] | None = None,
+    surface_floor_mask: np.ndarray | Sequence[bool] | None = None,
 ) -> None:
     """Apply the scene brightness-area contract to RGB vertex columns."""
 
@@ -232,6 +233,14 @@ def apply_brightness_modifiers(
                 receiver_flags = None
         except (TypeError, ValueError):
             receiver_flags = None
+    floor_flags = None
+    if surface_floor_mask is not None:
+        try:
+            floor_flags = np.asarray(surface_floor_mask, dtype=bool)
+            if len(floor_flags) != len(vertex_data):
+                floor_flags = None
+        except (TypeError, ValueError):
+            floor_flags = None
 
     for modifier in modifiers:
         try:
@@ -242,15 +251,18 @@ def apply_brightness_modifiers(
                 fall_off = modifier.get("falloff", 1.0)
                 bounds = modifier.get("bounds")
                 indoor_only = bool(modifier.get("indoor_only", False))
+                floor_scale = float(modifier.get("floor_scale", 1.0))
             else:
                 position, radius, brightness_value, fall_off = modifier[:4]
                 bounds = modifier[4] if len(modifier) > 4 else None
                 indoor_only = False
+                floor_scale = 1.0
             radius = max(float(radius), _EPSILON)
             center_x = float(position.x)
             center_z = float(position.z)
             target = float(brightness_value)
             falloff = max(float(fall_off), 0.0)
+            floor_scale = max(0.0, min(1.0, floor_scale))
         except (ValueError, AttributeError, IndexError, TypeError) as exc:
             print(f"Warning: Invalid modifier {modifier}, skipping. Error: {exc}")
             continue
@@ -284,7 +296,11 @@ def apply_brightness_modifiers(
 
         norm = np.clip(distances[within] / radius, 0.0, 1.0)
         attenuation = (1.0 - norm) ** falloff
-        relative = target if base == 0.0 else target / base
+        targets = np.full(len(norm), target, dtype=np.float32)
+        if floor_flags is not None and floor_scale < 1.0:
+            on_floor = floor_flags[within]
+            targets[on_floor] = base + (target - base) * floor_scale
+        relative = targets if base == 0.0 else targets / base
         brightness[within] *= 1.0 + (relative - 1.0) * attenuation
 
     vertex_data[:, 3:6] *= brightness[:, np.newaxis]
@@ -377,6 +393,94 @@ def apply_covered_regions(
         factors[inside] = np.minimum(factors[inside], factor)
 
     vertex_data[:, 3:6] *= factors[:, np.newaxis]
+
+
+def _smooth01(value: float) -> float:
+    value = max(0.0, min(1.0, float(value)))
+    return value * value * (3.0 - 2.0 * value)
+
+
+def _doorway_region_factor(
+    region,
+    values: tuple[float, float, float, float, float],
+    x: float,
+    z: float,
+) -> float:
+    min_x, max_x, min_z, max_z, factor = values
+    if not isinstance(region, dict):
+        return factor
+
+    doorway = region.get("doorway")
+    if not isinstance(doorway, dict):
+        return factor
+
+    side = str(doorway.get("side", "")).lower()
+    try:
+        width = max(1.0, float(doorway.get("width", 48.0)))
+        depth = max(1.0, float(doorway.get("depth", 64.0)))
+        side_fade = max(1.0, float(doorway.get("side_fade", width * 0.25)))
+        edge_factor = max(0.0, min(1.0, float(doorway.get("edge_factor", 1.0))))
+        center_x = float(doorway.get("center_x", (min_x + max_x) * 0.5))
+        center_z = float(doorway.get("center_z", (min_z + max_z) * 0.5))
+    except (TypeError, ValueError):
+        return factor
+
+    if side == "north":
+        inward_depth = max_z - z
+        lateral = x - center_x
+    elif side == "south":
+        inward_depth = z - min_z
+        lateral = x - center_x
+    elif side == "east":
+        inward_depth = max_x - x
+        lateral = z - center_z
+    elif side == "west":
+        inward_depth = x - min_x
+        lateral = z - center_z
+    else:
+        return factor
+
+    if inward_depth < 0.0 or inward_depth > depth:
+        return factor
+
+    half_width = width * 0.5
+    lateral_abs = abs(lateral)
+    if lateral_abs >= half_width + side_fade:
+        return factor
+
+    if lateral_abs <= half_width:
+        width_influence = 1.0
+    else:
+        width_influence = 1.0 - _smooth01((lateral_abs - half_width) / side_fade)
+    depth_influence = 1.0 - _smooth01(inward_depth / depth)
+    influence = max(0.0, min(1.0, width_influence * depth_influence))
+    return factor + (edge_factor - factor) * influence
+
+
+def covered_region_factor_at(
+    x: float,
+    z: float,
+    *,
+    covered_regions: Sequence[object] | None,
+    default_factor: float = INDOOR_LIGHT_FACTOR,
+) -> float:
+    """Return the indirect-light factor for a single X/Z world position."""
+
+    if not covered_regions:
+        return 1.0
+
+    px = float(x)
+    pz = float(z)
+    factor = 1.0
+    for region in covered_regions:
+        values = _covered_region_values(region, default_factor)
+        if values is None:
+            continue
+        min_x, max_x, min_z, max_z, region_factor = values
+        if min_x <= px <= max_x and min_z <= pz <= max_z:
+            point_factor = _doorway_region_factor(region, values, px, pz)
+            factor = min(factor, point_factor)
+    return factor
 
 
 def covered_region_mask(

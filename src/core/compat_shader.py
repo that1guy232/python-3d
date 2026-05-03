@@ -33,7 +33,7 @@ from OpenGL.GL import (
     glUseProgram,
 )
 
-MAX_BRIGHTNESS_AREAS = 16
+MAX_BRIGHTNESS_AREAS = 32
 
 
 _TEXTURE_COLOR_EXPOSURE_VERTEX = """#version 120
@@ -69,10 +69,11 @@ uniform float u_light_ambient;
 uniform float u_light_diffuse;
 uniform float u_light_max_factor;
 uniform int u_brightness_area_count;
-uniform vec4 u_brightness_areas[16];
-uniform float u_brightness_falloffs[16];
-uniform vec4 u_brightness_bounds[16];
-uniform float u_brightness_indoor_only[16];
+uniform vec4 u_brightness_areas[32];
+uniform float u_brightness_falloffs[32];
+uniform vec4 u_brightness_bounds[32];
+uniform float u_brightness_indoor_only[32];
+uniform float u_brightness_floor_scales[32];
 uniform int u_fog_enabled;
 uniform float u_fog_density;
 uniform vec4 u_fog_color;
@@ -83,10 +84,10 @@ varying vec3 v_normal;
 varying vec3 v_world_pos;
 varying float v_fog_distance;
 
-float brightness_at(vec3 world_pos, float receiver_factor)
+float brightness_at(vec3 world_pos, float receiver_factor, vec3 surface_normal)
 {
     float brightness = u_base_brightness;
-    for (int i = 0; i < 16; ++i) {
+    for (int i = 0; i < 32; ++i) {
         if (i >= u_brightness_area_count) {
             break;
         }
@@ -110,7 +111,15 @@ float brightness_at(vec3 world_pos, float receiver_factor)
         if (dist <= radius) {
             float norm_dist = clamp(dist / radius, 0.0, 1.0);
             float attenuation = pow(1.0 - norm_dist, max(u_brightness_falloffs[i], 0.0));
-            float relative = u_base_brightness == 0.0 ? area.w : area.w / u_base_brightness;
+            float target = area.w;
+            if (surface_normal.y > 0.55) {
+                target = mix(
+                    u_base_brightness,
+                    target,
+                    clamp(u_brightness_floor_scales[i], 0.0, 1.0)
+                );
+            }
+            float relative = u_base_brightness == 0.0 ? target : target / u_base_brightness;
             brightness *= 1.0 + (relative - 1.0) * attenuation;
         }
     }
@@ -145,10 +154,11 @@ vec3 apply_fog(vec3 rgb)
 void main()
 {
     vec4 texel = texture2D(u_texture, v_uv);
+    vec3 surface_normal = normalize(v_normal);
     float receiver_factor = max(max(v_color.r, v_color.g), v_color.b);
     float brightness = u_scene_lighting_enabled == 0
         ? u_exposure
-        : brightness_at(v_world_pos, receiver_factor) * u_exposure;
+        : brightness_at(v_world_pos, receiver_factor, surface_normal) * u_exposure;
     vec3 rgb = texel.rgb * v_color.rgb * brightness * sunlight_factor();
     rgb = apply_fog(rgb);
     gl_FragColor = vec4(rgb, texel.a * v_color.a);
@@ -173,6 +183,7 @@ class TextureColorExposureShader:
     brightness_falloff_locations: tuple[int, ...]
     brightness_bound_locations: tuple[int, ...]
     brightness_indoor_only_locations: tuple[int, ...]
+    brightness_floor_scale_locations: tuple[int, ...]
     fog_enabled_location: int
     fog_density_location: int
     fog_color_location: int
@@ -254,6 +265,16 @@ class TextureColorExposureShader:
             )
             glUniform1f(location, value)
 
+        for index, location in enumerate(self.brightness_floor_scale_locations):
+            if location < 0:
+                continue
+            value = (
+                state.brightness_floor_scales[index]
+                if index < len(state.brightness_floor_scales)
+                else 1.0
+            )
+            glUniform1f(location, value)
+
     def apply_fog_state(self, state: "TextureFogState") -> None:
         if self.fog_enabled_location >= 0:
             glUniform1i(self.fog_enabled_location, 1 if state.enabled else 0)
@@ -274,6 +295,7 @@ class TextureLightingState:
     brightness_falloffs: tuple[float, ...] = ()
     brightness_bounds: tuple[tuple[float, float, float, float], ...] = ()
     brightness_indoor_only: tuple[float, ...] = ()
+    brightness_floor_scales: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -399,6 +421,15 @@ def get_texture_color_exposure_shader() -> TextureColorExposureShader | None:
                 )
                 for index in range(MAX_BRIGHTNESS_AREAS)
             ),
+            brightness_floor_scale_locations=tuple(
+                int(
+                    glGetUniformLocation(
+                        program,
+                        f"u_brightness_floor_scales[{index}]",
+                    )
+                )
+                for index in range(MAX_BRIGHTNESS_AREAS)
+            ),
             fog_enabled_location=int(glGetUniformLocation(program, "u_fog_enabled")),
             fog_density_location=int(glGetUniformLocation(program, "u_fog_density")),
             fog_color_location=int(glGetUniformLocation(program, "u_fog_color")),
@@ -509,11 +540,13 @@ def _brightness_area_uniforms(
     tuple[float, ...],
     tuple[tuple[float, float, float, float], ...],
     tuple[float, ...],
+    tuple[float, ...],
 ]:
     areas: list[tuple[float, float, float, float]] = []
     falloffs: list[float] = []
     bounds_values: list[tuple[float, float, float, float]] = []
     indoor_only_values: list[float] = []
+    floor_scale_values: list[float] = []
     for area in brightness_areas or ():
         if len(areas) >= MAX_BRIGHTNESS_AREAS:
             break
@@ -525,10 +558,12 @@ def _brightness_area_uniforms(
                 falloff = area.get("falloff", 1.0)
                 bounds = area.get("bounds")
                 indoor_only = bool(area.get("indoor_only", False))
+                floor_scale = area.get("floor_scale", 1.0)
             else:
                 center, radius, value, falloff = area[:4]
                 bounds = area[4] if len(area) > 4 else None
                 indoor_only = False
+                floor_scale = 1.0
             try:
                 cx = float(center.x)
                 cz = float(center.z)
@@ -547,6 +582,7 @@ def _brightness_area_uniforms(
                     min_z, max_z = max_z, min_z
                 bounds_values.append((min_x, max_x, min_z, max_z))
             indoor_only_values.append(1.0 if indoor_only else 0.0)
+            floor_scale_values.append(max(0.0, min(1.0, float(floor_scale))))
         except Exception:
             continue
     return (
@@ -554,6 +590,7 @@ def _brightness_area_uniforms(
         tuple(falloffs),
         tuple(bounds_values),
         tuple(indoor_only_values),
+        tuple(floor_scale_values),
     )
 
 
@@ -574,7 +611,13 @@ def set_texture_lighting_state(
     global _texture_lighting_state
 
     current = _texture_lighting_state
-    area_values, area_falloffs, area_bounds, area_indoor_only = (
+    (
+        area_values,
+        area_falloffs,
+        area_bounds,
+        area_indoor_only,
+        area_floor_scales,
+    ) = (
         _brightness_area_uniforms(brightness_areas)
         if brightness_areas is not None
         else (
@@ -582,6 +625,7 @@ def set_texture_lighting_state(
             current.brightness_falloffs,
             current.brightness_bounds,
             current.brightness_indoor_only,
+            current.brightness_floor_scales,
         )
     )
 
@@ -611,6 +655,7 @@ def set_texture_lighting_state(
         brightness_falloffs=area_falloffs,
         brightness_bounds=area_bounds,
         brightness_indoor_only=area_indoor_only,
+        brightness_floor_scales=area_floor_scales,
     )
 
     if exposure_scale is not None:

@@ -32,6 +32,7 @@ from OpenGL.GL import (
 _TEXTURE_SIZES: Dict[int, Tuple[int, int]] = {}
 _SHADOW_TEX_CACHE: Dict[Tuple[int, int, float, float, float, float], int] = {}
 _POLY_SHADOW_CACHE: Dict[Tuple[Tuple[float, float], ...], int] = {}
+_TREE_SHADOW_TEX_CACHE: Dict[Tuple[object, ...], int] = {}
 
 
 @dataclass(frozen=True)
@@ -397,6 +398,208 @@ def create_shadow_texture(
     _SHADOW_TEX_CACHE[cache_key] = int(tex_id)
 
     # print(f"Created shadow texture {width_px}x{height_px}, id={tex_id}")
+    return int(tex_id)
+
+
+def _smooth01(value: float) -> float:
+    value = max(0.0, min(1.0, float(value)))
+    return value * value * (3.0 - 2.0 * value)
+
+
+def _hash01(ix: int, iy: int, salt: int) -> float:
+    n = (ix * 73856093) ^ (iy * 19349663) ^ (salt * 83492791)
+    n = (n ^ (n >> 13)) & 0xFFFFFFFF
+    return n / 0xFFFFFFFF
+
+
+def _value_noise(x: float, y: float, salt: int) -> float:
+    ix = math.floor(x)
+    iy = math.floor(y)
+    fx = _smooth01(x - ix)
+    fy = _smooth01(y - iy)
+
+    a = _hash01(ix, iy, salt)
+    b = _hash01(ix + 1, iy, salt)
+    c = _hash01(ix, iy + 1, salt)
+    d = _hash01(ix + 1, iy + 1, salt)
+    ab = a + (b - a) * fx
+    cd = c + (d - c) * fx
+    return ab + (cd - ab) * fy
+
+
+def _segment_shadow_alpha(
+    x: float,
+    y: float,
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    radius0: float,
+    radius1: float,
+    strength: float,
+) -> float:
+    dx = x1 - x0
+    dy = y1 - y0
+    length_sq = dx * dx + dy * dy
+    if length_sq <= 1e-8:
+        return 0.0
+
+    t = ((x - x0) * dx + (y - y0) * dy) / length_sq
+    t = max(0.0, min(1.0, t))
+    px = x0 + dx * t
+    py = y0 + dy * t
+    radius = radius0 + (radius1 - radius0) * t
+    distance = math.hypot(x - px, y - py)
+    if distance >= radius:
+        return 0.0
+
+    edge = 1.0 - distance / max(1e-6, radius)
+    end_taper = _smooth01(t / 0.12) * _smooth01((1.0 - t) / 0.18)
+    return strength * (edge ** 1.35) * end_taper
+
+
+def create_tree_shadow_texture(
+    *,
+    width_px: int = 256,
+    height_px: int = 256,
+    max_alpha: float = 0.48,
+    variant_seed: int = 0,
+    pixelated: bool = False,
+    pixel_scale: int = 1,
+) -> int:
+    """Create a smooth, continuous tree shadow texture.
+
+    The mask avoids separate canopy blobs: it uses one tapered, soft silhouette
+    with subtle low-frequency density variation and a faint trunk streak.
+    """
+    width_px = max(8, int(width_px))
+    height_px = max(8, int(height_px))
+    max_alpha = float(max(0.0, min(1.0, max_alpha)))
+    variant_seed = int(variant_seed)
+    pixelated = bool(pixelated)
+    pixel_scale = max(1, int(pixel_scale))
+
+    cache_key = (
+        width_px,
+        height_px,
+        max_alpha,
+        variant_seed,
+        pixelated,
+        pixel_scale,
+    )
+    cached = _TREE_SHADOW_TEX_CACHE.get(cache_key)
+    if cached:
+        return cached
+
+    if pixelated and pixel_scale > 1:
+        render_w = max(8, width_px // pixel_scale)
+        render_h = max(8, height_px // pixel_scale)
+    else:
+        render_w = width_px
+        render_h = height_px
+
+    rng = random.Random(variant_seed)
+    surface = pygame.Surface((render_w, render_h), pygame.SRCALPHA)
+    inv_w = 1.0 / max(1, render_w - 1)
+    inv_h = 1.0 / max(1, render_h - 1)
+    salt = variant_seed * 17 + 3
+    phase_a = rng.uniform(0.0, 100.0)
+    phase_b = rng.uniform(0.0, 100.0)
+
+    for py in range(render_h):
+        y = py * inv_h - 0.5
+        for px in range(render_w):
+            x = px * inv_w - 0.5
+            alpha = 0.0
+            u = x + 0.5
+
+            length_fade = _smooth01(u / 0.09) * _smooth01((1.0 - u) / 0.11)
+            if length_fade > 0.0:
+                bell = max(0.0, math.sin(math.pi * u))
+                radius_noise = _value_noise(u * 5.0 + phase_a, phase_b, salt)
+                radius = 0.028 + 0.325 * (bell ** 0.62)
+                radius *= 0.98 - 0.16 * _smooth01(u)
+                radius *= 0.96 + 0.08 * radius_noise
+
+                center_noise = _value_noise(u * 4.0 + phase_b, phase_a, salt + 5)
+                center_y = (center_noise - 0.5) * 0.035
+                center_y += math.sin((u * 2.4 + phase_a) * math.tau) * 0.012
+
+                distance = abs(y - center_y) / max(1e-6, radius)
+                if distance < 1.0:
+                    edge = 1.0 - distance
+                    edge_fade = _smooth01(edge)
+                    density = 0.82 + 0.12 * _value_noise(
+                        u * 7.0 + phase_b,
+                        (y + 0.5) * 6.0 + phase_a,
+                        salt + 11,
+                    )
+                    fine = _value_noise(
+                        u * 16.0 + phase_a,
+                        (y + 0.5) * 14.0 + phase_b,
+                        salt + 19,
+                    )
+                    gap = _value_noise(
+                        u * 10.0 + phase_b,
+                        (y + 0.5) * 9.0 + phase_a,
+                        salt + 29,
+                    )
+
+                    gap_soften = 1.0
+                    if gap > 0.72:
+                        gap_soften = 0.82 + (1.0 - gap) * 0.28
+
+                    alpha = (
+                        max_alpha
+                        * length_fade
+                        * (edge_fade ** 0.82)
+                        * density
+                        * (0.95 + 0.08 * fine)
+                        * gap_soften
+                    )
+
+            alpha += max_alpha * _segment_shadow_alpha(
+                x,
+                y,
+                -0.48,
+                0.0,
+                -0.08,
+                0.01,
+                0.024,
+                0.015,
+                0.15,
+            )
+
+            a = max(0, min(255, int(255 * min(max_alpha, alpha))))
+            surface.set_at((px, py), (0, 0, 0, a))
+
+    if (render_w, render_h) != (width_px, height_px):
+        surface = pygame.transform.scale(surface, (width_px, height_px))
+
+    texture_data = pygame.image.tostring(surface, "RGBA", True)
+
+    tex_id = glGenTextures(1)
+    glBindTexture(GL_TEXTURE_2D, tex_id)
+    glTexImage2D(
+        GL_TEXTURE_2D,
+        0,
+        GL_RGBA,
+        width_px,
+        height_px,
+        0,
+        GL_RGBA,
+        GL_UNSIGNED_BYTE,
+        texture_data,
+    )
+
+    filt = GL_NEAREST if pixelated else GL_LINEAR
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filt)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filt)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+
+    _TEXTURE_SIZES[int(tex_id)] = (width_px, height_px)
+    _TREE_SHADOW_TEX_CACHE[cache_key] = int(tex_id)
     return int(tex_id)
 
 

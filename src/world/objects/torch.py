@@ -16,8 +16,9 @@ TORCH_LIGHT_VALUE = 3.4
 TORCH_LIGHT_FALLOFF = 2.2
 TORCH_LIGHT_MIN_RADIUS = 95.0
 TORCH_LIGHT_MAX_RADIUS = 180.0
+TORCH_FLOOR_LIGHT_SCALE = 0.28
 TORCH_WALL_INSET = 8.0
-TORCH_SPRITE_HEIGHT = 32.0
+TORCH_SPRITE_HEIGHT = 16.0
 TORCH_MOUNT_HEIGHT = 28.0
 TORCH_COLOR = (1.0, 0.82, 0.55)
 
@@ -104,6 +105,7 @@ class Torch(WorldSprite):
             "falloff": TORCH_LIGHT_FALLOFF,
             "bounds": cls.light_bounds_for_building_spec(spec),
             "indoor_only": True,
+            "floor_scale": TORCH_FLOOR_LIGHT_SCALE,
         }
 
     @classmethod
@@ -129,6 +131,7 @@ class Torch(WorldSprite):
                 "falloff": float(modifier.get("falloff", 1.0)),
                 "bounds": modifier.get("bounds"),
                 "indoor_only": bool(modifier.get("indoor_only", False)),
+                "floor_scale": float(modifier.get("floor_scale", 1.0)),
             }
 
         values = list(modifier)  # type: ignore[arg-type]
@@ -140,6 +143,7 @@ class Torch(WorldSprite):
             "falloff": float(values[3]),
             "bounds": values[4] if len(values) > 4 else None,
             "indoor_only": False,
+            "floor_scale": 1.0,
         }
 
     @staticmethod
@@ -156,6 +160,7 @@ class Torch(WorldSprite):
             normalized["falloff"],
             bounds=normalized["bounds"],
             indoor_only=normalized["indoor_only"],
+            floor_scale=normalized["floor_scale"],
         )
 
     @staticmethod
