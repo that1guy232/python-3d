@@ -33,3 +33,8 @@ HEADBOB_DAMPING = 2.0
 # Jump physics
 JUMP_SPEED = 250.0
 GRAVITY = 800.0
+
+# Player collision body. The camera sits near the top of the body, so the
+# head clearance only needs to cover the small space above eye height.
+PLAYER_RADIUS = 16.0
+PLAYER_HEAD_CLEARANCE = 6.0

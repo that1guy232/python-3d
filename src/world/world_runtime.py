@@ -13,6 +13,10 @@ from pygame.math import Vector3
 
 from config import *
 from sound.sound_utils import Sounds
+from world.world_collision import (
+    player_support_height_at,
+    resolve_player_vertical_collision,
+)
 
 
 def contains_horizontal(scene, pos: Vector3) -> bool:
@@ -40,6 +44,39 @@ def ground_height_at(scene, x: float, z: float) -> float:
             pass
     fn = getattr(scene, "_height_fn", None)
     return float(fn(x, z)) if callable(fn) else 5.0
+
+
+def _player_radius(scene) -> float:
+    return float(getattr(scene, "player_radius", PLAYER_RADIUS))
+
+
+def _player_foot_offset(scene) -> float:
+    manual_offset = getattr(scene.camera, "manual_height_offset", 0.0)
+    return CAMERA_GROUND_OFFSET + float(manual_offset)
+
+
+def _player_head_offset(scene) -> float:
+    return float(getattr(scene, "player_head_clearance", PLAYER_HEAD_CLEARANCE))
+
+
+def _wall_collision_meshes(scene):
+    return getattr(scene, "wall_tiles", None) or []
+
+
+def _support_height_at(scene, x: float, z: float, foot_y: float | None = None) -> float:
+    ground_y = scene.ground_height_at(x, z)
+    if foot_y is None:
+        foot_y = scene.camera.position.y - _player_foot_offset(scene)
+    wall_y = player_support_height_at(
+        _wall_collision_meshes(scene),
+        x,
+        z,
+        foot_y,
+        _player_radius(scene),
+    )
+    if wall_y is None:
+        return ground_y
+    return max(float(ground_y), float(wall_y))
 
 
 def view_space_position(
@@ -76,16 +113,47 @@ def update(scene, dt: float) -> None:
     moving, sprinting = scene._camera_controller.update(dt)
     scene._sway_controller.update(dt)
 
-    ground_y_here = scene.ground_height_at(
-        scene.camera.position.x, scene.camera.position.z
+    foot_offset = _player_foot_offset(scene)
+    head_offset = _player_head_offset(scene)
+    foot_y = scene.camera.position.y - foot_offset
+    support_y_here = _support_height_at(
+        scene,
+        scene.camera.position.x,
+        scene.camera.position.z,
+        foot_y,
     )
 
-    manual_offset = getattr(scene.camera, "manual_height_offset", 0.0)
-    target_cam_y = ground_y_here + CAMERA_GROUND_OFFSET + float(manual_offset)
+    target_cam_y = support_y_here + foot_offset
 
     if scene.camera.is_jumping:
+        old_vertical_position = scene.camera.position.copy()
         scene.camera.vertical_velocity -= float(getattr(scene, "gravity", GRAVITY)) * dt
         scene.camera.position.y += scene.camera.vertical_velocity * dt
+
+        vertical_hit = resolve_player_vertical_collision(
+            _wall_collision_meshes(scene),
+            old_vertical_position,
+            scene.camera.position,
+            foot_offset=foot_offset,
+            head_offset=head_offset,
+            player_radius=_player_radius(scene),
+        )
+        if vertical_hit is not None:
+            scene.camera.position.y = vertical_hit.camera_y
+            if vertical_hit.kind == "floor":
+                scene.camera.vertical_velocity = 0.0
+                scene.camera.is_jumping = False
+            elif scene.camera.vertical_velocity > 0.0:
+                scene.camera.vertical_velocity = 0.0
+
+        foot_y = scene.camera.position.y - foot_offset
+        support_y_here = _support_height_at(
+            scene,
+            scene.camera.position.x,
+            scene.camera.position.z,
+            foot_y,
+        )
+        target_cam_y = support_y_here + foot_offset
         if scene.camera.position.y <= target_cam_y:
             scene.camera.position.y = target_cam_y
             scene.camera.vertical_velocity = 0.0

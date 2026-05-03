@@ -13,8 +13,16 @@ import pygame
 from pygame.math import Vector3
 from typing import Tuple
 
-from world.world_collision import movement_blocked_by_wall
-from config import MOUSE_SENSITIVITY, SPRINT_SPEED, BASE_SPEED, CAMERA_GROUND_OFFSET, JUMP_SPEED
+from world.world_collision import movement_blocked_by_wall, player_support_height_at
+from config import (
+    MOUSE_SENSITIVITY,
+    SPRINT_SPEED,
+    BASE_SPEED,
+    CAMERA_GROUND_OFFSET,
+    JUMP_SPEED,
+    PLAYER_HEAD_CLEARANCE,
+    PLAYER_RADIUS,
+)
 
 
 class PlayerCameraController:
@@ -24,6 +32,33 @@ class PlayerCameraController:
         self.rot_target_x = float(camera.rotation.x)
         self.rot_target_y = float(camera.rotation.y)
         self.rot_smooth_hz = float(rot_smooth_hz)
+
+    def _eye_to_foot_offset(self) -> float:
+        return CAMERA_GROUND_OFFSET + float(
+            getattr(self.camera, "manual_height_offset", 0.0)
+        )
+
+    def _support_height_at_current_position(self) -> float:
+        height_at = getattr(self.scene, "ground_height_at", None)
+        if callable(height_at):
+            ground_height = height_at(self.camera.position.x, self.camera.position.z)
+        else:
+            ground = getattr(self.scene, "ground_mesh", None)
+            sampler = getattr(ground, "height_sampler", None)
+            if sampler is None or not hasattr(sampler, "height_at"):
+                return 0.0
+            ground_height = sampler.height_at(self.camera.position.x, self.camera.position.z)
+
+        wall_support = player_support_height_at(
+            getattr(self.scene, "wall_tiles", None) or [],
+            self.camera.position.x,
+            self.camera.position.z,
+            self.camera.position.y - self._eye_to_foot_offset(),
+            float(getattr(self.scene, "player_radius", PLAYER_RADIUS)),
+        )
+        if wall_support is None:
+            return float(ground_height)
+        return max(float(ground_height), float(wall_support))
 
     def _attempt_boundary_slide(self, old_position: Vector3) -> bool:
         """If current camera position is outside playable area, try axis-aligned
@@ -73,11 +108,22 @@ class PlayerCameraController:
         col_meshes = getattr(self.scene, "wall_tiles", None) or []
         col_polygons = getattr(self.scene, "polygons", None) or []
         col_meshes = col_meshes + col_polygons
-        player_radius = 16
+        player_radius = float(getattr(self.scene, "player_radius", PLAYER_RADIUS))
+        foot_offset = self._eye_to_foot_offset()
+        player_bottom_y = min(old_position.y, self.camera.position.y) - foot_offset
+        player_top_y = (
+            max(old_position.y, self.camera.position.y)
+            + float(getattr(self.scene, "player_head_clearance", PLAYER_HEAD_CLEARANCE))
+        )
         #filter out WorldSprites
         for _ in range(max_iters):
             col_normal = movement_blocked_by_wall(
-                col_meshes, old_position, self.camera.position, player_radius
+                col_meshes,
+                old_position,
+                self.camera.position,
+                player_radius,
+                player_bottom_y=player_bottom_y,
+                player_top_y=player_top_y,
             )
             if col_normal is None:
                 break
@@ -102,16 +148,8 @@ class PlayerCameraController:
 
     def _attempt_y_collision(self, old_position: Vector3) -> bool:
         pos_y_buff = 15
-        neg_y_buff = CAMERA_GROUND_OFFSET
-        height_at = getattr(self.scene, "ground_height_at", None)
-        if callable(height_at):
-            ground_height = height_at(self.camera.position.x, self.camera.position.z)
-        else:
-            ground = getattr(self.scene, "ground_mesh", None)
-            sampler = getattr(ground, "height_sampler", None)
-            if sampler is None or not hasattr(sampler, "height_at"):
-                return False
-            ground_height = sampler.height_at(self.camera.position.x, self.camera.position.z)
+        neg_y_buff = self._eye_to_foot_offset()
+        ground_height = self._support_height_at_current_position()
 
         min_y = ground_height + neg_y_buff
         max_y = ground_height + pos_y_buff +(500)
@@ -198,11 +236,9 @@ class PlayerCameraController:
 
         jump_pressed = bool(keys[pygame.K_SPACE])
         if jump_pressed and not self.camera.is_jumping:
-            ground_y = self.scene.ground_height_at(
-                self.camera.position.x, self.camera.position.z
-            )
+            ground_y = self._support_height_at_current_position()
             desired_ground_y = (
-                ground_y + CAMERA_GROUND_OFFSET + float(self.camera.manual_height_offset)
+                ground_y + self._eye_to_foot_offset()
             )
             if self.camera.position.y <= desired_ground_y + 0.1:
                 self.camera.is_jumping = True
