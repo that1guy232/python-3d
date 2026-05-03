@@ -61,6 +61,7 @@ class SettingMenu(ButtonMenu):
                 0.8,
                 step=0.05,
                 formatter=lambda value: self._format_float(value, 2),
+                on_change=self._set_brightness,
             ),
             self._scene_slider(
                 "set_mouse_sensitivity",
@@ -452,6 +453,12 @@ class SettingMenu(ButtonMenu):
         except Exception:
             pass
 
+    @staticmethod
+    def _set_brightness(scene, value: float) -> None:
+        setter = getattr(scene, "set_brightness", None)
+        if callable(setter):
+            setter(value)
+
     def audio_label(self, scene) -> str:
         muted = Sounds.is_muted() if hasattr(Sounds, "is_muted") else False
         return f"Audio: {'Muted' if muted else 'On'}"
@@ -517,7 +524,13 @@ class SettingMenu(ButtonMenu):
 
     def cycle_brightness(self, scene) -> None:
         camera = self._camera(scene)
-        self._cycle_object_value(camera, "brightness_default", [0.4, 0.6, 0.8, 1.0, 1.2], 0.8)
+        current = getattr(camera, "brightness_default", 0.8)
+        value = self._cycle_value(current, [0.4, 0.6, 0.8, 1.0, 1.2])
+        setter = getattr(scene, "set_brightness", None)
+        if callable(setter):
+            setter(value)
+        elif camera is not None:
+            setattr(camera, "brightness_default", value)
 
     def mouse_sensitivity_label(self, scene) -> str:
         value = getattr(scene, "mouse_sensitivity", 0.0015)

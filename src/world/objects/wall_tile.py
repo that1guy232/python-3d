@@ -7,9 +7,6 @@ from OpenGL.GL import (
     glDisable,
     glBindTexture,
     glTexParameteri,
-    glGenBuffers,
-    glBindBuffer,
-    glBufferData,
     glBegin,
     glEnd,
     glTexCoord2f,
@@ -28,11 +25,11 @@ from OpenGL.GL import (
     GL_TEXTURE_WRAP_S,
     GL_TEXTURE_WRAP_T,
     GL_REPEAT,
-    GL_ARRAY_BUFFER,
-    GL_STATIC_DRAW,
 )
+from core.compat_shader import texture_color_exposure_shader_available
 from core.mesh import BatchedMesh
 from textures.texture_utils import get_texture_size
+from engine.rendering.lighting import INDOOR_LIGHT_FACTOR, sunlight_factor_for_normal
 
 
 _LOCAL_FACE_NORMALS = (
@@ -57,30 +54,59 @@ def _rotate_local_direction(tile, direction: tuple[float, float, float]) -> Vect
     return world.normalize() if world.length_squared() > 1e-12 else Vector3(0, 1, 0)
 
 
-def _sun_light_factor(tile, face_idx: int, sun_direction=None) -> float:
+def _sun_light_factor(tile, face_idx: int, sun_direction=None, lighting=None) -> float:
     if sun_direction is None or face_idx >= len(_LOCAL_FACE_NORMALS):
+        if lighting is None:
+            return 1.0
+
+    if face_idx >= len(_LOCAL_FACE_NORMALS):
         return 1.0
 
-    light_dir = Vector3(
-        -float(sun_direction.x),
-        -float(sun_direction.y),
-        -float(sun_direction.z),
-    )
-    if light_dir.length_squared() <= 1e-12:
-        return 1.0
-
-    light_dir = light_dir.normalize()
     normal = _rotate_local_direction(tile, _LOCAL_FACE_NORMALS[face_idx])
-    diffuse = max(
-        0.0,
-        normal.x * light_dir.x
-        + normal.y * light_dir.y
-        + normal.z * light_dir.z,
+    return sunlight_factor_for_normal(
+        normal,
+        lighting=lighting,
+        sun_direction=sun_direction,
     )
 
-    ambient = 0.6
-    direct = 0.55
-    return min(1.15, ambient + direct * diffuse)
+
+def _indoor_light_factor(tile, face_idx: int) -> float:
+    indoor_faces = getattr(tile, "indoor_face_indices", ())
+    if face_idx not in indoor_faces:
+        return 1.0
+    return max(
+        0.0,
+        min(1.0, float(getattr(tile, "indoor_light_factor", INDOOR_LIGHT_FACTOR))),
+    )
+
+
+def _normal_for_shader_face(tile, face_idx: int, normal: Vector3) -> Vector3:
+    if _indoor_light_factor(tile, face_idx) >= 1.0:
+        return normal
+    override = getattr(tile, "indoor_normal_override", None)
+    if override is None:
+        return normal
+    try:
+        out = Vector3(float(override[0]), float(override[1]), float(override[2]))
+    except (TypeError, ValueError, IndexError):
+        return normal
+    return out.normalize() if out.length_squared() > 1e-12 else normal
+
+
+def _brightness_for_vertex(
+    camera,
+    vertex: Vector3,
+    default_brightness: float,
+    *,
+    surface_indoor: bool | None = None,
+) -> float:
+    get_brightness_at = getattr(camera, "get_brightness_at", None)
+    if not callable(get_brightness_at):
+        return float(default_brightness)
+    try:
+        return float(get_brightness_at(vertex, surface_indoor=surface_indoor))
+    except TypeError:
+        return float(get_brightness_at(vertex))
 
 
 class WallTile(Object3D):
@@ -188,17 +214,9 @@ class WallTile(Object3D):
         if not world_verts:
             return
         
-        # FIXED: Use optimized camera brightness system with proper blending
-        vertex_brightness = []
-        for vert in world_verts:
-            if camera and hasattr(camera, 'get_brightness_at'):
-                # Use the optimized camera method that handles overlapping areas correctly
-                brightness = camera.get_brightness_at(vert)
-            else:
-                # Fallback to default brightness
-                brightness = getattr(camera, 'brightness_default', 0.0) if camera else 0.0
-            
-            vertex_brightness.append(float(brightness))
+        default_brightness = (
+            getattr(camera, "brightness_default", 0.0) if camera else 0.0
+        )
 
         u_repeat, v_repeat = self.uv_repeat
         tex_size = get_texture_size(self.texture)
@@ -216,8 +234,13 @@ class WallTile(Object3D):
                 if len(face) != 4:
                     continue
                 sun_factor = _sun_light_factor(
-                    self, face_idx, getattr(self, "sun_direction", None)
+                    self,
+                    face_idx,
+                    getattr(self, "sun_direction", None),
+                    getattr(self, "lighting", None),
                 )
+                indoor_factor = _indoor_light_factor(self, face_idx)
+                surface_indoor = indoor_factor < 1.0
                 a, b, c, d = face
                 va = world_verts[a]
                 vb = world_verts[b]
@@ -301,8 +324,16 @@ class WallTile(Object3D):
                 for vi, idx in enumerate((a, b, c, d)):
                     uv = face_uvs[vi]
                     v = world_verts[idx]
-                    base_brightness = max(0.0, min(1.0, vertex_brightness[idx]))
-                    brightness = base_brightness * sun_factor
+                    base_brightness = max(
+                        0.0,
+                        _brightness_for_vertex(
+                            camera,
+                            v,
+                            default_brightness,
+                            surface_indoor=surface_indoor,
+                        ),
+                    )
+                    brightness = base_brightness * sun_factor * indoor_factor
                     brightness = max(0.0, min(1.0, brightness))
                     glColor4f(brightness, brightness, brightness, 1.0)
                     glTexCoord2f(uv[0], uv[1])
@@ -414,19 +445,14 @@ def _tile_vertex_data(
     camera=None,
     default_brightness: float = 1.0,
     sun_direction=None,
+    lighting=None,
+    shader_lighting: bool = False,
 ) -> np.ndarray:
     world_verts = tile.get_world_vertices()
     if not world_verts:
+        if tile.texture and shader_lighting:
+            return np.zeros((0, 11), dtype=np.float32)
         return np.zeros((0, 8 if tile.texture else 6), dtype=np.float32)
-
-    if camera and hasattr(camera, "get_brightness_batch"):
-        vertex_brightness = camera.get_brightness_batch(world_verts)
-    else:
-        get_brightness_at = getattr(camera, "get_brightness_at", None)
-        vertex_brightness = [
-            get_brightness_at(v) if callable(get_brightness_at) else default_brightness
-            for v in world_verts
-        ]
 
     textured = bool(tile.texture)
     tex_size = get_texture_size(tile.texture) if textured else None
@@ -436,7 +462,9 @@ def _tile_vertex_data(
         if len(face) != 4:
             continue
 
-        sun_factor = _sun_light_factor(tile, face_idx, sun_direction)
+        sun_factor = _sun_light_factor(tile, face_idx, sun_direction, lighting)
+        indoor_factor = _indoor_light_factor(tile, face_idx)
+        surface_indoor = indoor_factor < 1.0
         a, b, c, d = face
         tri_indices = (a, b, c, a, c, d)
 
@@ -450,28 +478,59 @@ def _tile_vertex_data(
                 face_uvs[2],
                 face_uvs[3],
             )
-            for idx, uv in zip(tri_indices, tri_uvs):
-                v = world_verts[idx]
-                base_brightness = max(
-                    0.0,
-                    min(1.0, float(vertex_brightness[idx])),
+            if shader_lighting:
+                normal = _rotate_local_direction(
+                    tile,
+                    _LOCAL_FACE_NORMALS[face_idx]
+                    if face_idx < len(_LOCAL_FACE_NORMALS)
+                    else (0.0, 1.0, 0.0),
                 )
-                brightness = max(
-                    0.0,
-                    min(1.0, base_brightness * sun_factor),
-                )
-                rows.append(
-                    (
-                        v.x,
-                        v.y,
-                        v.z,
-                        brightness,
-                        brightness,
-                        brightness,
-                        uv[0],
-                        uv[1],
+                normal = _normal_for_shader_face(tile, face_idx, normal)
+                for idx, uv in zip(tri_indices, tri_uvs):
+                    v = world_verts[idx]
+                    rows.append(
+                        (
+                            v.x,
+                            v.y,
+                            v.z,
+                            indoor_factor,
+                            indoor_factor,
+                            indoor_factor,
+                            normal.x,
+                            normal.y,
+                            normal.z,
+                            uv[0],
+                            uv[1],
+                        )
                     )
-                )
+            else:
+                for idx, uv in zip(tri_indices, tri_uvs):
+                    v = world_verts[idx]
+                    base_brightness = max(
+                        0.0,
+                        _brightness_for_vertex(
+                            camera,
+                            v,
+                            default_brightness,
+                            surface_indoor=surface_indoor,
+                        ),
+                    )
+                    brightness = max(
+                        0.0,
+                        min(1.0, base_brightness * sun_factor * indoor_factor),
+                    )
+                    rows.append(
+                        (
+                            v.x,
+                            v.y,
+                            v.z,
+                            brightness,
+                            brightness,
+                            brightness,
+                            uv[0],
+                            uv[1],
+                        )
+                    )
         else:
             color = (
                 tile.face_colors[face_idx]
@@ -479,14 +538,14 @@ def _tile_vertex_data(
                 else (1.0, 1.0, 1.0)
             )
             r, g, b_col = _normalized_color(color)
-            r = max(0.0, min(1.0, r * sun_factor))
-            g = max(0.0, min(1.0, g * sun_factor))
-            b_col = max(0.0, min(1.0, b_col * sun_factor))
+            r = max(0.0, min(1.0, r * sun_factor * indoor_factor))
+            g = max(0.0, min(1.0, g * sun_factor * indoor_factor))
+            b_col = max(0.0, min(1.0, b_col * sun_factor * indoor_factor))
             for idx in tri_indices:
                 v = world_verts[idx]
                 rows.append((v.x, v.y, v.z, r, g, b_col))
 
-    columns = 8 if textured else 6
+    columns = 11 if textured and shader_lighting else 8 if textured else 6
     if not rows:
         return np.zeros((0, columns), dtype=np.float32)
     return np.array(rows, dtype=np.float32)
@@ -498,15 +557,19 @@ def build_wall_tile_batches(
     camera=None,
     default_brightness: float = 1.0,
     sun_direction=None,
+    lighting=None,
 ) -> list[BatchedMesh]:
     """Merge static WallTile objects into VBO-backed batches grouped by texture."""
     chunks_by_texture = {}
+    shader_lighting = texture_color_exposure_shader_available()
     for tile in tiles:
         data = _tile_vertex_data(
             tile,
             camera=camera,
             default_brightness=default_brightness,
             sun_direction=sun_direction,
+            lighting=lighting,
+            shader_lighting=bool(tile.texture) and shader_lighting,
         )
         if data.size == 0:
             continue
@@ -516,9 +579,6 @@ def build_wall_tile_batches(
     batches: list[BatchedMesh] = []
     for texture, chunks in chunks_by_texture.items():
         vertex_data = np.vstack(chunks) if len(chunks) > 1 else chunks[0]
-        vbo = glGenBuffers(1)
-        glBindBuffer(GL_ARRAY_BUFFER, vbo)
-        glBufferData(GL_ARRAY_BUFFER, vertex_data.nbytes, vertex_data, GL_STATIC_DRAW)
 
         if texture:
             glBindTexture(GL_TEXTURE_2D, texture)
@@ -526,11 +586,11 @@ def build_wall_tile_batches(
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
 
         batches.append(
-            BatchedMesh(
-                vbo_vertices=vbo,
-                vertex_count=vertex_data.shape[0],
+            BatchedMesh.from_vertex_data(
+                vertex_data,
                 texture=texture if texture else None,
                 alpha_test=bool(texture),
+                exposure_baseline=default_brightness,
             )
         )
 

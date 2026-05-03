@@ -34,6 +34,7 @@ from OpenGL.GL import (
 from camera import Camera
 from textures.resource_path import MOON_TEXTURE_PATH, STAR_TEXTURE_PATH
 from textures.texture_utils import load_texture
+from engine.rendering.lighting import SceneLighting, sky_sun_y
 
 
 class SkyRenderer:
@@ -74,6 +75,7 @@ class SkyRenderer:
         camera: Camera,
         sun_direction: Optional[object] = None,
         *,
+        lighting: SceneLighting | None = None,
         fog_enabled: bool = True,
     ) -> None:  # pragma: no cover - visual
         """Draw the sky with minimal GL state churn."""
@@ -89,7 +91,20 @@ class SkyRenderer:
         glRotatef(math.degrees(-camera.rotation.y), 0, 1, 0)
 
         brightness = self._clamp01(getattr(camera, "brightness_default", 1.0))
-        az = self._sun_azimuth_deg(sun_direction)
+        active_sun_direction = (
+            lighting.sun_direction if lighting is not None else sun_direction
+        )
+        az = self._sun_azimuth_deg(active_sun_direction)
+        sun_y = sky_sun_y(
+            sun_direction=active_sun_direction,
+            lighting=lighting,
+            xz_distance=50000.0,
+            fallback_y=20000.0,
+        )
+        if lighting is not None:
+            sr, sg, sb = lighting.sun_tint
+        else:
+            sr, sg, sb = (1.0, 1.0, 1.0)
 
         glBindTexture(GL_TEXTURE_2D, self._sun_tex)
         glPushMatrix()
@@ -98,8 +113,8 @@ class SkyRenderer:
         self._draw_sky_quad(
             dist=50000.0,
             half=self.sun_half_size,
-            y=20000.0,
-            color=(brightness, brightness, brightness, 1.0),
+            y=sun_y,
+            color=(brightness * sr, brightness * sg, brightness * sb, 1.0),
         )
         glPopMatrix()
 

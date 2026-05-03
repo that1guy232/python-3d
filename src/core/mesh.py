@@ -11,11 +11,15 @@ import ctypes
 import math
 import numpy as np
 from OpenGL.GL import (
+    glGenBuffers,
     glBindBuffer,
+    glBufferData,
+    glDeleteBuffers,
     glEnableClientState,
     glVertexPointer,
     glColorPointer,
     glTexCoordPointer,
+    glNormalPointer,
     glDrawArrays,
     glDisableClientState,
     glBindTexture,
@@ -26,6 +30,7 @@ from OpenGL.GL import (
     GL_TRIANGLES,
     GL_VERTEX_ARRAY,
     GL_COLOR_ARRAY,
+    GL_NORMAL_ARRAY,
     GL_TEXTURE_COORD_ARRAY,
     GL_TEXTURE_2D,
     GL_BLEND,
@@ -38,8 +43,11 @@ from OpenGL.GL import (
     glTexEnvi,
     GL_TEXTURE_ENV_MODE,
     GL_MODULATE,
-    GL_TEXTURE_ENV
+    GL_TEXTURE_ENV,
+    GL_STATIC_DRAW,
     )
+
+from core.compat_shader import get_texture_color_exposure_shader, use_fixed_pipeline
 
 
 
@@ -50,17 +58,152 @@ class BatchedMesh:
     texture: int | None = None
     height_sampler: Optional[object] = None
     alpha_test: bool = False
+    owns_vbo: bool = True
+    exposure_baseline: float = 1.0
+    vertex_width: int = 0
+    _base_vertex_data: Optional[np.ndarray] = None
+    _current_exposure: float = 1.0
+    _vbo_exposure: float = 1.0
 
+    @classmethod
+    def from_vertex_data(
+        cls,
+        vertex_data: np.ndarray,
+        *,
+        texture: int | None = None,
+        alpha_test: bool = False,
+        height_sampler: Optional[object] = None,
+        exposure_baseline: float = 1.0,
+        keep_vertex_data: bool = True,
+    ) -> "BatchedMesh":
+        upload_data = np.ascontiguousarray(vertex_data, dtype=np.float32)
+        vbo = glGenBuffers(1)
+        vbo_id = int(np.asarray(vbo).reshape(-1)[0])
+        glBindBuffer(GL_ARRAY_BUFFER, vbo_id)
+        glBufferData(GL_ARRAY_BUFFER, upload_data.nbytes, upload_data, GL_STATIC_DRAW)
+        baseline = float(exposure_baseline)
+        return cls(
+            vbo_vertices=vbo_id,
+            vertex_count=int(upload_data.shape[0]),
+            texture=texture,
+            height_sampler=height_sampler,
+            alpha_test=alpha_test,
+            exposure_baseline=baseline,
+            vertex_width=int(upload_data.shape[1]) if upload_data.ndim == 2 else 0,
+            _base_vertex_data=upload_data.copy() if keep_vertex_data else None,
+            _current_exposure=baseline,
+            _vbo_exposure=baseline,
+        )
+
+    def _exposure_scale(self, exposure: float | None = None) -> float:
+        exposure_value = self._current_exposure if exposure is None else float(exposure)
+        base = float(self.exposure_baseline)
+        if abs(base) <= 1e-8:
+            return exposure_value
+        return exposure_value / base
+
+    def _upload_vertex_data_for_exposure(self, exposure: float) -> None:
+        if self.vertex_count == 0 or not self.vbo_vertices:
+            return
+        if self._base_vertex_data is None:
+            return
+
+        exposure_value = float(exposure)
+        if abs(self._vbo_exposure - exposure_value) <= 1e-6:
+            return
+
+        vertex_data = self._base_vertex_data.copy()
+        if vertex_data.shape[1] >= 6:
+            vertex_data[:, 3:6] = self._base_vertex_data[:, 3:6] * self._exposure_scale(
+                exposure_value
+            )
+
+        glBindBuffer(GL_ARRAY_BUFFER, self.vbo_vertices)
+        glBufferData(GL_ARRAY_BUFFER, vertex_data.nbytes, vertex_data, GL_STATIC_DRAW)
+        self._vbo_exposure = exposure_value
+
+    def _restore_baseline_vertex_data(self) -> None:
+        if self.vertex_count == 0 or not self.vbo_vertices:
+            return
+        if self._base_vertex_data is None:
+            return
+
+        baseline = float(self.exposure_baseline)
+        if abs(self._vbo_exposure - baseline) <= 1e-6:
+            return
+
+        glBindBuffer(GL_ARRAY_BUFFER, self.vbo_vertices)
+        glBufferData(
+            GL_ARRAY_BUFFER,
+            self._base_vertex_data.nbytes,
+            self._base_vertex_data,
+            GL_STATIC_DRAW,
+        )
+        self._vbo_exposure = baseline
+
+    def set_exposure(self, exposure: float, *, baseline: float | None = None) -> None:
+        """Apply a global exposure scale to stored vertex colors.
+
+        Textured meshes drawn through ``draw()`` use a small compatibility shader
+        for this scale. Other paths keep the old CPU-side color upload.
+        """
+        if baseline is not None:
+            self.exposure_baseline = float(baseline)
+
+        exposure_value = float(exposure)
+        if abs(self._current_exposure - exposure_value) <= 1e-6 and baseline is None:
+            return
+
+        self._current_exposure = exposure_value
+        if self.texture is not None:
+            return
+
+        self._upload_vertex_data_for_exposure(exposure_value)
+
+    def dispose(self) -> None:
+        """Release the owned OpenGL vertex buffer, if it still exists."""
+        vbo = int(self.vbo_vertices or 0)
+        if not self.owns_vbo or vbo == 0:
+            self.vbo_vertices = 0
+            self.vertex_count = 0
+            self.vertex_width = 0
+            return
+
+        try:
+            glDeleteBuffers(1, [vbo])
+        except TypeError:
+            try:
+                glDeleteBuffers([vbo])
+            except Exception:
+                pass
+        except Exception:
+            pass
+        finally:
+            self.vbo_vertices = 0
+            self.vertex_count = 0
+            self.vertex_width = 0
+            self.owns_vbo = False
+            self._base_vertex_data = None
 
     def draw(self):
-        if self.vertex_count == 0:
+        if self.vertex_count == 0 or not self.vbo_vertices:
             return
 
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo_vertices)
     
         if self.texture is not None:
-            # Vertex format: [x, y, z, r, g, b, u, v] = 8 floats per vertex
-            stride = 8 * 4  # 8 floats * 4 bytes per float = 32 bytes per vertex
+            shader = get_texture_color_exposure_shader()
+            if shader is not None:
+                self._restore_baseline_vertex_data()
+            else:
+                self._upload_vertex_data_for_exposure(self._current_exposure)
+
+            # Supported textured formats:
+            # [x, y, z, r, g, b, u, v]
+            # [x, y, z, r, g, b, nx, ny, nz, u, v]
+            vertex_width = self.vertex_width or 8
+            has_normals = vertex_width >= 11
+            stride = vertex_width * 4
             
             # Enable vertex arrays
             glEnableClientState(GL_VERTEX_ARRAY)
@@ -68,9 +211,14 @@ class BatchedMesh:
             
             glEnableClientState(GL_COLOR_ARRAY)
             glColorPointer(3, GL_FLOAT, stride, ctypes.c_void_p(3 * 4))  # Color at offset 3 floats (12 bytes)
+
+            if has_normals:
+                glEnableClientState(GL_NORMAL_ARRAY)
+                glNormalPointer(GL_FLOAT, stride, ctypes.c_void_p(6 * 4))
             
             glEnableClientState(GL_TEXTURE_COORD_ARRAY)
-            glTexCoordPointer(2, GL_FLOAT, stride, ctypes.c_void_p(6 * 4))  # UV at offset 6 floats (24 bytes)
+            uv_offset = 9 if has_normals else 6
+            glTexCoordPointer(2, GL_FLOAT, stride, ctypes.c_void_p(uv_offset * 4))
 
             # Enable texturing and blending
             glEnable(GL_TEXTURE_2D)
@@ -83,7 +231,16 @@ class BatchedMesh:
             glBindTexture(GL_TEXTURE_2D, self.texture)
 
             # Draw the mesh
-            glDrawArrays(GL_TRIANGLES, 0, self.vertex_count)
+            if shader is not None:
+                shader.bind(
+                    scene_lighting_enabled=has_normals,
+                    directional_enabled=has_normals,
+                )
+            try:
+                glDrawArrays(GL_TRIANGLES, 0, self.vertex_count)
+            finally:
+                if shader is not None:
+                    use_fixed_pipeline()
 
             # Clean up
             if self.alpha_test:
@@ -91,6 +248,8 @@ class BatchedMesh:
             glDisable(GL_BLEND)
             glDisable(GL_TEXTURE_2D)
             glDisableClientState(GL_TEXTURE_COORD_ARRAY)
+            if has_normals:
+                glDisableClientState(GL_NORMAL_ARRAY)
             glDisableClientState(GL_COLOR_ARRAY)
             glDisableClientState(GL_VERTEX_ARRAY)
         else:
@@ -119,14 +278,19 @@ class BatchedMesh:
         blend, and client-array state once around the loop avoids a surprising
         amount of driver churn.
         """
-        if self.vertex_count == 0 or self.texture is None:
+        if self.vertex_count == 0 or not self.vbo_vertices or self.texture is None:
             return
 
-        stride = 8 * 4
+        vertex_width = self.vertex_width or 8
+        has_normals = vertex_width >= 11
+        stride = vertex_width * 4
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo_vertices)
         glVertexPointer(3, GL_FLOAT, stride, None)
         glColorPointer(3, GL_FLOAT, stride, ctypes.c_void_p(3 * 4))
-        glTexCoordPointer(2, GL_FLOAT, stride, ctypes.c_void_p(6 * 4))
+        if has_normals:
+            glNormalPointer(GL_FLOAT, stride, ctypes.c_void_p(6 * 4))
+        uv_offset = 9 if has_normals else 6
+        glTexCoordPointer(2, GL_FLOAT, stride, ctypes.c_void_p(uv_offset * 4))
         if bind_texture:
             glBindTexture(GL_TEXTURE_2D, self.texture)
         glDrawArrays(GL_TRIANGLES, 0, self.vertex_count)

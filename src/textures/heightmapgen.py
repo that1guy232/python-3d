@@ -5,9 +5,9 @@ fractal Brownian motion (fBM) Perlin noise. Saves to PNG.
 
 Usage (examples):
   - Default 512x512:
-      python heightmapgen.py
+      python -m textures.heightmapgen
   - Larger, tiled, with specific seed:
-      python heightmapgen.py -o ..\\assets\\textures\\heightmap.png \
+      python -m textures.heightmapgen -o ..\\assets\\textures\\heightmap.png \
           --width 1024 --height 1024 --scale 0.008 --octaves 6 \
           --persistence 0.5 --lacunarity 2.0 --seed 12345 --repeat 512
 

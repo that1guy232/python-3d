@@ -9,7 +9,8 @@ The actual implementations remain in the sibling modules (``wall_tile.py``
 and ``road.py``) to minimize changes to the rest of the codebase.
 """
 
+from .ground_tile import GroundTile
 from .wall_tile import WallTile
 from .road import Road
 
-__all__ = ["WallTile", "Road"]
+__all__ = ["GroundTile", "WallTile", "Road"]

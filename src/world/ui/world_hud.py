@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import random
 from pygame.math import Vector3
-from world.sprite import WorldSprite
+from engine.rendering.sprite import WorldSprite
 from world.ui.compass_overlay import CompassOverlay
 from textures.texture_utils import load_texture
 from textures.resource_path import (

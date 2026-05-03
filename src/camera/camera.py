@@ -16,7 +16,7 @@ class Camera:
         # If no areas are defined, brightness defaults to `brightness_default` (0.0).
         # Access the current camera brightness with the `brightness` property below.
         self.brightness_areas = []
-        self.brightness_default = default_brightness
+        self._brightness_default = float(default_brightness)
 
         # FOV scale (same formula you used)
         self._fov_scale = (height / 2) / math.tan(math.radians(fov / 2))
@@ -55,14 +55,41 @@ class Camera:
         # initialize
         self.update_rotation(0)
 
+    @property
+    def brightness_default(self):
+        return self._brightness_default
+
+    @brightness_default.setter
+    def brightness_default(self, value):
+        self._brightness_default = float(value)
+        cache = getattr(self, "_brightness_cache", None)
+        if cache is not None:
+            cache.clear()
+
+    def set_brightness_default(self, value):
+        """Set the baseline world brightness and invalidate brightness samples."""
+        self.brightness_default = value
+        return self._brightness_default
+
     # OPTIMIZATION: Brightness area helpers with caching and precomputation
-    def add_brightness_area(self, center, radius, value, falloff):
+    def add_brightness_area(
+        self,
+        center,
+        radius,
+        value,
+        falloff,
+        bounds=None,
+        indoor_only=False,
+    ):
         """
         Add a circular brightness area.
 
         center: pygame.Vector3 or (x,y,z) tuple. Only x/z are used for containment.
         radius: float, world-space radius around center (uses x/z plane).
         value: float, brightness value to apply inside the area.
+        bounds: optional (min_x, max_x, min_z, max_z) clamp for enclosed lights.
+        indoor_only: when True, static surface callers may skip this light for
+            exterior surfaces. Point-based callers still receive the light.
         """
         if not isinstance(center, Vector3):
             center = Vector3(*center)
@@ -73,6 +100,10 @@ class Camera:
             "value": float(value), 
             "falloff": float(falloff)
         }
+        if bounds is not None:
+            area["bounds"] = tuple(float(v) for v in bounds)
+        if indoor_only:
+            area["indoor_only"] = True
         self.brightness_areas.append(area)
         
         # OPTIMIZATION: Precompute squared radius and store optimized version
@@ -83,6 +114,8 @@ class Camera:
             "radius": float(radius),  # Keep original radius for distance calculations
             "value": float(value),
             "falloff": float(falloff),
+            "bounds": area.get("bounds"),
+            "indoor_only": bool(area.get("indoor_only", False)),
             "original": area  # Keep reference to original for compatibility
         }
         self._brightness_areas_optimized.append(optimized_area)
@@ -96,12 +129,16 @@ class Camera:
         self._brightness_areas_optimized.clear()
         self._brightness_cache.clear()
 
-    def _get_cache_key(self, point):
+    def _get_cache_key(self, point, surface_indoor=None):
         """Generate a cache key for a point (rounded to reduce cache size)."""
         # Round to nearest 10 units to create cache buckets
-        return (round(point.x / 10) * 10, round(point.z / 10) * 10)
+        if surface_indoor is None:
+            surface_key = None
+        else:
+            surface_key = bool(surface_indoor)
+        return (round(point.x / 10) * 10, round(point.z / 10) * 10, surface_key)
 
-    def get_brightness_at_with_blending(self, point):
+    def get_brightness_at_with_blending(self, point, surface_indoor=None):
         """
         Return the brightness at the given world-space point with proper area blending.
         This version properly combines overlapping brightness areas by adding their contributions.
@@ -110,7 +147,7 @@ class Camera:
             return self.brightness_default
 
         # Check cache first
-        cache_key = self._get_cache_key(point)
+        cache_key = self._get_cache_key(point, surface_indoor=surface_indoor)
         if cache_key in self._brightness_cache:
             self._brightness_cache_hits += 1
             cached_result = self._brightness_cache[cache_key]
@@ -118,13 +155,23 @@ class Camera:
 
         self._brightness_cache_misses += 1
 
-        # Calculate blended brightness from all overlapping areas
+        # Calculate brightness from all overlapping areas using the same
+        # multiplicative target-value contract as the static mesh builders.
         point_x, point_z = point.x, point.z
         total_brightness = self.brightness_default
         contributing_areas = []
         
         # Find all areas that contain this point and calculate their contributions
         for area in self._brightness_areas_optimized:
+            if area.get("indoor_only", False) and surface_indoor is False:
+                continue
+
+            bounds = area.get("bounds")
+            if bounds is not None:
+                min_x, max_x, min_z, max_z = bounds
+                if not (min_x <= point_x <= max_x and min_z <= point_z <= max_z):
+                    continue
+
             dx = point_x - area["center_x"]
             dz = point_z - area["center_z"]
             dist_sq = dx * dx + dz * dz
@@ -143,21 +190,18 @@ class Camera:
                     # Apply falloff (higher falloff = sharper edge)
                     attenuation = (1.0 - norm_distance) ** max(falloff, 0.0)
                     
-                    # Calculate this area's contribution
-                    contribution = value * attenuation
+                    if self.brightness_default == 0.0:
+                        relative = value
+                    else:
+                        relative = value / self.brightness_default
+                    effect = 1.0 + (relative - 1.0) * attenuation
+                    total_brightness *= effect
                     contributing_areas.append({
                         "area": area,
-                        "contribution": contribution,
+                        "contribution": abs(effect - 1.0),
+                        "effect": effect,
                         "attenuation": attenuation
                     })
-
-        # Blend contributions from all overlapping areas
-        if contributing_areas:
-            # Method 1: Additive blending (areas add together)
-            # This is good for light sources that should combine
-            total_contribution = sum(ca["contribution"] for ca in contributing_areas)
-            total_brightness = self.brightness_default + total_contribution
-            
 
         # Cache the result with all the data we computed
         best_area = max(contributing_areas, key=lambda x: x["contribution"])["area"] if contributing_areas else None
@@ -171,12 +215,15 @@ class Camera:
         
         return total_brightness
 
-    def get_brightness_at(self, point):
+    def get_brightness_at(self, point, surface_indoor=None):
         """
         Return the brightness at the given world-space point (pygame.Vector3).
         FIXED: Now uses proper blending for overlapping areas.
         """
-        return self.get_brightness_at_with_blending(point)
+        return self.get_brightness_at_with_blending(
+            point,
+            surface_indoor=surface_indoor,
+        )
 
     def get_brightness_area_with_blending(self, point):
         """

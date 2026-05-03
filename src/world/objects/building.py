@@ -6,6 +6,7 @@ import math
 from pygame.math import Vector3
 
 from .wall_tile import WallTile
+from engine.rendering.lighting import INDOOR_LIGHT_FACTOR, INDOOR_NORMAL
 
 
 class Building:
@@ -221,6 +222,9 @@ class Building:
                 texture=texture, uv_repeat=uv_repeat, thickness=wall_thickness,
             )
             tile.rotation = Vector3(0.0, theta, 0.0)
+            tile.indoor_face_indices = (1,)
+            tile.indoor_light_factor = INDOOR_LIGHT_FACTOR
+            tile.indoor_normal_override = INDOOR_NORMAL
             tiles.append(tile)
             
         self.attach_shapes(tiles)
@@ -256,6 +260,9 @@ class Building:
             thickness=thickness,
         )
         roof.rotation = Vector3(0.0, 0.0, math.pi * 0.5)
+        roof.indoor_face_indices = (1,)
+        roof.indoor_light_factor = INDOOR_LIGHT_FACTOR
+        roof.indoor_normal_override = INDOOR_NORMAL
         self.attach_shapes([roof])
         return [roof]
 

@@ -11,7 +11,7 @@ from typing import Iterable, Optional
 from world.objects import WallTile
 from world.objects.polygon import Polygon
 from core.mesh import BatchedMesh
-from world.sprite import WorldSprite
+from engine.rendering.sprite import WorldSprite
 
 
 def movement_blocked_by_wall(

@@ -5,17 +5,17 @@ import os
 import numpy as np
 import pygame
 from pygame.math import Vector3
-from world.ground_tile import GroundTile
+from world.objects.ground_tile import GroundTile
 from textures.resource_path import TEXTURES_PATH
-from textures.texture_utils import get_texture_size
-from OpenGL.GL import (
-    glGenBuffers,
-    glBindBuffer,
-    glBufferData,
-    GL_ARRAY_BUFFER,
-    GL_STATIC_DRAW,
-)
 from core.mesh import BatchedMesh, GroundHeightSampler
+from core.compat_shader import texture_color_exposure_shader_available
+from engine.rendering.lighting import (
+    apply_brightness_modifiers,
+    apply_covered_regions,
+    apply_directional_sunlight,
+    covered_region_mask,
+    with_textured_normals,
+)
 
 class TexturedGroundGridBuilder:
     def __init__(
@@ -26,6 +26,9 @@ class TexturedGroundGridBuilder:
         texture,
         brightness_modifiers: list[callable] = None,
         default_brightness: float = 1.0,
+        lighting=None,
+        sun_direction=None,
+        covered_regions=None,
     ):
         self.count = count
         self.tile_size = tile_size
@@ -37,6 +40,9 @@ class TexturedGroundGridBuilder:
         self.d = tile_size / 2.0
         self.spacing = tile_size + gap
         self.default_brightness = default_brightness
+        self.lighting = lighting
+        self.sun_direction = sun_direction
+        self.covered_regions = covered_regions or []
         
         tile = GroundTile(
             position=Vector3(0, 0, 0),
@@ -129,13 +135,15 @@ class TexturedGroundGridBuilder:
         total_vertices = vertices_per_tile * self.count * self.count
         vertex_data = np.zeros((total_vertices, 8), dtype=np.float32)
         corner_heights = np.zeros((self.count, self.count, 4), dtype=np.float32)
+        shader_lighting = texture_color_exposure_shader_available()
         
         if total_vertices == 0:
             empty = np.zeros((0, 8), dtype=np.float32)
-            vbo = glGenBuffers(1)
-            glBindBuffer(GL_ARRAY_BUFFER, vbo)
-            glBufferData(GL_ARRAY_BUFFER, empty.nbytes, empty, GL_STATIC_DRAW)
-            return BatchedMesh(vbo_vertices=vbo, vertex_count=0, texture=self.texture)
+            return BatchedMesh.from_vertex_data(
+                empty,
+                texture=self.texture,
+                exposure_baseline=self.default_brightness,
+            )
         
         vertex_idx = 0
         # Pre-calculate all grid positions
@@ -168,67 +176,36 @@ class TexturedGroundGridBuilder:
         vertex_heights = self._sample_heights_vectorized(vertex_world_coords, heightmap_data)
         vertex_data[:, 1] = vertex_heights  # Update y coordinates
         
-        if self.brightness_modifiers:
-            N = len(vertex_data)
-            # Initialize to default_brightness so modifiers multiply that
-            # baseline. This prevents a visible seam when default_brightness != 1.0.
-            brightness_factor = np.full(N, self.default_brightness, dtype=np.float32)
-            is_modified = np.zeros(N, dtype=bool)  # Track which vertices have modifiers
-            
-            # 1. Identify vertices affected by ANY modifier
-            for modifier in self.brightness_modifiers:
-                try:
-                    position, radius, brightness_value, fall_off = modifier
-                    center_x = position.x
-                    center_z = position.z
-                    # Calculate distances to all vertices at once
-                    dx = vertex_world_coords[:, 0] - center_x
-                    dz = vertex_world_coords[:, 1] - center_z
-                    distances = np.sqrt(dx*dx + dz*dz)
-                    # Mark vertices within radius
-                    within_radius = distances <= radius
-                    is_modified |= within_radius
-                except (ValueError, AttributeError, IndexError) as e:
-                    print(f"Warning: Invalid modifier {modifier}, skipping. Error: {e}")
-            
-            brightness_factor[~is_modified] = self.default_brightness
-            
-            # 3. Apply modifiers multiplicatively to modified vertices
-            for modifier in self.brightness_modifiers:
-                try:
-                    position, radius, brightness_value, fall_off = modifier  # Now using all 4 values
-                    center_x = position.x
-                    center_z = position.z
-                    dx = vertex_world_coords[:, 0] - center_x
-                    dz = vertex_world_coords[:, 1] - center_z
-                    distances = np.sqrt(dx*dx + dz*dz)
-                    within_radius = distances <= radius
-                    # Normalized distance in [0,1] (0=center, 1=radius). Avoid divide-by-zero.
-                    norm = distances / np.maximum(radius, 1e-12)
-                    norm = np.clip(norm, 0.0, 1.0)
-                    # Interpret fall_off as exponent: 1.0 = linear, >1 = steeper, <1 = smoother
-                    attenuation = (1.0 - norm) ** np.maximum(fall_off, 0.0)
-                    
-                    if self.default_brightness == 0:
-                        rel = brightness_value
-                    else:
-                        rel = brightness_value / self.default_brightness
-                    modifier_effect = 1.0 + (rel - 1.0) * attenuation
-                    
-                    # Apply only to vertices inside radius
-                    brightness_factor[within_radius] *= modifier_effect[within_radius]
-                except (ValueError, AttributeError, IndexError) as e:
-                    print(f"Warning: Invalid modifier {modifier}, skipping. Error: {e}")
-                    continue
-            
-            vertex_data[:, 3:6] = vertex_data[:, 3:6] * brightness_factor[:, np.newaxis]
+        if shader_lighting:
+            vertex_data = with_textured_normals(
+                vertex_data,
+                prefer_upward_normals=True,
+            )
+            apply_covered_regions(
+                vertex_data,
+                covered_regions=self.covered_regions,
+            )
         else:
-            # No modifiers: apply default to ALL vertices
-            vertex_data[:, 3:6] *= self.default_brightness
-        
-        ###########################################################
-        # END NEW BRIGHTNESS LOGIC #
-        ###########################################################
+            indoor_receivers = covered_region_mask(
+                vertex_data,
+                covered_regions=self.covered_regions,
+            )
+            apply_directional_sunlight(
+                vertex_data,
+                lighting=self.lighting,
+                sun_direction=self.sun_direction,
+                prefer_upward_normals=True,
+            )
+            apply_covered_regions(
+                vertex_data,
+                covered_regions=self.covered_regions,
+            )
+            apply_brightness_modifiers(
+                vertex_data,
+                modifiers=self.brightness_modifiers,
+                default_brightness=self.default_brightness,
+                receiver_mask=indoor_receivers,
+            )
         
         # Batch process all corner heights (unchanged)
         corner_world_coords = np.array([[coord[3], coord[4]] for coord in corner_coords_list])
@@ -237,15 +214,10 @@ class TexturedGroundGridBuilder:
         for i, (gx, gz, corner_idx, _, _) in enumerate(corner_coords_list):
             corner_heights[gx, gz, corner_idx] = corner_heights_flat[i]
         
-        # Create VBO with the modified vertex data
-        vbo = glGenBuffers(1)
-        glBindBuffer(GL_ARRAY_BUFFER, vbo)
-        glBufferData(GL_ARRAY_BUFFER, vertex_data.nbytes, vertex_data, GL_STATIC_DRAW)
-        
-        mesh = BatchedMesh(
-            vbo_vertices=vbo,
-            vertex_count=vertex_data.shape[0],
-            texture=self.texture
+        mesh = BatchedMesh.from_vertex_data(
+            vertex_data,
+            texture=self.texture,
+            exposure_baseline=self.default_brightness,
         )
         mesh.height_sampler = GroundHeightSampler(
             count=self.count,

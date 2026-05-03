@@ -11,15 +11,15 @@ from importlib import import_module
 
 _EXPORTS = {
     "WorldScene": (".worldscene", "WorldScene"),
-    "WorldSprite": (".sprite", "WorldSprite"),
-    "draw_sprites_batched": (".sprite", "draw_sprites_batched"),
-    "Decal": (".decal", "Decal"),
-    "DecalBatch": (".decal_batch", "DecalBatch"),
-    "GroundTile": (".ground_tile", "GroundTile"),
+    "WorldSprite": ("engine.rendering.sprite", "WorldSprite"),
+    "draw_sprites_batched": ("engine.rendering.sprite", "draw_sprites_batched"),
+    "Decal": ("engine.rendering.decal", "Decal"),
+    "DecalBatch": ("engine.rendering.decal_batch", "DecalBatch"),
+    "GroundTile": (".objects.ground_tile", "GroundTile"),
     "WallTile": (".objects", "WallTile"),
     "Road": (".objects", "Road"),
     "spawn_world_sprites": (".world_spawner", "spawn_world_sprites"),
-    "WorldHUD": (".world_hud", "WorldHUD"),
+    "WorldHUD": (".ui.world_hud", "WorldHUD"),
     "movement_blocked_by_wall": (".world_collision", "movement_blocked_by_wall"),
 }
 

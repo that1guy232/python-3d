@@ -57,6 +57,7 @@ class LoadingScene(Scene):
         self.progress = 0.0
         self.elapsed = 0.0
         self.next_scene = None
+        self._target_transferred = False
 
     def update(self, dt: float) -> None:
         self.elapsed += dt
@@ -67,6 +68,7 @@ class LoadingScene(Scene):
             label, progress = next(self._steps)
         except StopIteration:
             self.next_scene = self.target_scene
+            self._target_transferred = True
             return
 
         self.status = label
@@ -132,3 +134,13 @@ class LoadingScene(Scene):
             align="center",
         )
         text.end()
+
+    def dispose(self) -> None:
+        if self._target_transferred:
+            return
+        dispose = getattr(self.target_scene, "dispose", None)
+        if callable(dispose):
+            try:
+                dispose()
+            except Exception:
+                pass

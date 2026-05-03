@@ -70,6 +70,15 @@ class Engine:
         pygame.mouse.set_visible(False)
         pygame.event.set_grab(True)
 
+    @staticmethod
+    def _dispose_scene(scene) -> None:
+        dispose = getattr(scene, "dispose", None)
+        if callable(dispose):
+            try:
+                dispose()
+            except Exception:
+                pass
+
     def _is_over_any_mesh(self, pos):
         # Kept for compatibility if needed elsewhere; scene now owns bounds
         if hasattr(self.scene, "contains_horizontal"):
@@ -104,7 +113,9 @@ class Engine:
         self.scene.update(dt)
         next_scene = getattr(self.scene, "next_scene", None)
         if next_scene is not None:
+            old_scene = self.scene
             self.scene = next_scene
+            self._dispose_scene(old_scene)
             pygame.mouse.set_visible(False)
             pygame.event.set_grab(True)
             pygame.mouse.get_rel()
@@ -134,6 +145,7 @@ class Engine:
                 break
             self.update(dt)
             self.render()
+        self._dispose_scene(self.scene)
         pygame.quit()
 
     # ------------------------------------------------------------------

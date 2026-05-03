@@ -15,6 +15,7 @@ from pygame.math import Vector3
 from config import *
 from camera.headbob import HeadBob
 from camera.sway_controller import SwayController
+from engine.rendering.lighting import SceneLighting
 from engine.rendering.sky_renderer import SkyRenderer
 from sound.sound_utils import Sounds
 from textures.resource_path import *
@@ -22,7 +23,7 @@ from textures.texture_manager import load_world_textures
 from world.player_controller import PlayerCameraController
 from world.ui.pause_menu import PauseMenu
 from world.ui.setting_menu import SettingMenu
-from world.world_hud import WorldHUD
+from world.ui.world_hud import WorldHUD
 
 from OpenGL.GL import (
     glEnable,
@@ -46,14 +47,6 @@ def setup_brightness_areas(scene, grid_count: int, spacing: float, half: float) 
     max_x = grid_count * spacing - half
     min_z = 0 + half
     max_z = grid_count * spacing - half
-    brightness_modifiers.append(
-        (
-            Vector3(scene.world_center.x, 0, scene.world_center.z),
-            1000,
-            1,
-            4,
-        )
-    )
     for _ in range(0):
         cx = random.triangular(min_x, max_x, (min_x + max_x) * 0.5) + 1e-6
         cz = random.triangular(min_z, max_z, (min_z + max_z) * 0.5) + 1e-6
@@ -138,17 +131,13 @@ def setup_graphics(scene) -> None:
     glFogfv(GL_FOG_COLOR, LIGHT_BLUE)
     glHint(GL_FOG_HINT, GL_FASTEST)
 
-    # TODO: Total rewrite to work with SkyRenderer.
-    scene.sun_pos = Vector3(
-        scene.world_center.x + 10000.0,
-        20000.0,
-        scene.world_center.z + 3000.0,
+    scene.lighting = SceneLighting.from_world_center(
+        scene.world_center,
+        sky_color=LIGHT_BLUE,
     )
-    sun_direction = Vector3(scene.world_center.x, 0.0, scene.world_center.z) - scene.sun_pos
-    sun_direction_length = sun_direction.length()
-    if sun_direction_length != 0:
-        sun_direction = sun_direction / sun_direction_length
-    scene.sun_direction = sun_direction
+    # Backward-compatible aliases used by shadows and a few older render paths.
+    scene.sun_pos = scene.lighting.sun_position
+    scene.sun_direction = scene.lighting.sun_direction
 
 
 def load_assets(scene) -> None:
@@ -161,6 +150,7 @@ def load_assets(scene) -> None:
     scene.rock_textures = tex.get("rock_textures", [])
     scene.fence_textures = tex.get("fence_textures", [])
     scene.wall_tex = tex.get("wall_tex")
+    scene.torch_tex = tex.get("torch_tex")
 
     Sounds.ensure_init()
     Sounds.load_optional("footstep", LEAVES02_SOUND_PATH)

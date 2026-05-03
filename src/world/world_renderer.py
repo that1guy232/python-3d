@@ -55,9 +55,11 @@ class WorldRenderer:
 
     def _sky_rgba(self) -> list[float]:
         brightness = self._clamp01(getattr(self.scene.camera, "brightness_default", 1.0))
+        lighting = getattr(self.scene, "lighting", None)
+        sky_color = getattr(lighting, "sky_color", LIGHT_BLUE)
         return [
             self._clamp01(channel * brightness)
-            for channel in LIGHT_BLUE[:3]
+            for channel in sky_color[:3]
         ] + [1.0]
 
     def draw_sky(self) -> None:  # pragma: no cover - visual
@@ -65,11 +67,15 @@ class WorldRenderer:
         scene.sky.draw(
             scene.camera,
             sun_direction=scene.sun_direction,
+            lighting=getattr(scene, "lighting", None),
             fog_enabled=self._fog_enabled(),
         )
 
     def draw(self, enable_timing: bool = False) -> None:  # pragma: no cover - visual
         scene = self.scene
+        sync_lighting = getattr(scene, "_sync_lighting_uniforms", None)
+        if callable(sync_lighting):
+            sync_lighting()
         self._apply_fog_state()
         scene.ground_mesh.draw()
         for mesh in getattr(scene, "fence_meshes", ()):

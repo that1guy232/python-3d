@@ -15,11 +15,6 @@ import math
 import numpy as np
 from pygame.math import Vector3
 from OpenGL.GL import (
-    glGenBuffers,
-    glBindBuffer,
-    glBufferData,
-    GL_ARRAY_BUFFER,
-    GL_STATIC_DRAW,
     glEnable,
     glDisable,
     glPolygonOffset,
@@ -124,7 +119,10 @@ class Decal:
 
     def set_uv_repeat(self, u_rep: float, v_rep: float) -> None:
         self.uv_repeat = (float(u_rep), float(v_rep))
-        self._rebuild()
+        if self.build_vbo:
+            self._rebuild()
+        else:
+            self._vertex_data = self._generate_vertex_data()
 
     def draw_untextured(self) -> None:  # parity with Drawable
         self.draw()
@@ -150,12 +148,20 @@ class Decal:
     # --- Internal mesh builder -----------------------------------------
     def _rebuild(self) -> None:
         vertex_data = self._generate_vertex_data()
-        vbo = glGenBuffers(1)
-        glBindBuffer(GL_ARRAY_BUFFER, vbo)
-        glBufferData(GL_ARRAY_BUFFER, vertex_data.nbytes, vertex_data, GL_STATIC_DRAW)
-        self._mesh = BatchedMesh(
-            vbo_vertices=vbo, vertex_count=vertex_data.shape[0], texture=self.texture
+        if self._mesh is not None:
+            self._mesh.dispose()
+        self._mesh = BatchedMesh.from_vertex_data(
+            vertex_data,
+            texture=self.texture,
+            keep_vertex_data=False,
         )
+        self._vertex_data = None
+
+    def dispose(self) -> None:
+        if self._mesh is not None:
+            self._mesh.dispose()
+            self._mesh = None
+        self._vertex_data = None
 
     def _generate_vertex_data(self) -> np.ndarray:
         w, h = self.size

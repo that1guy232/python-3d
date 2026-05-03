@@ -16,7 +16,7 @@ from __future__ import annotations
 import random
 import numpy as np
 from pygame.math import Vector3
-from world.sprite import WorldSprite
+from engine.rendering.sprite import WorldSprite
 from textures.texture_utils import get_texture_size
 from collections import defaultdict
 

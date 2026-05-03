@@ -25,3 +25,7 @@ class Scene:
     def render(self):  # pragma: no cover - visual
         # By default, do nothing; 3D scenes should override
         pass
+
+    def dispose(self) -> None:
+        """Release scene-owned graphics resources while the GL context exists."""
+        pass

@@ -7,6 +7,17 @@ import math
 from world.objects import Road
 from world.objects.building import Building
 
+PointXZ = tuple[float, float]
+RectXZ = tuple[float, float, float, float]
+RoadSegment = tuple[PointXZ, PointXZ]
+Route = list[PointXZ]
+PlannedRoute = tuple[Route, float]
+
+_CONNECTABLE_ROAD_LIMIT = 24
+_LANE_TARGET_LIMIT = 5
+_PRIMARY_LANE_LIMIT = 12
+_CROSS_LANE_LIMIT = 8
+
 
 class BuildingRoadPlanner:
     """Plan non-overlapping driveway routes from buildings to the road network."""
@@ -18,7 +29,7 @@ class BuildingRoadPlanner:
         return getattr(self.scene, name)
 
     @staticmethod
-    def _doorway_normal(side: str) -> tuple[float, float]:
+    def _doorway_normal(side: str) -> PointXZ:
         side_key = str(side).lower()
         if side_key == "north":
             return (0.0, 1.0)
@@ -30,8 +41,8 @@ class BuildingRoadPlanner:
 
     @staticmethod
     def _rects_overlap(
-        first: tuple[float, float, float, float],
-        second: tuple[float, float, float, float],
+        first: RectXZ,
+        second: RectXZ,
     ) -> bool:
         return not (
             first[1] <= second[0]
@@ -42,10 +53,10 @@ class BuildingRoadPlanner:
 
     @staticmethod
     def _segment_road_rect(
-        p0: tuple[float, float],
-        p1: tuple[float, float],
+        p0: PointXZ,
+        p1: PointXZ,
         width: float,
-    ) -> tuple[float, float, float, float] | None:
+    ) -> RectXZ | None:
         x0, z0 = p0
         x1, z1 = p1
         if math.hypot(x1 - x0, z1 - z0) <= 1e-4:
@@ -83,16 +94,67 @@ class BuildingRoadPlanner:
         return result
 
     @staticmethod
-    def _route_length(route: list[tuple[float, float]]) -> float:
+    def _route_length(route: Route) -> float:
         return sum(
             math.hypot(p1[0] - p0[0], p1[1] - p0[1])
             for p0, p1 in zip(route, route[1:])
         )
 
     @staticmethod
+    def _segment_length(
+        segment: RoadSegment,
+    ) -> float:
+        (x0, z0), (x1, z1) = segment
+        return math.hypot(x1 - x0, z1 - z0)
+
+    @classmethod
+    def _turn_count(cls, route: Route) -> int:
+        count = 0
+        segments = cls._route_to_segments(route)
+        for first, second in zip(segments, segments[1:]):
+            (x0, z0), (x1, z1) = first
+            (x2, z2), (x3, z3) = second
+            ux0, uz0 = x1 - x0, z1 - z0
+            ux1, uz1 = x3 - x2, z3 - z2
+            len0 = math.hypot(ux0, uz0)
+            len1 = math.hypot(ux1, uz1)
+            if len0 <= 1e-4 or len1 <= 1e-4:
+                continue
+            cross = abs((ux0 / len0) * (uz1 / len1) - (uz0 / len0) * (ux1 / len1))
+            if cross > 1e-3:
+                count += 1
+        return count
+
+    @classmethod
+    def _close_turn_penalty(
+        cls, route: Route, road_width: float
+    ) -> float:
+        segments = cls._route_to_segments(route)
+        if len(segments) < 3:
+            return 0.0
+
+        min_spacing = max(road_width * 0.85, 10.0)
+        penalty = 0.0
+        for index, segment in enumerate(segments):
+            if index == 0 or index == len(segments) - 1:
+                continue
+            length = cls._segment_length(segment)
+            if length < min_spacing:
+                penalty += (min_spacing - length) * 20.0 + road_width * 8.0
+        return penalty
+
+    @classmethod
+    def _route_score(cls, route: Route, road_width: float) -> float:
+        return (
+            cls._route_length(route)
+            + cls._turn_count(route) * road_width * 0.5
+            + cls._close_turn_penalty(route, road_width)
+        )
+
+    @staticmethod
     def _route_to_segments(
-        route: list[tuple[float, float]],
-    ) -> list[tuple[tuple[float, float], tuple[float, float]]]:
+        route: Route,
+    ) -> list[RoadSegment]:
         return [
             (p0, p1)
             for p0, p1 in zip(route, route[1:])
@@ -101,7 +163,7 @@ class BuildingRoadPlanner:
 
     @staticmethod
     def _segment_orientation(
-        segment: tuple[tuple[float, float], tuple[float, float]],
+        segment: RoadSegment,
     ) -> str | None:
         (x0, z0), (x1, z1) = segment
         if abs(x1 - x0) <= 1e-4:
@@ -112,8 +174,8 @@ class BuildingRoadPlanner:
 
     @staticmethod
     def _point_to_segment_distance(
-        point: tuple[float, float],
-        segment: tuple[tuple[float, float], tuple[float, float]],
+        point: PointXZ,
+        segment: RoadSegment,
     ) -> float:
         px, pz = point
         (x0, z0), (x1, z1) = segment
@@ -129,10 +191,17 @@ class BuildingRoadPlanner:
         return math.hypot(px - cx, pz - cz)
 
     @staticmethod
-    def _prune_route(route: list[tuple[float, float]]) -> list[tuple[float, float]]:
-        clean: list[tuple[float, float]] = []
+    def _prune_route(route: Route) -> Route:
+        clean: Route = []
         for point in route:
-            if clean and math.hypot(point[0] - clean[-1][0], point[1] - clean[-1][1]) <= 1e-4:
+            if (
+                clean
+                and math.hypot(
+                    point[0] - clean[-1][0],
+                    point[1] - clean[-1][1],
+                )
+                <= 1e-4
+            ):
                 continue
             clean.append(point)
 
@@ -156,9 +225,43 @@ class BuildingRoadPlanner:
 
         return clean
 
+    @classmethod
+    def _soften_close_turns(
+        cls, route: Route, road_width: float
+    ) -> Route:
+        """Remove tiny interior doglegs that make adjacent turns overlap."""
+        clean = cls._prune_route(route)
+        min_spacing = max(road_width * 0.55, 8.0)
+
+        changed = True
+        while changed and len(clean) > 3:
+            changed = False
+            for index in range(1, len(clean) - 2):
+                p0 = clean[index]
+                p1 = clean[index + 1]
+                if math.hypot(p1[0] - p0[0], p1[1] - p0[1]) >= min_spacing:
+                    continue
+
+                remove_first = clean[:index] + clean[index + 1 :]
+                remove_second = clean[: index + 1] + clean[index + 2 :]
+                remove_first = cls._prune_route(remove_first)
+                remove_second = cls._prune_route(remove_second)
+                if index == 1:
+                    clean = remove_second
+                elif cls._route_length(remove_first) <= cls._route_length(
+                    remove_second
+                ):
+                    clean = remove_first
+                else:
+                    clean = remove_second
+                changed = True
+                break
+
+        return cls._prune_route(clean)
+
     def _network_lane_positions(
         self,
-        road_network: list[tuple[tuple[float, float], tuple[float, float]]],
+        road_network: list[RoadSegment],
     ) -> tuple[list[float], list[float]]:
         lane_xs: list[float] = []
         lane_zs: list[float] = []
@@ -179,7 +282,7 @@ class BuildingRoadPlanner:
         building: Building,
         doorway_side: str,
         start_gap: float,
-    ) -> tuple[tuple[float, float], tuple[float, float]]:
+    ) -> tuple[PointXZ, PointXZ]:
         nx, nz = self._doorway_normal(doorway_side)
         min_x, max_x, min_z, max_z = building.bounds
         cx = float(building.position.x)
@@ -200,7 +303,7 @@ class BuildingRoadPlanner:
         self,
         *,
         apron_x: float,
-        doorway_normal: tuple[float, float],
+        doorway_normal: PointXZ,
         building: Building,
         buildings: list[Building],
         road_width: float,
@@ -248,7 +351,7 @@ class BuildingRoadPlanner:
         self,
         *,
         apron_z: float,
-        doorway_normal: tuple[float, float],
+        doorway_normal: PointXZ,
         building: Building,
         buildings: list[Building],
         road_width: float,
@@ -288,7 +391,7 @@ class BuildingRoadPlanner:
 
     def _route_is_clear(
         self,
-        route: list[tuple[float, float]],
+        route: Route,
         *,
         road_width: float,
         buildings: list[Building],
@@ -314,29 +417,52 @@ class BuildingRoadPlanner:
                 if self._rects_overlap(road_rect, building.bounds):
                     return False
 
+        joint_pad = road_width * 0.5
+        for point in route[1:-1]:
+            joint_rect = (
+                point[0] - joint_pad,
+                point[0] + joint_pad,
+                point[1] - joint_pad,
+                point[1] + joint_pad,
+            )
+            if not (
+                joint_rect[0] >= world_bounds[0]
+                and joint_rect[1] <= world_bounds[1]
+                and joint_rect[2] >= world_bounds[2]
+                and joint_rect[3] <= world_bounds[3]
+            ):
+                return False
+            for building in buildings:
+                if self._rects_overlap(joint_rect, building.bounds):
+                    return False
+
         return True
 
     def _candidate_routes_to_target(
         self,
         *,
-        front: tuple[float, float],
-        apron: tuple[float, float],
-        target: tuple[float, float],
+        front: PointXZ,
+        apron: PointXZ,
+        target: PointXZ,
         lane_xs: list[float],
         lane_zs: list[float],
-    ) -> list[list[tuple[float, float]]]:
+    ) -> list[Route]:
         target_x, target_z = target
         candidates = [
             [front, apron, (target_x, apron[1]), target],
             [front, apron, (apron[0], target_z), target],
         ]
 
-        for lane_x in lane_xs[:12]:
-            candidates.append([front, apron, (lane_x, apron[1]), (lane_x, target_z), target])
-        for lane_z in lane_zs[:12]:
-            candidates.append([front, apron, (apron[0], lane_z), (target_x, lane_z), target])
-        for lane_x in lane_xs[:8]:
-            for lane_z in lane_zs[:8]:
+        for lane_x in lane_xs[:_PRIMARY_LANE_LIMIT]:
+            candidates.append(
+                [front, apron, (lane_x, apron[1]), (lane_x, target_z), target]
+            )
+        for lane_z in lane_zs[:_PRIMARY_LANE_LIMIT]:
+            candidates.append(
+                [front, apron, (apron[0], lane_z), (target_x, lane_z), target]
+            )
+        for lane_x in lane_xs[:_CROSS_LANE_LIMIT]:
+            for lane_z in lane_zs[:_CROSS_LANE_LIMIT]:
                 candidates.append(
                     [
                         front,
@@ -363,18 +489,18 @@ class BuildingRoadPlanner:
     def _candidate_routes_to_road_segment(
         self,
         *,
-        front: tuple[float, float],
-        apron: tuple[float, float],
-        segment: tuple[tuple[float, float], tuple[float, float]],
+        front: PointXZ,
+        apron: PointXZ,
+        segment: RoadSegment,
         lane_xs: list[float],
         lane_zs: list[float],
-    ) -> list[list[tuple[float, float]]]:
+    ) -> list[Route]:
         orientation = self._segment_orientation(segment)
         if orientation is None:
             return []
 
         (x0, z0), (x1, z1) = segment
-        targets: list[tuple[float, float]] = []
+        targets: list[PointXZ] = []
         if orientation == "horizontal":
             min_x, max_x = sorted((x0, x1))
             target_xs = [max(min_x, min(max_x, apron[0]))]
@@ -382,7 +508,7 @@ class BuildingRoadPlanner:
             target_xs = self._dedupe_sorted(
                 sorted(target_xs, key=lambda x: abs(x - apron[0])),
                 min_delta=1.0,
-            )[:5]
+            )[:_LANE_TARGET_LIMIT]
             targets.extend((x, z0) for x in target_xs)
         else:
             min_z, max_z = sorted((z0, z1))
@@ -391,10 +517,10 @@ class BuildingRoadPlanner:
             target_zs = self._dedupe_sorted(
                 sorted(target_zs, key=lambda z: abs(z - apron[1])),
                 min_delta=1.0,
-            )[:5]
+            )[:_LANE_TARGET_LIMIT]
             targets.extend((x0, z) for z in target_zs)
 
-        candidates: list[list[tuple[float, float]]] = []
+        candidates: list[Route] = []
         for target in targets:
             candidates.extend(
                 self._candidate_routes_to_target(
@@ -415,8 +541,8 @@ class BuildingRoadPlanner:
         road_center_z: float,
         road_width: float,
         buildings: list[Building],
-        road_network: list[tuple[tuple[float, float], tuple[float, float]]],
-    ) -> list[tuple[float, float]]:
+        road_network: list[RoadSegment],
+    ) -> Route:
         start_gap = 0.5
         turn_clearance = road_width * 0.5 + 12.0
         front, normal = self._building_front_point(
@@ -455,12 +581,17 @@ class BuildingRoadPlanner:
             )
         )
 
-        candidates: list[list[tuple[float, float]]] = []
+        candidates: list[Route] = []
+        connectable_network = [
+            segment
+            for segment in road_network
+            if self._segment_orientation(segment) is not None
+        ]
         ranked_network = sorted(
-            road_network,
+            connectable_network,
             key=lambda segment: self._point_to_segment_distance(apron, segment),
         )
-        for segment in ranked_network[:24]:
+        for segment in ranked_network[:_CONNECTABLE_ROAD_LIMIT]:
             candidates.extend(
                 self._candidate_routes_to_road_segment(
                     front=front,
@@ -471,28 +602,74 @@ class BuildingRoadPlanner:
                 )
             )
 
-        best_route: list[tuple[float, float]] = []
+        best_route: Route = []
         best_score = float("inf")
         for candidate in candidates:
-            route = self._prune_route(candidate)
+            route = self._soften_close_turns(
+                self._prune_route(candidate),
+                road_width,
+            )
             if self._route_is_clear(route, road_width=road_width, buildings=buildings):
-                score = self._route_length(route)
+                score = self._route_score(route, road_width)
                 if score < best_score:
                     best_route = route
                     best_score = score
 
         return best_route
 
+    def _record_planned_routes(self, planned_routes: list[PlannedRoute]) -> None:
+        self.scene.building_road_routes = [route for route, _ in planned_routes]
+        self.scene.building_road_segments = [
+            (segment, driveway_width)
+            for route, driveway_width in planned_routes
+            for segment in self._route_to_segments(route)
+        ]
+
+    def _build_route_road(
+        self,
+        *,
+        route: Route,
+        driveway_width: float,
+        road_y: float,
+    ) -> Road:
+        return Road(
+            points=route,
+            ground_y=road_y,
+            width=driveway_width,
+            texture=self.road_tex,
+            px_to_world=1.0,
+            v_tiles=1.0,
+            height_sampler=self._ground_height_sampler,
+            elevation=3.0,
+            segment_length=8.0,
+            brightness_modifiers=self.brightness_modifiers,
+            default_brightness=self.camera.brightness_default,
+            lighting=getattr(self.scene, "lighting", None),
+            sun_direction=getattr(self.scene, "sun_direction", None),
+        )
+
+    def _instantiate_planned_roads(
+        self, planned_routes: list[PlannedRoute], *, road_y: float
+    ) -> list[Road]:
+        return [
+            self._build_route_road(
+                route=route,
+                driveway_width=driveway_width,
+                road_y=road_y,
+            )
+            for route, driveway_width in planned_routes
+            if self._route_to_segments(route)
+        ]
+
     def create_building_access_roads(
         self,
         *,
         road_center_z: float,
         road_y: float,
-        main_road_segment: tuple[tuple[float, float], tuple[float, float]],
+        main_road_segment: RoadSegment,
     ) -> list[Road]:
-        roads: list[Road] = []
         road_network = [main_road_segment]
-        planned_routes: list[tuple[list[tuple[float, float]], float]] = []
+        planned_routes: list[PlannedRoute] = []
         route_requests = list(zip(self.buildings, self.building_specs))
         route_requests.sort(
             key=lambda item: abs(float(item[0].position.z) - road_center_z)
@@ -509,43 +686,19 @@ class BuildingRoadPlanner:
                 road_network=road_network,
             )
             if not route:
+                bx = float(building.position.x)
+                bz = float(building.position.z)
                 print(
                     "Warning: could not find non-overlapping road route for "
-                    f"building at ({building.position.x:.1f}, {building.position.z:.1f})."
+                    f"building at ({bx:.1f}, {bz:.1f})."
                 )
                 continue
 
             planned_routes.append((route, driveway_width))
             road_network.extend(self._route_to_segments(route))
 
-        self.scene.building_road_routes = [route for route, _ in planned_routes]
-        self.scene.building_road_segments = [
-            (segment, driveway_width)
-            for route, driveway_width in planned_routes
-            for segment in self._route_to_segments(route)
-        ]
-
-        for (p0, p1), driveway_width in self.scene.building_road_segments:
-            if math.hypot(p1[0] - p0[0], p1[1] - p0[1]) <= 1e-4:
-                continue
-            roads.append(
-                Road(
-                    start=p0,
-                    end=p1,
-                    ground_y=road_y,
-                    width=driveway_width,
-                    texture=self.road_tex,
-                    px_to_world=1.0,
-                    v_tiles=1.0,
-                    height_sampler=self._ground_height_sampler,
-                    elevation=3.0,
-                    segment_length=8.0,
-                    brightness_modifiers=self.brightness_modifiers,
-                    default_brightness=self.camera.brightness_default,
-                )
-            )
-
-        return roads
+        self._record_planned_routes(planned_routes)
+        return self._instantiate_planned_roads(planned_routes, road_y=road_y)
 
 
 def create_building_access_roads(
@@ -553,7 +706,7 @@ def create_building_access_roads(
     *,
     road_center_z: float,
     road_y: float,
-    main_road_segment: tuple[tuple[float, float], tuple[float, float]],
+    main_road_segment: RoadSegment,
 ) -> list[Road]:
     planner = BuildingRoadPlanner(scene)
     return planner.create_building_access_roads(

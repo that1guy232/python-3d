@@ -16,13 +16,15 @@ from pygame.math import Vector3
 
 from config import *
 from camera import Camera
+from core.compat_shader import set_texture_lighting_state
 from core.scene import Scene
+from engine.rendering.decal import Decal
+from engine.rendering.decal_batch import DecalBatch
+from engine.rendering.sprite import WorldSprite, draw_sprites_batched
 from world import world_builder, world_runtime, world_setup
-from world.decal import Decal
-from world.decal_batch import DecalBatch
 from world.objects import WallTile
+from world.objects.wall_tile import build_wall_tile_batches
 from world.objects.polygon import Polygon
-from world.sprite import WorldSprite, draw_sprites_batched
 from world.world_renderer import WorldRenderer
 from world.world_road_planner import create_building_access_roads
 
@@ -35,7 +37,7 @@ class WorldScene(Scene):
         grid_count: int = 200,
         grid_tile_size: int = 25,
         grid_gap: int = 0,
-        tree_count: int = 2000,
+        tree_count: int = 1000,
         grass_count: int = 750,
         rock_count: int = 750,
         defer_setup: bool = False,
@@ -133,6 +135,10 @@ class WorldScene(Scene):
 
         self.log_timing("Creating world objects", start_time, time.perf_counter())
         self._initialized = True
+        self._last_static_lighting_brightness = float(
+            getattr(self.camera, "brightness_default", 1.0)
+        )
+        self._sync_lighting_uniforms(compile_shader=False)
         print("World scene initialization complete.")
         yield ("Ready", 1.0)
 
@@ -357,7 +363,13 @@ class WorldScene(Scene):
 
         start_draw_sprites_time = time.perf_counter()
         if self.sprite_items and self.camera is not None:
-            draw_sprites_batched(self.sprite_items, self.camera, self.ground_height_at)
+            draw_sprites_batched(
+                self.sprite_items,
+                self.camera,
+                self.ground_height_at,
+                lighting=getattr(self, "lighting", None),
+                sun_direction=getattr(self, "sun_direction", None),
+            )
 
         end_draw_sprites_time = time.perf_counter()
         if enable_timing:
@@ -410,3 +422,272 @@ class WorldScene(Scene):
 
     def apply_mouse_delta(self, dx: float, dy: float, dt: float | None = None) -> None:
         return world_runtime.apply_mouse_delta(self, dx, dy, dt)
+
+    def set_brightness(self, value: float) -> float:
+        """Set global brightness and refresh all baked lighting consumers."""
+        camera = self.camera
+        brightness = float(value)
+        setter = getattr(camera, "set_brightness_default", None)
+        if callable(setter):
+            brightness = float(setter(brightness))
+        else:
+            camera.brightness_default = brightness
+            cache = getattr(camera, "_brightness_cache", None)
+            if cache is not None:
+                cache.clear()
+
+        if (
+            getattr(self, "_initialized", False)
+            and getattr(self, "_last_static_lighting_brightness", None) == brightness
+        ):
+            return brightness
+
+        if getattr(self, "_initialized", False):
+            self._sync_brightness_modifiers_from_camera()
+            if self.brightness_modifiers and self._sync_lighting_uniforms():
+                self._apply_untextured_static_exposure_cpu(brightness)
+                self._last_static_lighting_brightness = brightness
+            elif self.brightness_modifiers:
+                self.refresh_static_lighting()
+            else:
+                self.apply_static_exposure(brightness)
+                self._last_static_lighting_brightness = brightness
+        return brightness
+
+    def _sync_brightness_modifiers_from_camera(self) -> None:
+        camera = getattr(self, "camera", None)
+        areas = getattr(camera, "brightness_areas", None)
+        if areas is None:
+            return
+
+        modifiers = []
+        for area in areas:
+            try:
+                modifiers.append(
+                    {
+                        "center": area["center"],
+                        "radius": float(area["radius"]),
+                        "value": float(area["value"]),
+                        "falloff": float(area.get("falloff", 1.0)),
+                        "bounds": area.get("bounds"),
+                        "indoor_only": bool(area.get("indoor_only", False)),
+                    }
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+        self.brightness_modifiers = modifiers
+
+    @staticmethod
+    def _dispose_renderable(obj) -> None:
+        dispose = getattr(obj, "dispose", None)
+        if callable(dispose):
+            try:
+                dispose()
+            except Exception:
+                pass
+
+    def refresh_static_lighting(self) -> None:
+        """Rebuild static VBOs whose vertex colors contain brightness."""
+        if not getattr(self, "_initialized", False):
+            return
+
+        self._sync_brightness_modifiers_from_camera()
+        camera = self.camera
+        brightness = float(getattr(camera, "brightness_default", 1.0))
+        lighting = getattr(self, "lighting", None)
+        sun_direction = getattr(lighting, "sun_direction", getattr(self, "sun_direction", None))
+        self.sun_direction = sun_direction
+
+        builder = getattr(self, "builder", None)
+        if builder is not None:
+            builder.brightness_modifiers = self.brightness_modifiers
+            builder.default_brightness = brightness
+            builder.lighting = lighting
+            builder.sun_direction = sun_direction
+            builder.covered_regions = getattr(self, "covered_regions", ())
+            self._dispose_renderable(getattr(self, "ground_mesh", None))
+            self.ground_mesh = builder.build()
+            self._ground_height_sampler = getattr(self.ground_mesh, "height_sampler", None)
+
+        height_sampler = getattr(self, "_ground_height_sampler", None)
+        refreshed_roads: set[int] = set()
+        for road in self._road_lighting_candidates():
+            if road is None:
+                continue
+            if id(road) in refreshed_roads:
+                continue
+            refreshed_roads.add(id(road))
+            refresh = getattr(road, "refresh_lighting", None)
+            if callable(refresh):
+                refresh(
+                    brightness_modifiers=self.brightness_modifiers,
+                    default_brightness=brightness,
+                    lighting=lighting,
+                    sun_direction=sun_direction,
+                    height_sampler=height_sampler,
+                )
+
+        for wall in getattr(self, "walls", ()) or ():
+            wall.sun_direction = sun_direction
+            wall.lighting = lighting
+
+        self._dispose_renderable_batches(getattr(self, "wall_tile_batches", ()))
+        self.wall_tile_batches = build_wall_tile_batches(
+            getattr(self, "walls", []),
+            camera=camera,
+            default_brightness=brightness,
+            sun_direction=sun_direction,
+            lighting=lighting,
+        )
+
+        if getattr(self, "ground_mesh", None) is not None:
+            world_builder._build_fences(self)
+
+        self._sync_lighting_uniforms(compile_shader=False)
+        self._last_static_lighting_brightness = brightness
+
+    def apply_static_exposure(self, brightness: float) -> None:
+        """Apply global exposure without rebuilding static meshes."""
+        exposure = float(brightness)
+        if self._sync_lighting_uniforms(base_brightness=exposure):
+            self._apply_untextured_static_exposure_cpu(exposure)
+            return
+
+        self._apply_static_exposure_cpu(exposure)
+
+    def _sync_lighting_uniforms(
+        self,
+        *,
+        base_brightness: float | None = None,
+        compile_shader: bool = True,
+    ) -> bool:
+        camera = getattr(self, "camera", None)
+        lighting = getattr(self, "lighting", None)
+        brightness = (
+            float(base_brightness)
+            if base_brightness is not None
+            else float(getattr(camera, "brightness_default", 1.0))
+        )
+        return set_texture_lighting_state(
+            base_brightness=brightness,
+            lighting=lighting,
+            sun_direction=getattr(lighting, "sun_direction", getattr(self, "sun_direction", None)),
+            brightness_areas=getattr(camera, "brightness_areas", ()),
+            exposure_scale=1.0,
+            compile_shader=compile_shader,
+        )
+
+    @staticmethod
+    def _uses_texture_shader(obj) -> bool:
+        return getattr(obj, "texture", None) is not None
+
+    @staticmethod
+    def _set_exposure_cpu(obj, exposure: float) -> None:
+        setter = getattr(obj, "set_exposure", None)
+        if callable(setter):
+            setter(exposure)
+
+    def _apply_untextured_static_exposure_cpu(self, exposure: float) -> None:
+        mesh = getattr(self, "ground_mesh", None)
+        if mesh is not None and not self._uses_texture_shader(mesh):
+            self._set_exposure_cpu(mesh, exposure)
+
+        for mesh in getattr(self, "fence_meshes", ()) or ():
+            if not self._uses_texture_shader(mesh):
+                self._set_exposure_cpu(mesh, exposure)
+
+        for mesh in getattr(self, "wall_tile_batches", ()) or ():
+            if not self._uses_texture_shader(mesh):
+                self._set_exposure_cpu(mesh, exposure)
+
+        refreshed_roads: set[int] = set()
+        for road in self._road_lighting_candidates():
+            if road is None or id(road) in refreshed_roads:
+                continue
+            refreshed_roads.add(id(road))
+            if not self._uses_texture_shader(road):
+                self._set_exposure_cpu(road, exposure)
+
+    def _apply_static_exposure_cpu(self, exposure: float) -> None:
+        mesh = getattr(self, "ground_mesh", None)
+        if mesh is not None:
+            self._set_exposure_cpu(mesh, exposure)
+
+        for mesh in getattr(self, "fence_meshes", ()) or ():
+            self._set_exposure_cpu(mesh, exposure)
+
+        for mesh in getattr(self, "wall_tile_batches", ()) or ():
+            self._set_exposure_cpu(mesh, exposure)
+
+        refreshed_roads: set[int] = set()
+        for road in self._road_lighting_candidates():
+            if road is None or id(road) in refreshed_roads:
+                continue
+            refreshed_roads.add(id(road))
+            self._set_exposure_cpu(road, exposure)
+
+    def _road_lighting_candidates(self):
+        return [
+            getattr(self, "road", None),
+            *(getattr(self, "roads", ()) or ()),
+            *(
+                obj
+                for obj in (getattr(self, "others", ()) or ())
+                if hasattr(obj, "refresh_lighting") or hasattr(obj, "set_exposure")
+            ),
+        ]
+
+    @staticmethod
+    def _dispose_renderable_batches(values) -> None:
+        for value in values or ():
+            WorldScene._dispose_renderable(value)
+
+    def dispose(self) -> None:
+        """Release scene-owned VBOs before the OpenGL context is destroyed."""
+        disposed: set[int] = set()
+
+        def dispose_once(obj) -> None:
+            if obj is None:
+                return
+            obj_id = id(obj)
+            if obj_id in disposed:
+                return
+            disposed.add(obj_id)
+
+            dispose = getattr(obj, "dispose", None)
+            if callable(dispose):
+                try:
+                    dispose()
+                except Exception:
+                    pass
+
+        for attr_name in (
+            "ground_mesh",
+            "road",
+            "decal_batch",
+        ):
+            dispose_once(getattr(self, attr_name, None))
+
+        for attr_name in (
+            "fence_meshes",
+            "wall_tile_batches",
+            "decal_batches",
+            "decals",
+            "roads",
+            "building_roads",
+            "others",
+        ):
+            for obj in getattr(self, attr_name, ()) or ():
+                dispose_once(obj)
+
+        self.ground_mesh = None
+        self._ground_height_sampler = None
+        self.road = None
+        self.decal_batch = None
+        self.fence_meshes = []
+        self.wall_tile_batches = []
+        self.decal_batches = []
+        self.decals = []
+        self.roads = []
+        self.building_roads = []
+        self.others = []

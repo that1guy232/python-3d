@@ -3,7 +3,7 @@
 from __future__ import annotations
 from typing import Tuple
 import math
-from world.sprite import WorldSprite
+from engine.rendering.sprite import WorldSprite
 from OpenGL.GL import (
     glEnable,
     glDisable,

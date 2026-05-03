@@ -11,10 +11,7 @@ from typing import Dict, List, Iterable
 import math
 import numpy as np
 from OpenGL.GL import (
-    glGenBuffers,
-    glBindBuffer,
     glBindTexture,
-    glBufferData,
     glEnable,
     glDisable,
     glEnableClientState,
@@ -22,8 +19,6 @@ from OpenGL.GL import (
     glDepthMask,
     glBlendFunc,
     glTexEnvi,
-    GL_ARRAY_BUFFER,
-    GL_STATIC_DRAW,
     GL_BLEND,
     GL_SRC_ALPHA,
     GL_ONE_MINUS_SRC_ALPHA,
@@ -37,7 +32,7 @@ from OpenGL.GL import (
 )
 
 from core.mesh import BatchedMesh
-from world.decal import Decal
+from engine.rendering.decal import Decal
 from config import HEIGHT, VIEWDISTANCE, WIDTH
 
 
@@ -95,13 +90,10 @@ class DecalBatch:
 
         for key, chunks in buckets.items():
             vertex_data = np.vstack(chunks) if len(chunks) > 1 else chunks[0]
-            vbo = glGenBuffers(1)
-            glBindBuffer(GL_ARRAY_BUFFER, vbo)
-            glBufferData(
-                GL_ARRAY_BUFFER, vertex_data.nbytes, vertex_data, GL_STATIC_DRAW
-            )
-            meshes[key] = BatchedMesh(
-                vbo_vertices=vbo, vertex_count=vertex_data.shape[0], texture=key[0]
+            meshes[key] = BatchedMesh.from_vertex_data(
+                vertex_data,
+                texture=key[0],
+                keep_vertex_data=False,
             )
             mins = vertex_data[:, 0:3].min(axis=0)
             maxs = vertex_data[:, 0:3].max(axis=0)
@@ -118,6 +110,13 @@ class DecalBatch:
         db.mesh_centers = centers_out
         db.mesh_radii = radii_out
         return db
+
+    def dispose(self) -> None:
+        for mesh in self.meshes_by_tex.values():
+            mesh.dispose()
+        self.meshes_by_tex.clear()
+        self.mesh_centers.clear()
+        self.mesh_radii.clear()
 
     def _mesh_is_visible(self, key, camera, cam_pos, vd_sq: float) -> bool:
         center = self.mesh_centers.get(key)

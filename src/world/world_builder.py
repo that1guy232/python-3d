@@ -9,22 +9,188 @@ from typing import Iterator
 
 from pygame.math import Vector3
 
-from textures.resource_path import WALL1_TEXTURE_PATH
-from textures.texture_utils import create_shadow_texture, load_texture
-from world.decal import Decal
-from world.decal_batch import DecalBatch
+from engine.rendering.decal import Decal
+from engine.rendering.decal_batch import DecalBatch
+from engine.rendering.lighting import INDOOR_LIGHT_FACTOR
+from engine.rendering.sprite import WorldSprite
+from textures.resource_path import TORCH_TEXTURE_PATH, WALL1_TEXTURE_PATH
+from textures.texture_utils import create_shadow_texture, get_texture_size, load_texture
 from world.objects import Road
 from world.objects.building import Building
 from world.objects.fence import build_textured_fence_ring
 from world.objects.ground import TexturedGroundGridBuilder
 from world.objects.polygon import Polygon
 from world.objects.wall_tile import build_wall_tile_batches
-from world.sprite import WorldSprite
 from world.world_road_planner import create_building_access_roads
 from world.world_spawner import spawn_world_sprites
 
 
 CREATE_WORLD_OBJECT_STEPS = 10
+BUILDING_ROOF_OVERHANG = 6.0
+TORCH_LIGHT_VALUE = 3.4
+TORCH_LIGHT_FALLOFF = 2.2
+TORCH_LIGHT_MIN_RADIUS = 95.0
+TORCH_LIGHT_MAX_RADIUS = 180.0
+TORCH_WALL_INSET = 8.0
+TORCH_SPRITE_HEIGHT = 32.0
+TORCH_MOUNT_HEIGHT = 28.0
+
+_SIDE_NORMALS = {
+    "north": (0.0, 1.0),
+    "east": (1.0, 0.0),
+    "south": (0.0, -1.0),
+    "west": (-1.0, 0.0),
+}
+_OPPOSITE_SIDE = {
+    "north": "south",
+    "east": "west",
+    "south": "north",
+    "west": "east",
+}
+
+
+def _dispose_value(obj) -> None:
+    dispose = getattr(obj, "dispose", None)
+    if callable(dispose):
+        try:
+            dispose()
+        except Exception:
+            pass
+
+
+def _dispose_values(values) -> None:
+    for value in values or ():
+        _dispose_value(value)
+
+
+def _building_covered_regions(scene) -> list[tuple[float, float, float, float, float]]:
+    regions: list[tuple[float, float, float, float, float]] = []
+    for spec in getattr(scene, "building_specs", ()) or ():
+        try:
+            position = spec["position"]
+            half_x = float(spec["width"]) * 0.5 + BUILDING_ROOF_OVERHANG
+            half_z = float(spec["depth"]) * 0.5 + BUILDING_ROOF_OVERHANG
+            x = float(position.x)
+            z = float(position.z)
+        except (KeyError, TypeError, ValueError, AttributeError):
+            continue
+        regions.append(
+            (
+                x - half_x,
+                x + half_x,
+                z - half_z,
+                z + half_z,
+                INDOOR_LIGHT_FACTOR,
+            )
+        )
+    return regions
+
+
+def _torch_side_for_spec(spec: dict) -> str:
+    doorway_side = str(spec.get("doorway_side", "south")).lower()
+    return _OPPOSITE_SIDE.get(doorway_side, "north")
+
+
+def _torch_xz_for_spec(spec: dict) -> tuple[float, float]:
+    position = spec["position"]
+    side = _torch_side_for_spec(spec)
+    nx, nz = _SIDE_NORMALS[side]
+    half_x = float(spec["width"]) * 0.5
+    half_z = float(spec["depth"]) * 0.5
+    x = float(position.x)
+    z = float(position.z)
+    if abs(nx) > 0.0:
+        x += nx * max(0.0, half_x - TORCH_WALL_INSET)
+    else:
+        z += nz * max(0.0, half_z - TORCH_WALL_INSET)
+    return x, z
+
+
+def _torch_light_bounds(spec: dict) -> tuple[float, float, float, float]:
+    position = spec["position"]
+    x = float(position.x)
+    z = float(position.z)
+    half_x = max(0.0, float(spec["width"]) * 0.5 - 2.0)
+    half_z = max(0.0, float(spec["depth"]) * 0.5 - 2.0)
+    return (x - half_x, x + half_x, z - half_z, z + half_z)
+
+
+def _torch_light_radius(spec: dict) -> float:
+    short_side = min(float(spec["width"]), float(spec["depth"]))
+    return max(
+        TORCH_LIGHT_MIN_RADIUS,
+        min(TORCH_LIGHT_MAX_RADIUS, short_side * 0.9),
+    )
+
+
+def _install_building_torch_lights(scene) -> None:
+    modifiers = []
+    for spec in getattr(scene, "building_specs", ()) or ():
+        try:
+            x, z = _torch_xz_for_spec(spec)
+            radius = _torch_light_radius(spec)
+            bounds = _torch_light_bounds(spec)
+        except (KeyError, TypeError, ValueError, AttributeError):
+            continue
+        modifier = {
+            "center": Vector3(x, 0.0, z),
+            "radius": radius,
+            "value": TORCH_LIGHT_VALUE,
+            "falloff": TORCH_LIGHT_FALLOFF,
+            "bounds": bounds,
+            "indoor_only": True,
+        }
+        modifiers.append(modifier)
+
+    scene.torch_light_modifiers = modifiers
+    if not hasattr(scene, "brightness_modifiers") or scene.brightness_modifiers is None:
+        scene.brightness_modifiers = []
+    scene.brightness_modifiers.extend(modifiers)
+
+    camera = getattr(scene, "camera", None)
+    add_area = getattr(camera, "add_brightness_area", None)
+    if callable(add_area):
+        for modifier in modifiers:
+            add_area(
+                modifier["center"],
+                modifier["radius"],
+                modifier["value"],
+                modifier["falloff"],
+                bounds=modifier["bounds"],
+                indoor_only=modifier.get("indoor_only", False),
+            )
+
+
+def _build_building_torches(scene) -> None:
+    torch_tex = getattr(scene, "torch_tex", None)
+    if not torch_tex:
+        torch_tex = load_texture(TORCH_TEXTURE_PATH)
+        scene.torch_tex = torch_tex
+    if not torch_tex:
+        scene.torches = []
+        return
+
+    tex_size = get_texture_size(torch_tex)
+    aspect = (tex_size[0] / tex_size[1]) if tex_size and tex_size[1] else (7.0 / 15.0)
+    sprite_height = TORCH_SPRITE_HEIGHT
+    sprite_size = (sprite_height * aspect, sprite_height)
+
+    torches: list[WorldSprite] = []
+    for modifier in getattr(scene, "torch_light_modifiers", ()) or ():
+        center = modifier["center"] if isinstance(modifier, dict) else modifier[0]
+        floor_y = scene.ground_height_at(center.x, center.z)
+        torches.append(
+            WorldSprite(
+                position=Vector3(center.x, floor_y + TORCH_MOUNT_HEIGHT, center.z),
+                size=sprite_size,
+                texture=torch_tex,
+                camera=scene.camera,
+                color=(1.0, 0.82, 0.55),
+            )
+        )
+
+    scene.torches = torches
+    scene.sprite_items.extend(torches)
 
 
 def create_building_specs(scene, count: int = 10) -> list[dict]:
@@ -131,6 +297,8 @@ def create_world_objects_steps(
     scene.building_specs = create_building_specs(scene, count=10)
     for spec in scene.building_specs:
         scene.buildings.append(Building(position=spec["position"]))
+    scene.covered_regions = _building_covered_regions(scene)
+    _install_building_torch_lights(scene)
 
     scene.builder = TexturedGroundGridBuilder(
         count=grid_count,
@@ -139,6 +307,9 @@ def create_world_objects_steps(
         texture=scene.ground_tex,
         brightness_modifiers=scene.brightness_modifiers,
         default_brightness=scene.camera.brightness_default,
+        lighting=getattr(scene, "lighting", None),
+        sun_direction=getattr(scene, "sun_direction", None),
+        covered_regions=getattr(scene, "covered_regions", ()),
     )
 
     scene.log_timing(label, start_time, time.perf_counter())
@@ -148,6 +319,7 @@ def create_world_objects_steps(
     print("Generating ground mesh...")
     yield (label, False)
     start_time = time.perf_counter()
+    _dispose_value(getattr(scene, "ground_mesh", None))
     scene.ground_mesh = scene.builder.build()
     scene._ground_height_sampler = getattr(scene.ground_mesh, "height_sampler", None)
     scene.log_timing(label, start_time, time.perf_counter())
@@ -183,7 +355,8 @@ def _build_buildings(scene) -> None:
     wall_tex = scene.wall_tex or load_texture(WALL1_TEXTURE_PATH)
     scene.wall_tex = wall_tex
     scene.walls = []
-    sun_direction = getattr(scene, "sun_direction", None)
+    lighting = getattr(scene, "lighting", None)
+    sun_direction = getattr(lighting, "sun_direction", getattr(scene, "sun_direction", None))
 
     for building, spec in zip(scene.buildings, scene.building_specs):
         if building.target_height is None:
@@ -207,21 +380,25 @@ def _build_buildings(scene) -> None:
             doorway_height=spec["height"] * 0.68,
             roof=True,
             roof_thickness=4.0,
-            roof_overhang=6.0,
+            roof_overhang=BUILDING_ROOF_OVERHANG,
         )
         for piece in pieces:
             piece.sun_direction = sun_direction
+            piece.lighting = lighting
         scene.walls.extend(pieces)
 
     print(f"Built {len(scene.walls)} building pieces.")
+    _dispose_values(getattr(scene, "wall_tile_batches", ()))
     scene.wall_tile_batches = build_wall_tile_batches(
         scene.walls,
         camera=scene.camera,
         default_brightness=scene.camera.brightness_default,
         sun_direction=sun_direction,
+        lighting=lighting,
     )
     scene.log_timing("Building pieces", start_time, time.perf_counter())
     scene.wall_tiles.extend(scene.walls)
+    _build_building_torches(scene)
 
 
 def _build_showcase_polygons(scene) -> None:
@@ -326,6 +503,11 @@ def _build_showcase_polygons(scene) -> None:
     )
 
     scene.log_timing("Showcase polygons", start_time, time.perf_counter())
+    lighting = getattr(scene, "lighting", None)
+    sun_direction = getattr(lighting, "sun_direction", getattr(scene, "sun_direction", None))
+    for polygon in scene.showcase_polygons:
+        polygon.lighting = lighting
+        polygon.sun_direction = sun_direction
     scene.polygons.extend(scene.showcase_polygons)
 
 
@@ -342,7 +524,7 @@ def _build_roads_and_spawn_sprites_steps(
     scene, tree_count: int, grass_count: int, rock_count: int
 ) -> Iterator[tuple[str, bool]]:
     label = "Creating roads"
-    print("Spawning world objects...")
+    print("Creating roads...")
     yield (label, False)
     start_time = time.perf_counter()
     center_z = (scene.ground_bounds[2] + scene.ground_bounds[3]) * 0.5
@@ -354,22 +536,9 @@ def _build_roads_and_spawn_sprites_steps(
     ]
     road_width = 60.0
 
-    if len(road_points) >= 2:
-        x0, z0 = road_points[0]
-        x1, z1 = road_points[1]
-        t = 0.15
-        sx = x0 + (x1 - x0) * t
-        sz = z0 + (z1 - z0) * t
-    else:
-        sx, sz = road_points[0]
-
-    min_x, max_x, min_z, max_z = scene.ground_bounds
-    margin = 1.0
-    sx = max(min_x + margin, min(max_x - margin, sx))
-    sz = max(min_z + margin, min(max_z - margin, sz))
-
     scene.camera.position = scene.world_center
 
+    _dispose_value(getattr(scene, "road", None))
     scene.road = Road(
         points=road_points,
         ground_y=road_y,
@@ -382,11 +551,14 @@ def _build_roads_and_spawn_sprites_steps(
         segment_length=8.0,
         brightness_modifiers=scene.brightness_modifiers,
         default_brightness=scene.camera.brightness_default,
+        lighting=getattr(scene, "lighting", None),
+        sun_direction=getattr(scene, "sun_direction", None),
     )
 
     scene.log_timing("Create road", start_time, time.perf_counter())
     scene.others.append(scene.road)
     scene.roads = [scene.road]
+    _dispose_values(getattr(scene, "building_roads", ()))
     scene.building_roads = create_building_access_roads(
         scene,
         road_center_z=center_z,
@@ -395,7 +567,11 @@ def _build_roads_and_spawn_sprites_steps(
     )
     scene.roads.extend(scene.building_roads)
     scene.others.extend(scene.building_roads)
-    print(f"Built {len(scene.building_roads)} building access road segments.")
+    segment_count = len(getattr(scene, "building_road_segments", ()))
+    print(
+        f"Built {len(scene.building_roads)} building access road routes "
+        f"({segment_count} segments)."
+    )
     yield (label, True)
 
     label = "Spawning trees"
@@ -478,6 +654,7 @@ def _spawn_sprite_layer(
 
 def _build_fences(scene) -> None:
     start_time = time.perf_counter()
+    _dispose_values(getattr(scene, "fence_meshes", ()))
     scene.fence_meshes = build_textured_fence_ring(
         min_x=scene.ground_bounds[0],
         max_x=scene.ground_bounds[1],
@@ -492,6 +669,8 @@ def _build_fences(scene) -> None:
         wave_phase=0.3,
         brightness_modifiers=scene.brightness_modifiers,
         default_brightness=scene.camera.brightness_default,
+        lighting=getattr(scene, "lighting", None),
+        sun_direction=getattr(scene, "sun_direction", None),
     )
     print(f"Built {len(scene.fence_meshes)} fence segments.")
     scene.log_timing("Build fences", start_time, time.perf_counter())
@@ -649,6 +828,9 @@ def _build_shadow_decals(scene) -> None:
         f"{building_shadow_count} building shadow decals."
     )
     scene.log_timing("Create decals", start_time, time.perf_counter())
+    _dispose_value(getattr(scene, "decal_batch", None))
+    _dispose_values(getattr(scene, "decal_batches", ()))
+    scene.decal_batches = []
     scene.decal_batch = DecalBatch.build(decals)
     scene.decal_batches.append(scene.decal_batch)
     start_time = time.perf_counter()

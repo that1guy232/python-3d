@@ -3,15 +3,21 @@
 import random
 import numpy as np
 from textures.texture_utils import get_texture_size
-from OpenGL.GL import glGenBuffers, glBindBuffer, glBufferData, GL_ARRAY_BUFFER, GL_STATIC_DRAW
 from core.mesh import BatchedMesh
+from core.compat_shader import texture_color_exposure_shader_available
+from engine.rendering.lighting import (
+    apply_brightness_modifiers,
+    apply_directional_sunlight,
+    with_textured_normals,
+)
 
 
 def build_textured_fence_ring(
     min_x, max_x, min_z, max_z,
     ground_y=5.0, height_sampler=None, textures=None, px_to_world=1.0,
     color=(1.0, 1.0, 1.0), wave_amp=0.0, wave_freq=0.02, wave_phase=0.0,
-    slices_per_segment=None, brightness_modifiers=None, default_brightness=1.0
+    slices_per_segment=None, brightness_modifiers=None, default_brightness=1.0,
+    lighting=None, sun_direction=None,
 ):
     """Build fence ring - simplified."""
     if not textures:
@@ -101,34 +107,26 @@ def build_textured_fence_ring(
             
         vertex_data = np.array(verts, dtype=np.float32)
         
-        # Apply brightness
-        if brightness_modifiers:
-            coords = vertex_data[:, [0, 2]]
-            brightness = np.full(len(verts), default_brightness, dtype=np.float32)
-            
-            for mod in brightness_modifiers:
-                try:
-                    pos, radius, brightness_val, falloff = mod
-                    dx = coords[:, 0] - pos.x
-                    dz = coords[:, 1] - pos.z
-                    dist = np.sqrt(dx * dx + dz * dz)
-                    mask = dist <= radius
-                    
-                    if mask.any():
-                        atten = (1.0 - np.clip(dist[mask] / radius, 0, 1)) ** max(falloff, 0)
-                        factor = brightness_val / default_brightness if default_brightness else brightness_val
-                        brightness[mask] *= 1.0 + (factor - 1.0) * atten
-                except:
-                    pass
-            
-            vertex_data[:, 3:6] *= brightness[:, np.newaxis]
+        if texture_color_exposure_shader_available():
+            vertex_data = with_textured_normals(vertex_data)
         else:
-            vertex_data[:, 3:6] *= default_brightness
+            apply_brightness_modifiers(
+                vertex_data,
+                modifiers=brightness_modifiers,
+                default_brightness=default_brightness,
+            )
+            apply_directional_sunlight(
+                vertex_data,
+                lighting=lighting,
+                sun_direction=sun_direction,
+            )
 
-        vbo = glGenBuffers(1)
-        glBindBuffer(GL_ARRAY_BUFFER, vbo)
-        glBufferData(GL_ARRAY_BUFFER, vertex_data.nbytes, vertex_data, GL_STATIC_DRAW)
-        
-        meshes.append(BatchedMesh(vbo_vertices=vbo, vertex_count=len(verts), texture=tex))
+        meshes.append(
+            BatchedMesh.from_vertex_data(
+                vertex_data,
+                texture=tex,
+                exposure_baseline=default_brightness,
+            )
+        )
 
     return meshes
