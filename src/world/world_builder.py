@@ -389,10 +389,23 @@ def _build_buildings(scene) -> None:
             base_y = sampled_y
         else:
             base_y = None
+        wall_thickness = 2.5
+        doorway_height = spec["height"] * 0.68
+        spec["base_y"] = (
+            float(base_y)
+            if base_y is not None
+            else float(
+                building.target_height
+                if building.target_height is not None
+                else building.position.y
+            )
+        )
+        spec["doorway_height"] = doorway_height
+        spec["wall_thickness"] = wall_thickness
 
         pieces = building.create_perimeter_walls(
             wall_height=spec["height"],
-            wall_thickness=2.5,
+            wall_thickness=wall_thickness,
             width=spec["width"],
             depth=spec["depth"],
             max_tile_width=max(spec["width"], spec["depth"]),
@@ -401,7 +414,7 @@ def _build_buildings(scene) -> None:
             base_y=base_y,
             doorway_side=spec["doorway_side"],
             doorway_width=spec["doorway_width"],
-            doorway_height=spec["height"] * 0.68,
+            doorway_height=doorway_height,
             roof=True,
             roof_thickness=4.0,
             roof_overhang=BUILDING_ROOF_OVERHANG,

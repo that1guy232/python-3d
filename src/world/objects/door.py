@@ -36,6 +36,7 @@ DOOR_SWING_RADIANS = math.radians(90.0)
 DOOR_SWING_SPEED = 3.8
 DOOR_THICKNESS = 4.0
 DOOR_EDGE_UV_FRACTION = 0.08
+DOOR_FRAME_OVERLAP = .5
 
 _SIDE_NORMALS = {
     "north": Vector3(0.0, 0.0, 1.0),
@@ -136,6 +137,7 @@ class Door(Entity):
         wall_thickness: float = 2.5,
     ) -> "Door":
         side = str(spec.get("doorway_side", "south")).lower()
+        wall_thickness = float(spec.get("wall_thickness", wall_thickness))
         normal = _normal_for_side(side)
         center = spec["position"]
         half_x = float(spec["width"]) * 0.5
@@ -150,11 +152,17 @@ class Door(Entity):
             z += normal.z * max(0.0, half_z - wall_half)
 
         doorway_width = max(8.0, float(spec.get("doorway_width", 36.0)))
-        doorway_height = max(8.0, float(spec.get("height", 50.0)) * 0.68)
-        visual_width = max(8.0, doorway_width * 0.92)
-        visual_height = max(8.0, doorway_height * 0.98)
-        floor_y = float(ground_height_at(x, z))
-        position = Vector3(x, floor_y + visual_height * 0.5, z)
+        doorway_height = max(
+            8.0,
+            float(spec.get("doorway_height", float(spec.get("height", 50.0)) * 0.68)),
+        )
+        visual_width = max(8.0, doorway_width + DOOR_FRAME_OVERLAP * 2.0)
+        visual_height = max(8.0, doorway_height + DOOR_FRAME_OVERLAP)
+        base_y = spec.get("base_y", None)
+        if base_y is None:
+            base_y = ground_height_at(float(center.x), float(center.z))
+        base_y = float(base_y)
+        position = Vector3(x, base_y + visual_height * 0.5, z)
 
         return cls(
             position,
@@ -164,7 +172,7 @@ class Door(Entity):
             height=visual_height,
             side=side,
             thickness=max(DOOR_THICKNESS, wall_thickness),
-            collision_width=doorway_width * 1.02,
+            collision_width=visual_width,
             collision_height=visual_height,
             collision_thickness=max(DOOR_THICKNESS, wall_thickness),
         )
