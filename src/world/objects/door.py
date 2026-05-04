@@ -227,6 +227,7 @@ class Door(TexturedSlabMixin, Entity):
         self.panel_axis = self.tangent * cos_a + self.open_normal * sin_a
         self.depth_axis = self.normal * cos_a + self.tangent * sin_a
         self.position = self.hinge + self.panel_axis * half_width
+        self._mark_slab_mesh_dirty()
 
     def bind_doorway_light(self, region: object) -> None:
         if not isinstance(region, dict):
@@ -328,7 +329,11 @@ class Door(TexturedSlabMixin, Entity):
         if not verts:
             return
 
-        self._draw_textured_slab_faces(verts)
+        target = 1.0 if self.target_open else 0.0
+        if abs(self.open_amount - target) > 1e-4:
+            self._draw_textured_slab_faces(verts)
+        else:
+            self._draw_cached_textured_slab_faces(verts)
 
     def _collision_center(self) -> Vector3:
         return self.closed_center

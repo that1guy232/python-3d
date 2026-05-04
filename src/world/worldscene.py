@@ -9,6 +9,7 @@ The heavy lifting is split into focused modules:
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 import time
 from typing import Callable, Iterator, Optional
 
@@ -222,11 +223,19 @@ class WorldScene(Scene):
         )
 
     def log_timing(
-        self, message: str, start_time: float, end_time: float, log: bool = False
+        self, message: str, start_time: float, end_time: float, log: bool | None = None
     ):
         """Logs timing information for WorldScene setup phases."""
+        if log is None:
+            log = bool(globals().get("PERFORMANCE_SETUP_TIMING", False))
         if log:
-            print(f"{message} took {end_time - start_time:.6f} seconds")
+            print(f"[setup] {message} took {end_time - start_time:.6f} seconds")
+
+    def _profile(self, name: str):
+        profiler = getattr(self, "profiler", None)
+        if profiler is None or not getattr(profiler, "enabled", False):
+            return nullcontext()
+        return profiler.section(name)
 
     def add_entity(self, entity: Entity) -> Entity:
         """Register a runtime entity and its scene-facing resources."""
@@ -266,8 +275,9 @@ class WorldScene(Scene):
 
     def draw_world_objects(self, enable_timing: bool = False):  # pragma: no cover - visual
         start_draw_decal_batches_time = time.perf_counter()
-        for batch in self.decal_batches:
-            batch.draw(camera=self.camera)
+        with self._profile("objects.decal_batches"):
+            for batch in self.decal_batches:
+                batch.draw(camera=self.camera)
         end_draw_decal_batches_time = time.perf_counter()
         if enable_timing:
             print(
@@ -276,15 +286,16 @@ class WorldScene(Scene):
             )
 
         start_draw_wall_tiles_time = time.perf_counter()
-        if self.wall_tile_batches:
-            for batch in self.wall_tile_batches:
-                batch.draw()
-        else:
-            entity_ids = {id(entity) for entity in self.entities}
-            for wall in self.wall_tiles:
-                if id(wall) in entity_ids:
-                    continue
-                wall.draw(camera=self.camera)
+        with self._profile("objects.wall_tiles"):
+            if self.wall_tile_batches:
+                for batch in self.wall_tile_batches:
+                    batch.draw()
+            else:
+                entity_ids = {id(entity) for entity in self.entities}
+                for wall in self.wall_tiles:
+                    if id(wall) in entity_ids:
+                        continue
+                    wall.draw(camera=self.camera)
         end_draw_wall_tiles_time = time.perf_counter()
         if enable_timing:
             print(
@@ -293,8 +304,9 @@ class WorldScene(Scene):
             )
 
         start_draw_polygons_time = time.perf_counter()
-        for polygon in self.polygons:
-            polygon.draw(camera=self.camera)
+        with self._profile("objects.polygons"):
+            for polygon in self.polygons:
+                polygon.draw(camera=self.camera)
         end_draw_polygons_time = time.perf_counter()
         if enable_timing:
             print(
@@ -375,20 +387,21 @@ class WorldScene(Scene):
         starting_draw_other_time = time.perf_counter()
         cam_pos = self.camera.position if self.camera is not None else None
         view_distance_sq = VIEWDISTANCE * VIEWDISTANCE
-        for obj in self.others:
-            if cam_pos is not None:
-                pos = _approx_pos(obj)
-                if pos is not None:
-                    try:
-                        dx = pos[0] - cam_pos.x
-                        dy = pos[1] - cam_pos.y
-                        dz = pos[2] - cam_pos.z
-                        if (dx * dx + dy * dy + dz * dz) > view_distance_sq:
-                            continue
-                    except Exception:
-                        pass
+        with self._profile("objects.others"):
+            for obj in self.others:
+                if cam_pos is not None:
+                    pos = _approx_pos(obj)
+                    if pos is not None:
+                        try:
+                            dx = pos[0] - cam_pos.x
+                            dy = pos[1] - cam_pos.y
+                            dz = pos[2] - cam_pos.z
+                            if (dx * dx + dy * dy + dz * dz) > view_distance_sq:
+                                continue
+                        except Exception:
+                            pass
 
-            obj.draw()
+                obj.draw()
         end_draw_other_time = time.perf_counter()
         if enable_timing:
             print(
@@ -398,32 +411,34 @@ class WorldScene(Scene):
 
         start_draw_entities_time = time.perf_counter()
         cam_pos = self.camera.position if self.camera is not None else None
-        for entity in self.entities:
-            if not getattr(entity, "enabled", True) or not getattr(
-                entity,
-                "visible",
-                True,
-            ):
-                continue
+        with self._profile("objects.entities"):
+            for entity in self.entities:
+                if not getattr(entity, "enabled", True) or not getattr(
+                    entity,
+                    "visible",
+                    True,
+                ):
+                    continue
 
-            if cam_pos is not None:
-                pos = _approx_pos(entity)
-                if pos is not None:
-                    try:
-                        dx = pos[0] - cam_pos.x
-                        dy = pos[1] - cam_pos.y
-                        dz = pos[2] - cam_pos.z
-                        if (dx * dx + dy * dy + dz * dz) > view_distance_sq:
-                            continue
-                    except Exception:
-                        pass
+                if cam_pos is not None:
+                    pos = _approx_pos(entity)
+                    if pos is not None:
+                        try:
+                            dx = pos[0] - cam_pos.x
+                            dy = pos[1] - cam_pos.y
+                            dz = pos[2] - cam_pos.z
+                            if (dx * dx + dy * dy + dz * dz) > view_distance_sq:
+                                continue
+                        except Exception:
+                            pass
 
-            draw_entity = getattr(entity, "draw", None)
-            if callable(draw_entity):
-                try:
-                    draw_entity(camera=self.camera)
-                except TypeError:
-                    draw_entity()
+                draw_entity = getattr(entity, "draw", None)
+                if callable(draw_entity):
+                    with self._profile(f"entities.{type(entity).__name__}"):
+                        try:
+                            draw_entity(camera=self.camera)
+                        except TypeError:
+                            draw_entity()
         end_draw_entities_time = time.perf_counter()
         if enable_timing:
             print(
@@ -432,14 +447,17 @@ class WorldScene(Scene):
             )
 
         start_draw_sprites_time = time.perf_counter()
-        if self.sprite_items and self.camera is not None:
-            draw_sprites_batched(
-                self.sprite_items,
-                self.camera,
-                self.ground_height_at,
-                lighting=getattr(self, "lighting", None),
-                sun_direction=getattr(self, "sun_direction", None),
-            )
+        with self._profile("objects.sprites"):
+            if self.sprite_items and self.camera is not None:
+                draw_sprites_batched(
+                    self.sprite_items,
+                    self.camera,
+                    self.ground_height_at,
+                    lighting=getattr(self, "lighting", None),
+                    sun_direction=getattr(self, "sun_direction", None),
+                    profiler=getattr(self, "profiler", None),
+                    static_data=True,
+                )
 
         end_draw_sprites_time = time.perf_counter()
         if enable_timing:

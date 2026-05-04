@@ -23,6 +23,7 @@ from OpenGL.GL import (
 )
 
 from config import *
+from core.performance import PerformanceLogger
 from ui.text_renderer import TextRenderer
 
 
@@ -59,6 +60,12 @@ class Engine:
         glClearColor(*LIGHT_BLUE)
 
         self.text = TextRenderer(WIDTH, HEIGHT)
+        self.profiler = PerformanceLogger(
+            enabled=PERFORMANCE_LOGGING,
+            report_interval=PERFORMANCE_LOG_INTERVAL,
+            top_n=PERFORMANCE_LOG_TOP,
+            warmup_frames=PERFORMANCE_LOG_WARMUP_FRAMES,
+        )
 
         if initial_scene is None:
             if initial_scene_factory is None:
@@ -67,6 +74,7 @@ class Engine:
 
         # Active scene (owns camera & input)
         self.scene = initial_scene
+        self._attach_profiler(self.scene)
         pygame.mouse.set_visible(False)
         pygame.event.set_grab(True)
 
@@ -79,6 +87,12 @@ class Engine:
             except Exception:
                 pass
 
+    def _attach_profiler(self, scene) -> None:
+        setattr(scene, "profiler", self.profiler)
+        target_scene = getattr(scene, "target_scene", None)
+        if target_scene is not None:
+            setattr(target_scene, "profiler", self.profiler)
+
     def _is_over_any_mesh(self, pos):
         # Kept for compatibility if needed elsewhere; scene now owns bounds
         if hasattr(self.scene, "contains_horizontal"):
@@ -90,6 +104,14 @@ class Engine:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return False
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_F3:
+                self.profiler.toggle()
+                continue
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_F4:
+                self.profiler.reset()
+                if self.profiler.enabled:
+                    print("[perf] Performance stats reset.")
+                continue
             # Forward events to the active scene
             if hasattr(self.scene, "handle_event"):
                 try:
@@ -115,6 +137,7 @@ class Engine:
         if next_scene is not None:
             old_scene = self.scene
             self.scene = next_scene
+            self._attach_profiler(self.scene)
             self._dispose_scene(old_scene)
             pygame.mouse.set_visible(False)
             pygame.event.set_grab(True)
@@ -125,8 +148,10 @@ class Engine:
         # Delegate full render to the scene; pass HUD renderer
         fps_val = self.clock.get_fps()
         if hasattr(self.scene, "render"):
-            self.scene.render(show_hud=True, text=self.text, fps=fps_val)
-        pygame.display.flip()
+            with self.profiler.section("render.scene"):
+                self.scene.render(show_hud=True, text=self.text, fps=fps_val)
+        with self.profiler.section("render.flip"):
+            pygame.display.flip()
 
     # ------------------------------------------------------------------
     def run(self):  # pragma: no cover - visual
@@ -140,11 +165,17 @@ class Engine:
                 dt = self.clock.tick() / 1000.0
             else:
                 dt = self.clock.tick(FPS) / 1000.0
-            running = self.handle_events(dt)
+            self.profiler.begin_frame()
+            with self.profiler.section("engine.events"):
+                running = self.handle_events(dt)
+            if running:
+                with self.profiler.section("engine.update"):
+                    self.update(dt)
+                with self.profiler.section("engine.render"):
+                    self.render()
+            self.profiler.end_frame()
             if not running:
                 break
-            self.update(dt)
-            self.render()
         self._dispose_scene(self.scene)
         pygame.quit()
 

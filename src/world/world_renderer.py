@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 import math
 
 from OpenGL.GL import (
@@ -44,6 +45,12 @@ class WorldRenderer:
     def __init__(self, scene) -> None:
         self.scene = scene
 
+    def _profile(self, name: str):
+        profiler = getattr(self.scene, "profiler", None)
+        if profiler is None or not getattr(profiler, "enabled", False):
+            return nullcontext()
+        return profiler.section(name)
+
     @staticmethod
     def _clamp01(value: float) -> float:
         return max(0.0, min(1.0, float(value)))
@@ -68,35 +75,43 @@ class WorldRenderer:
 
     def draw_sky(self) -> None:  # pragma: no cover - visual
         scene = self.scene
-        lighting = getattr(scene, "lighting", None)
-        scene.sky.draw(
-            scene.camera,
-            sun_direction=getattr(
-                lighting,
-                "sun_direction",
-                getattr(scene, "sun_direction", None),
-            ),
-            lighting=lighting,
-            fog_enabled=self._fog_enabled(),
-        )
+        with self._profile("render.sky"):
+            lighting = getattr(scene, "lighting", None)
+            scene.sky.draw(
+                scene.camera,
+                sun_direction=getattr(
+                    lighting,
+                    "sun_direction",
+                    getattr(scene, "sun_direction", None),
+                ),
+                lighting=lighting,
+                fog_enabled=self._fog_enabled(),
+            )
 
     def draw(self, enable_timing: bool = False) -> None:  # pragma: no cover - visual
         scene = self.scene
-        sync_lighting = getattr(scene, "_sync_lighting_uniforms", None)
-        if callable(sync_lighting):
-            sync_lighting()
-        self._apply_fog_state()
-        scene.ground_mesh.draw()
-        for mesh in getattr(scene, "fence_meshes", ()):
-            mesh.draw()
+        with self._profile("draw.lighting_sync"):
+            sync_lighting = getattr(scene, "_sync_lighting_uniforms", None)
+            if callable(sync_lighting):
+                sync_lighting()
+            self._apply_fog_state()
 
-        scene.draw_world_objects(enable_timing=enable_timing)
+        with self._profile("draw.ground"):
+            scene.ground_mesh.draw()
 
-        try:
-            if getattr(scene, "hud_visible", True):
-                scene._hud.draw()
-        except Exception:
-            pass
+        with self._profile("draw.fences"):
+            for mesh in getattr(scene, "fence_meshes", ()):
+                mesh.draw()
+
+        with self._profile("draw.world_objects"):
+            scene.draw_world_objects(enable_timing=enable_timing)
+
+        with self._profile("draw.world_hud"):
+            try:
+                if getattr(scene, "hud_visible", True):
+                    scene._hud.draw()
+            except Exception:
+                pass
 
     def render(
         self, *, show_hud: bool = True, text=None, fps: float | None = None
@@ -106,51 +121,55 @@ class WorldRenderer:
         fog_enabled = self._fog_enabled()
         fog_density = max(0.0, float(getattr(scene, "fog_density", FOGDENSITY)))
 
-        if fog_enabled:
-            glEnable(GL_FOG)
-            glFogi(GL_FOG_MODE, GL_EXP2)
-            glFogf(GL_FOG_DENSITY, fog_density)
-        else:
-            glDisable(GL_FOG)
+        with self._profile("render.setup"):
+            if fog_enabled:
+                glEnable(GL_FOG)
+                glFogi(GL_FOG_MODE, GL_EXP2)
+                glFogf(GL_FOG_DENSITY, fog_density)
+            else:
+                glDisable(GL_FOG)
 
-        glFogfv(GL_FOG_COLOR, rgba)
-        set_texture_fog_state(
-            enabled=fog_enabled,
-            density=fog_density,
-            color=rgba,
-            compile_shader=False,
-        )
-        glClearColor(*rgba)
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+            glFogfv(GL_FOG_COLOR, rgba)
+            set_texture_fog_state(
+                enabled=fog_enabled,
+                density=fog_density,
+                color=rgba,
+                compile_shader=False,
+            )
+            glClearColor(*rgba)
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
-        glMatrixMode(GL_PROJECTION)
-        glLoadIdentity()
-        gluPerspective(float(getattr(scene, "fov", FOV)), WIDTH / HEIGHT, 1, 1_000_000.0)
+            glMatrixMode(GL_PROJECTION)
+            glLoadIdentity()
+            gluPerspective(float(getattr(scene, "fov", FOV)), WIDTH / HEIGHT, 1, 1_000_000.0)
 
-        glMatrixMode(GL_MODELVIEW)
-        glLoadIdentity()
+            glMatrixMode(GL_MODELVIEW)
+            glLoadIdentity()
 
         self.draw_sky()
 
-        glRotatef(math.degrees(-scene.camera.rotation.x), 1, 0, 0)
-        glRotatef(math.degrees(-scene.camera.rotation.y), 0, 1, 0)
-        off_x, off_y = scene._headbob.offsets()
-        headbob_enabled = getattr(scene._headbob, "enabled", HEADBOB_ENABLED)
-        idle_enabled = getattr(scene._headbob, "idle_enabled", True)
-        if headbob_enabled:
-            glTranslatef(-off_x, -off_y, 0)
-        elif idle_enabled and off_y != 0.0:
-            glTranslatef(0, -off_y, 0)
-        glTranslatef(
-            -scene.camera.position.x,
-            -scene.camera.position.y,
-            -scene.camera.position.z,
-        )
+        with self._profile("render.camera_transform"):
+            glRotatef(math.degrees(-scene.camera.rotation.x), 1, 0, 0)
+            glRotatef(math.degrees(-scene.camera.rotation.y), 0, 1, 0)
+            off_x, off_y = scene._headbob.offsets()
+            headbob_enabled = getattr(scene._headbob, "enabled", HEADBOB_ENABLED)
+            idle_enabled = getattr(scene._headbob, "idle_enabled", True)
+            if headbob_enabled:
+                glTranslatef(-off_x, -off_y, 0)
+            elif idle_enabled and off_y != 0.0:
+                glTranslatef(0, -off_y, 0)
+            glTranslatef(
+                -scene.camera.position.x,
+                -scene.camera.position.y,
+                -scene.camera.position.z,
+            )
 
-        self.draw()
+        with self._profile("render.world"):
+            self.draw()
 
         if show_hud and text is not None and fps is not None:
-            self.draw_hud(text, fps)
+            with self._profile("render.hud_text"):
+                self.draw_hud(text, fps)
 
     def draw_hud(self, text, fps: float) -> None:  # pragma: no cover - visual
         scene = self.scene

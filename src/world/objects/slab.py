@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+import numpy as np
 from OpenGL.GL import (
     GL_ALPHA_TEST,
     GL_BLEND,
@@ -26,6 +27,7 @@ from OpenGL.GL import (
 )
 from pygame.math import Vector3
 
+from core.mesh import BatchedMesh
 from engine.rendering.lighting import sunlight_factor_for_normal
 
 
@@ -139,6 +141,47 @@ class TexturedSlabMixin:
 
     faces = SLAB_BOX_FACES
 
+    def _dispose_slab_mesh(self) -> None:
+        mesh = getattr(self, "_slab_mesh", None)
+        if mesh is not None:
+            try:
+                mesh.dispose()
+            except Exception:
+                pass
+        self._slab_mesh = None
+
+    def _mark_slab_mesh_dirty(self) -> None:
+        self._slab_mesh_dirty = True
+
+    def dispose(self) -> None:
+        self._dispose_slab_mesh()
+
+    def _slab_light_cache_key(self):
+        lighting = getattr(self, "lighting", None)
+        sun_direction = getattr(
+            lighting,
+            "sun_direction",
+            getattr(self, "sun_direction", None),
+        )
+        try:
+            sun_key = (
+                round(float(sun_direction.x), 6),
+                round(float(sun_direction.y), 6),
+                round(float(sun_direction.z), 6),
+            )
+        except Exception:
+            sun_key = None
+
+        if lighting is None:
+            return sun_key
+
+        return (
+            sun_key,
+            round(float(getattr(lighting, "ambient", 0.72)), 6),
+            round(float(getattr(lighting, "diffuse", 0.48)), 6),
+            round(float(getattr(lighting, "max_factor", 1.15)), 6),
+        )
+
     def get_collision_meshes(self):
         return (self,)
 
@@ -244,3 +287,64 @@ class TexturedSlabMixin:
             glDisable(GL_ALPHA_TEST)
             glDisable(GL_BLEND)
             glDisable(GL_TEXTURE_2D)
+
+    def _slab_vertex_data(self, verts: Sequence[Vector3]) -> np.ndarray:
+        rows = []
+        for face_idx, face in enumerate(self.faces):
+            if len(face) != 4:
+                continue
+            shade = self._face_shade(face_idx)
+            uvs = self._face_uvs(face_idx)
+            for vertex_idx, uv in (
+                (face[0], uvs[0]),
+                (face[1], uvs[1]),
+                (face[2], uvs[2]),
+                (face[0], uvs[0]),
+                (face[2], uvs[2]),
+                (face[3], uvs[3]),
+            ):
+                vertex = verts[vertex_idx]
+                rows.append(
+                    (
+                        vertex.x,
+                        vertex.y,
+                        vertex.z,
+                        shade,
+                        shade,
+                        shade,
+                        uv[0],
+                        uv[1],
+                    )
+                )
+
+        if not rows:
+            return np.zeros((0, 8), dtype=np.float32)
+        return np.array(rows, dtype=np.float32)
+
+    def _draw_cached_textured_slab_faces(self, verts: Sequence[Vector3]) -> None:
+        if not self.texture:
+            return
+
+        mesh = getattr(self, "_slab_mesh", None)
+        light_key = self._slab_light_cache_key()
+        dirty = bool(getattr(self, "_slab_mesh_dirty", True))
+        if light_key != getattr(self, "_slab_mesh_light_key", None):
+            dirty = True
+
+        if mesh is None or dirty:
+            self._dispose_slab_mesh()
+            vertex_data = self._slab_vertex_data(verts)
+            if vertex_data.size == 0:
+                return
+            self._slab_mesh = BatchedMesh.from_vertex_data(
+                vertex_data,
+                texture=self.texture,
+                alpha_test=True,
+                exposure_baseline=1.0,
+                environment_lighting=False,
+            )
+            self._slab_mesh_dirty = False
+            self._slab_mesh_light_key = light_key
+            mesh = self._slab_mesh
+
+        mesh.draw()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+import numpy as np
 from pygame.math import Vector3
 from OpenGL.GL import (
     GL_ALPHA_TEST,
@@ -24,6 +25,7 @@ from OpenGL.GL import (
     glVertex3f,
 )
 
+from core.mesh import BatchedMesh
 from engine.entity import Entity
 from engine.rendering.lighting import INDOOR_NORMAL
 from .slab import (
@@ -113,6 +115,16 @@ class Window(TexturedSlabMixin, Entity):
         self.panel_axis = self.tangent.copy()
         self.depth_axis = self.normal.copy()
         self._bounds_cache: tuple[float, float, float, float] | None = None
+
+    def dispose(self) -> None:
+        super().dispose()
+        mesh = getattr(self, "_corner_backing_mesh", None)
+        if mesh is not None:
+            try:
+                mesh.dispose()
+            except Exception:
+                pass
+        self._corner_backing_mesh = None
 
     @classmethod
     def texture_or_load(cls, texture: Any | None = None) -> Any:
@@ -320,6 +332,91 @@ class Window(TexturedSlabMixin, Entity):
             if textured:
                 glDisable(GL_TEXTURE_2D)
 
+    def _corner_backing_vertex_data(self) -> np.ndarray:
+        textured = bool(self.backing_texture)
+        rows = []
+        for face_idx, face_sign in ((0, 1.0), (1, -1.0)):
+            shade = self._face_shade(face_idx)
+            if textured:
+                color = (shade, shade, shade)
+            else:
+                r, g, b = WINDOW_CORNER_BACKING_COLOR
+                color = (r * shade, g * shade, b * shade)
+
+            for quad in self._corner_backing_quads(face_sign):
+                tri_vertices = (
+                    quad[0],
+                    quad[1],
+                    quad[2],
+                    quad[0],
+                    quad[2],
+                    quad[3],
+                )
+                for vertex in tri_vertices:
+                    if textured:
+                        u, v = self._wall_backing_uv(vertex)
+                        rows.append(
+                            (
+                                vertex.x,
+                                vertex.y,
+                                vertex.z,
+                                color[0],
+                                color[1],
+                                color[2],
+                                u,
+                                v,
+                            )
+                        )
+                    else:
+                        rows.append(
+                            (
+                                vertex.x,
+                                vertex.y,
+                                vertex.z,
+                                color[0],
+                                color[1],
+                                color[2],
+                            )
+                        )
+
+        columns = 8 if textured else 6
+        if not rows:
+            return np.zeros((0, columns), dtype=np.float32)
+        return np.array(rows, dtype=np.float32)
+
+    def _draw_cached_corner_backing(self) -> None:
+        mesh = getattr(self, "_corner_backing_mesh", None)
+        light_key = self._slab_light_cache_key()
+        dirty = light_key != getattr(self, "_corner_backing_light_key", None)
+
+        if mesh is None or dirty:
+            if mesh is not None:
+                try:
+                    mesh.dispose()
+                except Exception:
+                    pass
+            vertex_data = self._corner_backing_vertex_data()
+            if vertex_data.size == 0:
+                self._corner_backing_mesh = None
+                return
+
+            if self.backing_texture:
+                glBindTexture(GL_TEXTURE_2D, self.backing_texture)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
+
+            self._corner_backing_mesh = BatchedMesh.from_vertex_data(
+                vertex_data,
+                texture=self.backing_texture if self.backing_texture else None,
+                alpha_test=False,
+                exposure_baseline=1.0,
+                environment_lighting=False,
+            )
+            self._corner_backing_light_key = light_key
+            mesh = self._corner_backing_mesh
+
+        mesh.draw()
+
     def draw(self, camera=None) -> None:  # pragma: no cover - visual
         if not self.visible or not self.texture:
             return
@@ -328,5 +425,5 @@ class Window(TexturedSlabMixin, Entity):
         if not verts:
             return
 
-        self._draw_corner_backing()
-        self._draw_textured_slab_faces(verts)
+        self._draw_cached_corner_backing()
+        self._draw_cached_textured_slab_faces(verts)

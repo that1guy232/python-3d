@@ -6,6 +6,7 @@ queries live here so the scene class can stay focused on ownership and wiring.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 import math
 import pygame
 
@@ -17,6 +18,13 @@ from world.world_collision import (
     player_support_height_at,
     resolve_player_vertical_collision,
 )
+
+
+def _profile(scene, name: str):
+    profiler = getattr(scene, "profiler", None)
+    if profiler is None or not getattr(profiler, "enabled", False):
+        return nullcontext()
+    return profiler.section(name)
 
 
 def contains_horizontal(scene, pos: Vector3) -> bool:
@@ -184,52 +192,27 @@ def view_space_position(
 
 def update(scene, dt: float) -> None:
     if getattr(scene, "paused", False) or getattr(scene, "inventory_open", False):
-        try:
-            scene._hud.update(dt)
-        except Exception:
-            pass
+        with _profile(scene, "update.paused_hud"):
+            try:
+                scene._hud.update(dt)
+            except Exception:
+                pass
         return
 
-    if not Sounds.is_playing("ambient_birds"):
-        Sounds.play("ambient_birds", volume=0.05)
+    with _profile(scene, "update.audio"):
+        if not Sounds.is_playing("ambient_birds"):
+            Sounds.play("ambient_birds", volume=0.05)
 
-    moving, sprinting = scene._camera_controller.update(dt)
-    scene._sway_controller.update(dt)
-    _update_entities(scene, dt)
+    with _profile(scene, "update.camera_controller"):
+        moving, sprinting = scene._camera_controller.update(dt)
+    with _profile(scene, "update.sway"):
+        scene._sway_controller.update(dt)
+    with _profile(scene, "update.entities"):
+        _update_entities(scene, dt)
 
-    foot_offset = _player_foot_offset(scene)
-    head_offset = _player_head_offset(scene)
-    foot_y = scene.camera.position.y - foot_offset
-    support_y_here = _support_height_at(
-        scene,
-        scene.camera.position.x,
-        scene.camera.position.z,
-        foot_y,
-    )
-
-    target_cam_y = support_y_here + foot_offset
-
-    if scene.camera.is_jumping:
-        old_vertical_position = scene.camera.position.copy()
-        scene.camera.vertical_velocity -= float(getattr(scene, "gravity", GRAVITY)) * dt
-        scene.camera.position.y += scene.camera.vertical_velocity * dt
-
-        vertical_hit = resolve_player_vertical_collision(
-            _wall_collision_meshes(scene),
-            old_vertical_position,
-            scene.camera.position,
-            foot_offset=foot_offset,
-            head_offset=head_offset,
-            player_radius=_player_radius(scene),
-        )
-        if vertical_hit is not None:
-            scene.camera.position.y = vertical_hit.camera_y
-            if vertical_hit.kind == "floor":
-                scene.camera.vertical_velocity = 0.0
-                scene.camera.is_jumping = False
-            elif scene.camera.vertical_velocity > 0.0:
-                scene.camera.vertical_velocity = 0.0
-
+    with _profile(scene, "update.player_height"):
+        foot_offset = _player_foot_offset(scene)
+        head_offset = _player_head_offset(scene)
         foot_y = scene.camera.position.y - foot_offset
         support_y_here = _support_height_at(
             scene,
@@ -237,23 +220,55 @@ def update(scene, dt: float) -> None:
             scene.camera.position.z,
             foot_y,
         )
-        target_cam_y = support_y_here + foot_offset
-        if scene.camera.position.y <= target_cam_y:
-            scene.camera.position.y = target_cam_y
-            scene.camera.vertical_velocity = 0.0
-            scene.camera.is_jumping = False
-    else:
-        smooth_hz = float(
-            getattr(scene, "camera_follow_smooth_hz", CAMERA_FOLLOW_SMOOTH_HZ)
-        )
-        if smooth_hz <= 0 or dt <= 0:
-            scene.camera.position.y = target_cam_y
-        else:
-            a = 1.0 - math.exp(-smooth_hz * dt)
-            scene.camera.position.y += (target_cam_y - scene.camera.position.y) * a
 
-    scene._hud.update(dt)
-    scene._headbob.update(moving=moving, sprinting=sprinting, dt=dt)
+        target_cam_y = support_y_here + foot_offset
+
+        if scene.camera.is_jumping:
+            old_vertical_position = scene.camera.position.copy()
+            scene.camera.vertical_velocity -= float(getattr(scene, "gravity", GRAVITY)) * dt
+            scene.camera.position.y += scene.camera.vertical_velocity * dt
+
+            vertical_hit = resolve_player_vertical_collision(
+                _wall_collision_meshes(scene),
+                old_vertical_position,
+                scene.camera.position,
+                foot_offset=foot_offset,
+                head_offset=head_offset,
+                player_radius=_player_radius(scene),
+            )
+            if vertical_hit is not None:
+                scene.camera.position.y = vertical_hit.camera_y
+                if vertical_hit.kind == "floor":
+                    scene.camera.vertical_velocity = 0.0
+                    scene.camera.is_jumping = False
+                elif scene.camera.vertical_velocity > 0.0:
+                    scene.camera.vertical_velocity = 0.0
+
+            foot_y = scene.camera.position.y - foot_offset
+            support_y_here = _support_height_at(
+                scene,
+                scene.camera.position.x,
+                scene.camera.position.z,
+                foot_y,
+            )
+            target_cam_y = support_y_here + foot_offset
+            if scene.camera.position.y <= target_cam_y:
+                scene.camera.position.y = target_cam_y
+                scene.camera.vertical_velocity = 0.0
+                scene.camera.is_jumping = False
+        else:
+            smooth_hz = float(
+                getattr(scene, "camera_follow_smooth_hz", CAMERA_FOLLOW_SMOOTH_HZ)
+            )
+            if smooth_hz <= 0 or dt <= 0:
+                scene.camera.position.y = target_cam_y
+            else:
+                a = 1.0 - math.exp(-smooth_hz * dt)
+                scene.camera.position.y += (target_cam_y - scene.camera.position.y) * a
+
+    with _profile(scene, "update.hud_headbob"):
+        scene._hud.update(dt)
+        scene._headbob.update(moving=moving, sprinting=sprinting, dt=dt)
 
 
 def handle_event(scene, event) -> None:
