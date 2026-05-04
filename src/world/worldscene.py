@@ -614,6 +614,11 @@ class WorldScene(Scene):
                 "brightness_modifiers",
                 getattr(camera, "brightness_areas", ()),
             ),
+            covered_regions=getattr(
+                lighting,
+                "covered_regions",
+                getattr(self, "covered_regions", ()),
+            ),
             exposure_scale=1.0,
             compile_shader=compile_shader,
         )

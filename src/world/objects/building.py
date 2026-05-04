@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Callable, List, Optional
 import math
 
 from pygame.math import Vector3
@@ -58,6 +58,9 @@ class Building:
         roof_thickness: float = 3.0,
         roof_overhang: float = 5.0,
         roof_texture: Optional[int] = None,
+        terrain_height_at: Optional[Callable[[float, float], float]] = None,
+        terrain_embed_depth: float = 4.0,
+        terrain_sample_spacing: float = 24.0,
     ) -> List[WallTile]:
         """Create a rectangular building shell with a doorway and roof."""
         dimensions = self._get_dimensions(width, depth)
@@ -74,6 +77,9 @@ class Building:
             doorway_side=doorway_side,
             doorway_width=doorway_width,
             doorway_height=doorway_height,
+            terrain_height_at=terrain_height_at,
+            terrain_embed_depth=terrain_embed_depth,
+            terrain_sample_spacing=terrain_sample_spacing,
         )
 
         if roof:
@@ -103,6 +109,9 @@ class Building:
         texture: Optional[int], uv_repeat: tuple[float, float], base_y: float,
         max_tile_width: float, doorway: bool, doorway_side: str,
         doorway_width: Optional[float], doorway_height: Optional[float],
+        terrain_height_at: Optional[Callable[[float, float], float]],
+        terrain_embed_depth: float,
+        terrain_sample_spacing: float,
     ) -> List[WallTile]:
         """Create walls for all four sides."""
         outer_x, outer_z = dimensions
@@ -116,13 +125,17 @@ class Building:
                         nx, nz, outer_x, outer_z, wall_height, wall_thickness,
                         texture, uv_repeat, base_y, max_tile_width,
                         doorway_width, doorway_height,
+                        terrain_height_at, terrain_embed_depth,
+                        terrain_sample_spacing,
                     )
                 )
             else:
                 walls.extend(
                     self._create_wall_side(
                         nx, nz, outer_x, outer_z, wall_height, wall_thickness,
-                        texture, uv_repeat, base_y, max_tile_width
+                        texture, uv_repeat, base_y, max_tile_width,
+                        terrain_height_at, terrain_embed_depth,
+                        terrain_sample_spacing,
                     )
                 )
             
@@ -139,7 +152,9 @@ class Building:
     def _create_wall_side(
         self, nx: float, nz: float, outer_x: float, outer_z: float,
         wall_height: float, wall_thickness: float, texture: Optional[int],
-        uv_repeat: tuple[float, float], base_y: float, max_tile_width: float
+        uv_repeat: tuple[float, float], base_y: float, max_tile_width: float,
+        terrain_height_at: Optional[Callable[[float, float], float]],
+        terrain_embed_depth: float, terrain_sample_spacing: float,
     ) -> List[WallTile]:
         """Create tiles for one wall side."""
         _, _, span_half, _ = self._get_side_geometry(
@@ -149,6 +164,9 @@ class Building:
             nx, nz, outer_x, outer_z, wall_thickness,
             texture, uv_repeat, base_y, max_tile_width,
             -span_half, span_half, 0.0, wall_height,
+            terrain_height_at=terrain_height_at,
+            terrain_embed_depth=terrain_embed_depth,
+            terrain_sample_spacing=terrain_sample_spacing,
         )
 
     def _create_doorway_wall_side(
@@ -156,6 +174,8 @@ class Building:
         wall_height: float, wall_thickness: float, texture: Optional[int],
         uv_repeat: tuple[float, float], base_y: float, max_tile_width: float,
         doorway_width: Optional[float], doorway_height: Optional[float],
+        terrain_height_at: Optional[Callable[[float, float], float]],
+        terrain_embed_depth: float, terrain_sample_spacing: float,
     ) -> List[WallTile]:
         """Create one wall side with a centered doorway opening."""
         _, _, span_half, _ = self._get_side_geometry(
@@ -177,6 +197,9 @@ class Building:
                     nx, nz, outer_x, outer_z, wall_thickness,
                     texture, uv_repeat, base_y, max_tile_width,
                     span_min, span_max, y_min, y_max,
+                    terrain_height_at=terrain_height_at,
+                    terrain_embed_depth=terrain_embed_depth,
+                    terrain_sample_spacing=terrain_sample_spacing,
                 )
             )
 
@@ -187,6 +210,10 @@ class Building:
         wall_thickness: float, texture: Optional[int],
         uv_repeat: tuple[float, float], base_y: float, max_tile_width: float,
         span_min: float, span_max: float, y_min: float, y_max: float,
+        *,
+        terrain_height_at: Optional[Callable[[float, float], float]] = None,
+        terrain_embed_depth: float = 4.0,
+        terrain_sample_spacing: float = 24.0,
     ) -> List[WallTile]:
         """Create tiles for a horizontal/vertical slice of one wall side."""
         if span_max <= span_min or y_max <= y_min:
@@ -216,9 +243,29 @@ class Building:
             else:
                 tx, tz, w, d = center_x, center_along, half_width, tile_half
 
+            bottom_y, top_y = self._wall_segment_vertical_bounds(
+                base_y=base_y,
+                y_min=y_min,
+                y_max=y_max,
+                span_axis=span_axis,
+                center_x=center_x,
+                center_z=center_z,
+                center_along_start=center_along - tile_half,
+                center_along_end=center_along + tile_half,
+                nx=nx,
+                nz=nz,
+                half_width=half_width,
+                terrain_height_at=terrain_height_at,
+                terrain_embed_depth=terrain_embed_depth,
+                terrain_sample_spacing=terrain_sample_spacing,
+            )
+            tile_height = max(0.0, (top_y - bottom_y) * 0.5)
+            if tile_height <= 0.0:
+                continue
+
             tile = WallTile(
-                position=Vector3(tx, segment_center_y, tz),
-                width=w, height=segment_height * 0.5, depth=d,
+                position=Vector3(tx, (bottom_y + top_y) * 0.5, tz),
+                width=w, height=tile_height, depth=d,
                 texture=texture, uv_repeat=uv_repeat, thickness=wall_thickness,
             )
             tile.rotation = Vector3(0.0, theta, 0.0)
@@ -229,6 +276,90 @@ class Building:
             
         self.attach_shapes(tiles)
         return tiles
+
+    def _wall_segment_vertical_bounds(
+        self,
+        *,
+        base_y: float,
+        y_min: float,
+        y_max: float,
+        span_axis: str,
+        center_x: float,
+        center_z: float,
+        center_along_start: float,
+        center_along_end: float,
+        nx: float,
+        nz: float,
+        half_width: float,
+        terrain_height_at: Optional[Callable[[float, float], float]],
+        terrain_embed_depth: float,
+        terrain_sample_spacing: float,
+    ) -> tuple[float, float]:
+        top_y = float(base_y) + float(y_max)
+        bottom_y = float(base_y) + float(y_min)
+        if terrain_height_at is None or float(y_min) > 1e-6:
+            return bottom_y, top_y
+
+        min_ground_y = self._sample_min_ground_y_under_wall_segment(
+            span_axis=span_axis,
+            center_x=center_x,
+            center_z=center_z,
+            center_along_start=center_along_start,
+            center_along_end=center_along_end,
+            nx=nx,
+            nz=nz,
+            half_width=half_width,
+            terrain_height_at=terrain_height_at,
+            terrain_sample_spacing=terrain_sample_spacing,
+        )
+        if min_ground_y is not None:
+            bottom_y = min(
+                bottom_y,
+                min_ground_y - max(0.0, float(terrain_embed_depth)),
+            )
+        return bottom_y, top_y
+
+    def _sample_min_ground_y_under_wall_segment(
+        self,
+        *,
+        span_axis: str,
+        center_x: float,
+        center_z: float,
+        center_along_start: float,
+        center_along_end: float,
+        nx: float,
+        nz: float,
+        half_width: float,
+        terrain_height_at: Callable[[float, float], float],
+        terrain_sample_spacing: float,
+    ) -> float | None:
+        span = max(0.0, float(center_along_end) - float(center_along_start))
+        spacing = max(1.0, float(terrain_sample_spacing))
+        sample_count = max(2, int(math.ceil(span / spacing)) + 1)
+        offsets = (-half_width, 0.0, half_width)
+        min_y: float | None = None
+
+        for index in range(sample_count):
+            if sample_count == 1:
+                along = (center_along_start + center_along_end) * 0.5
+            else:
+                t = index / (sample_count - 1)
+                along = center_along_start + (center_along_end - center_along_start) * t
+            for offset in offsets:
+                if span_axis == "x":
+                    x = along
+                    z = center_z + nz * offset
+                else:
+                    x = center_x + nx * offset
+                    z = along
+                try:
+                    ground_y = float(terrain_height_at(x, z))
+                except (TypeError, ValueError, AttributeError):
+                    continue
+                if min_y is None or ground_y < min_y:
+                    min_y = ground_y
+
+        return min_y
 
     def _create_roof(
         self,

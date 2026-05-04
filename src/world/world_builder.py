@@ -31,6 +31,8 @@ from world.world_spawner import spawn_world_sprites
 
 CREATE_WORLD_OBJECT_STEPS = 10
 BUILDING_ROOF_OVERHANG = 6.0
+BUILDING_WALL_TERRAIN_EMBED_DEPTH = 8.0
+BUILDING_WALL_TERRAIN_SAMPLE_SPACING = 18.0
 SHADOW_BUILDING_CLIP_MARGIN = 2.0
 
 _SIDE_NORMALS = {
@@ -366,6 +368,9 @@ def _build_buildings(scene) -> None:
             roof=True,
             roof_thickness=4.0,
             roof_overhang=BUILDING_ROOF_OVERHANG,
+            terrain_height_at=scene.ground_height_at,
+            terrain_embed_depth=BUILDING_WALL_TERRAIN_EMBED_DEPTH,
+            terrain_sample_spacing=BUILDING_WALL_TERRAIN_SAMPLE_SPACING,
         )
         for piece in pieces:
             piece.sun_direction = sun_direction

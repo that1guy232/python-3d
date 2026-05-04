@@ -133,7 +133,11 @@ class WorldSprite:
             forward = getattr(self.camera, "_forward", FORWARD)
             normal = Vector3(-forward.x * 0.35, 1.0, -forward.z * 0.35)
             normal = normal.normalize() if _length_sq(normal) > _EPS2 else WORLD_UP
-            shader.bind(scene_lighting_enabled=True, directional_enabled=True)
+            shader.bind(
+                scene_lighting_enabled=True,
+                directional_enabled=True,
+                environment_enabled=False,
+            )
             glNormal3f(normal.x, normal.y, normal.z)
             glColor4f(r, g, b, 1.0)
         else:
@@ -351,7 +355,11 @@ def draw_sprites_batched(
     glDisable_local(GL_ALPHA_TEST)
     glTexEnvi_local(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE)
     if shader is not None:
-        shader.bind(scene_lighting_enabled=True, directional_enabled=True)
+        shader.bind(
+            scene_lighting_enabled=True,
+            directional_enabled=True,
+            environment_enabled=False,
+        )
 
     try:
         for tex, batch in batches:

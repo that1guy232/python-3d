@@ -1,7 +1,8 @@
-"""Shared lighting helpers for world rendering.
+"""Shared environment lighting helpers for world rendering.
 
-The fixed-function renderers in this project bake most lighting into vertex
-colors, so keeping the sun math here helps every mesh agree on the same source.
+The fixed-function fallback still bakes lighting into vertex colors, while the
+shader path samples this shared model at draw time so world geometry and torch
+lights agree on one environment.
 """
 
 from __future__ import annotations

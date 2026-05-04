@@ -58,6 +58,7 @@ class BatchedMesh:
     texture: int | None = None
     height_sampler: Optional[object] = None
     alpha_test: bool = False
+    environment_lighting: bool = True
     owns_vbo: bool = True
     exposure_baseline: float = 1.0
     vertex_width: int = 0
@@ -75,6 +76,7 @@ class BatchedMesh:
         height_sampler: Optional[object] = None,
         exposure_baseline: float = 1.0,
         keep_vertex_data: bool = True,
+        environment_lighting: bool = True,
     ) -> "BatchedMesh":
         upload_data = np.ascontiguousarray(vertex_data, dtype=np.float32)
         vbo = glGenBuffers(1)
@@ -88,6 +90,7 @@ class BatchedMesh:
             texture=texture,
             height_sampler=height_sampler,
             alpha_test=alpha_test,
+            environment_lighting=bool(environment_lighting),
             exposure_baseline=baseline,
             vertex_width=int(upload_data.shape[1]) if upload_data.ndim == 2 else 0,
             _base_vertex_data=upload_data.copy() if keep_vertex_data else None,
@@ -235,6 +238,7 @@ class BatchedMesh:
                 shader.bind(
                     scene_lighting_enabled=has_normals,
                     directional_enabled=has_normals,
+                    environment_enabled=has_normals and self.environment_lighting,
                 )
             try:
                 glDrawArrays(GL_TRIANGLES, 0, self.vertex_count)

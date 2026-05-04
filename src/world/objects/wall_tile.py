@@ -591,6 +591,7 @@ def build_wall_tile_batches(
                 texture=texture if texture else None,
                 alpha_test=bool(texture),
                 exposure_baseline=default_brightness,
+                environment_lighting=False,
             )
         )
 

@@ -398,7 +398,7 @@ class TexturedGroundGridBuilder:
                 exposure_baseline=self.default_brightness,
             )
         
-        split_covered_regions = bool(self.covered_regions)
+        split_covered_regions = bool(self.covered_regions) and not shader_lighting
         if split_covered_regions:
             vertex_data, corner_coords_list = self._build_ground_vertex_rows()
         else:
@@ -429,11 +429,6 @@ class TexturedGroundGridBuilder:
                 vertex_data,
                 prefer_upward_normals=True,
             )
-            if not split_covered_regions:
-                apply_covered_regions(
-                    vertex_data,
-                    covered_regions=self.covered_regions,
-                )
         else:
             if split_covered_regions:
                 indoor_receivers = np.max(vertex_data[:, 3:6], axis=1) < 0.995

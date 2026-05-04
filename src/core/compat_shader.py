@@ -34,6 +34,7 @@ from OpenGL.GL import (
 )
 
 MAX_BRIGHTNESS_AREAS = 32
+MAX_ENVIRONMENT_REGIONS = 32
 
 
 _TEXTURE_COLOR_EXPOSURE_VERTEX = """#version 120
@@ -74,6 +75,12 @@ uniform float u_brightness_falloffs[32];
 uniform vec4 u_brightness_bounds[32];
 uniform float u_brightness_indoor_only[32];
 uniform float u_brightness_floor_scales[32];
+uniform int u_environment_enabled;
+uniform int u_environment_region_count;
+uniform vec4 u_environment_regions[32];
+uniform float u_environment_region_factors[32];
+uniform vec4 u_environment_doorways[32];
+uniform vec4 u_environment_doorway_params[32];
 uniform int u_fog_enabled;
 uniform float u_fog_density;
 uniform vec4 u_fog_color;
@@ -83,6 +90,94 @@ varying vec2 v_uv;
 varying vec3 v_normal;
 varying vec3 v_world_pos;
 varying float v_fog_distance;
+
+float smooth01(float value)
+{
+    value = clamp(value, 0.0, 1.0);
+    return value * value * (3.0 - 2.0 * value);
+}
+
+float doorway_region_factor(int index, vec4 region, float region_factor, vec3 world_pos)
+{
+    vec4 doorway = u_environment_doorways[index];
+    vec4 params = u_environment_doorway_params[index];
+    if (params.w <= 0.5) {
+        return region_factor;
+    }
+
+    float side = doorway.x;
+    float center_x = doorway.y;
+    float center_z = doorway.z;
+    float width = max(1.0, doorway.w);
+    float depth = max(1.0, params.x);
+    float side_fade = max(1.0, params.y);
+    float edge_factor = clamp(params.z, 0.0, 1.0);
+    float inward_depth = 0.0;
+    float lateral = 0.0;
+
+    if (side < 0.5) {
+        inward_depth = region.w - world_pos.z;
+        lateral = world_pos.x - center_x;
+    } else if (side < 1.5) {
+        inward_depth = region.y - world_pos.x;
+        lateral = world_pos.z - center_z;
+    } else if (side < 2.5) {
+        inward_depth = world_pos.z - region.z;
+        lateral = world_pos.x - center_x;
+    } else if (side < 3.5) {
+        inward_depth = world_pos.x - region.x;
+        lateral = world_pos.z - center_z;
+    } else {
+        return region_factor;
+    }
+
+    if (inward_depth < 0.0 || inward_depth > depth) {
+        return region_factor;
+    }
+
+    float half_width = width * 0.5;
+    float lateral_abs = abs(lateral);
+    if (lateral_abs >= half_width + side_fade) {
+        return region_factor;
+    }
+
+    float width_influence = lateral_abs <= half_width
+        ? 1.0
+        : 1.0 - smooth01((lateral_abs - half_width) / side_fade);
+    float depth_influence = 1.0 - smooth01(inward_depth / depth);
+    float influence = clamp(width_influence * depth_influence, 0.0, 1.0);
+    return mix(region_factor, edge_factor, influence);
+}
+
+float environment_factor_at(vec3 world_pos)
+{
+    if (u_environment_enabled == 0) {
+        return 1.0;
+    }
+
+    float factor = 1.0;
+    for (int i = 0; i < 32; ++i) {
+        if (i >= u_environment_region_count) {
+            break;
+        }
+        vec4 region = u_environment_regions[i];
+        if (
+            world_pos.x >= region.x &&
+            world_pos.x <= region.y &&
+            world_pos.z >= region.z &&
+            world_pos.z <= region.w
+        ) {
+            float region_factor = doorway_region_factor(
+                i,
+                region,
+                clamp(u_environment_region_factors[i], 0.0, 1.0),
+                world_pos
+            );
+            factor = min(factor, region_factor);
+        }
+    }
+    return factor;
+}
 
 float brightness_at(vec3 world_pos, float receiver_factor, vec3 surface_normal)
 {
@@ -155,11 +250,17 @@ void main()
 {
     vec4 texel = texture2D(u_texture, v_uv);
     vec3 surface_normal = normalize(v_normal);
-    float receiver_factor = max(max(v_color.r, v_color.g), v_color.b);
+    float vertex_factor = max(max(v_color.r, v_color.g), v_color.b);
+    float environment_factor = environment_factor_at(v_world_pos);
+    float receiver_factor = min(vertex_factor, environment_factor);
+    float environment_scale = vertex_factor <= 0.0001
+        ? environment_factor
+        : receiver_factor / vertex_factor;
+    vec3 receiver_rgb = v_color.rgb * environment_scale;
     float brightness = u_scene_lighting_enabled == 0
         ? u_exposure
         : brightness_at(v_world_pos, receiver_factor, surface_normal) * u_exposure;
-    vec3 rgb = texel.rgb * v_color.rgb * brightness * sunlight_factor();
+    vec3 rgb = texel.rgb * receiver_rgb * brightness * sunlight_factor();
     rgb = apply_fog(rgb);
     gl_FragColor = vec4(rgb, texel.a * v_color.a);
 }
@@ -184,6 +285,12 @@ class TextureColorExposureShader:
     brightness_bound_locations: tuple[int, ...]
     brightness_indoor_only_locations: tuple[int, ...]
     brightness_floor_scale_locations: tuple[int, ...]
+    environment_enabled_location: int
+    environment_region_count_location: int
+    environment_region_locations: tuple[int, ...]
+    environment_region_factor_locations: tuple[int, ...]
+    environment_doorway_locations: tuple[int, ...]
+    environment_doorway_param_locations: tuple[int, ...]
     fog_enabled_location: int
     fog_density_location: int
     fog_color_location: int
@@ -193,6 +300,7 @@ class TextureColorExposureShader:
         *,
         scene_lighting_enabled: bool = False,
         directional_enabled: bool = False,
+        environment_enabled: bool = False,
     ) -> None:
         glUseProgram(self.program)
         glActiveTexture(GL_TEXTURE0)
@@ -208,6 +316,11 @@ class TextureColorExposureShader:
             glUniform1i(
                 self.directional_enabled_location,
                 1 if directional_enabled else 0,
+            )
+        if self.environment_enabled_location >= 0:
+            glUniform1i(
+                self.environment_enabled_location,
+                1 if environment_enabled else 0,
             )
         self.apply_fog_state(_texture_fog_state)
 
@@ -275,6 +388,46 @@ class TextureColorExposureShader:
             )
             glUniform1f(location, value)
 
+        if self.environment_region_count_location >= 0:
+            glUniform1i(
+                self.environment_region_count_location,
+                len(state.environment_regions),
+            )
+
+        for index, location in enumerate(self.environment_region_locations):
+            if location < 0:
+                continue
+            if index < len(state.environment_regions):
+                glUniform4f(location, *state.environment_regions[index])
+            else:
+                glUniform4f(location, 0.0, -1.0, 0.0, -1.0)
+
+        for index, location in enumerate(self.environment_region_factor_locations):
+            if location < 0:
+                continue
+            value = (
+                state.environment_region_factors[index]
+                if index < len(state.environment_region_factors)
+                else 1.0
+            )
+            glUniform1f(location, value)
+
+        for index, location in enumerate(self.environment_doorway_locations):
+            if location < 0:
+                continue
+            if index < len(state.environment_doorways):
+                glUniform4f(location, *state.environment_doorways[index])
+            else:
+                glUniform4f(location, -1.0, 0.0, 0.0, 1.0)
+
+        for index, location in enumerate(self.environment_doorway_param_locations):
+            if location < 0:
+                continue
+            if index < len(state.environment_doorway_params):
+                glUniform4f(location, *state.environment_doorway_params[index])
+            else:
+                glUniform4f(location, 1.0, 1.0, 1.0, 0.0)
+
     def apply_fog_state(self, state: "TextureFogState") -> None:
         if self.fog_enabled_location >= 0:
             glUniform1i(self.fog_enabled_location, 1 if state.enabled else 0)
@@ -296,6 +449,10 @@ class TextureLightingState:
     brightness_bounds: tuple[tuple[float, float, float, float], ...] = ()
     brightness_indoor_only: tuple[float, ...] = ()
     brightness_floor_scales: tuple[float, ...] = ()
+    environment_regions: tuple[tuple[float, float, float, float], ...] = ()
+    environment_region_factors: tuple[float, ...] = ()
+    environment_doorways: tuple[tuple[float, float, float, float], ...] = ()
+    environment_doorway_params: tuple[tuple[float, float, float, float], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -429,6 +586,38 @@ def get_texture_color_exposure_shader() -> TextureColorExposureShader | None:
                     )
                 )
                 for index in range(MAX_BRIGHTNESS_AREAS)
+            ),
+            environment_enabled_location=int(
+                glGetUniformLocation(program, "u_environment_enabled")
+            ),
+            environment_region_count_location=int(
+                glGetUniformLocation(program, "u_environment_region_count")
+            ),
+            environment_region_locations=tuple(
+                int(glGetUniformLocation(program, f"u_environment_regions[{index}]"))
+                for index in range(MAX_ENVIRONMENT_REGIONS)
+            ),
+            environment_region_factor_locations=tuple(
+                int(
+                    glGetUniformLocation(
+                        program,
+                        f"u_environment_region_factors[{index}]",
+                    )
+                )
+                for index in range(MAX_ENVIRONMENT_REGIONS)
+            ),
+            environment_doorway_locations=tuple(
+                int(glGetUniformLocation(program, f"u_environment_doorways[{index}]"))
+                for index in range(MAX_ENVIRONMENT_REGIONS)
+            ),
+            environment_doorway_param_locations=tuple(
+                int(
+                    glGetUniformLocation(
+                        program,
+                        f"u_environment_doorway_params[{index}]",
+                    )
+                )
+                for index in range(MAX_ENVIRONMENT_REGIONS)
             ),
             fog_enabled_location=int(glGetUniformLocation(program, "u_fog_enabled")),
             fog_density_location=int(glGetUniformLocation(program, "u_fog_density")),
@@ -594,12 +783,78 @@ def _brightness_area_uniforms(
     )
 
 
+def _environment_region_uniforms(
+    covered_regions,
+) -> tuple[
+    tuple[tuple[float, float, float, float], ...],
+    tuple[float, ...],
+    tuple[tuple[float, float, float, float], ...],
+    tuple[tuple[float, float, float, float], ...],
+]:
+    regions: list[tuple[float, float, float, float]] = []
+    factors: list[float] = []
+    doorways: list[tuple[float, float, float, float]] = []
+    doorway_params: list[tuple[float, float, float, float]] = []
+    side_codes = {"north": 0.0, "east": 1.0, "south": 2.0, "west": 3.0}
+
+    for region in covered_regions or ():
+        if len(regions) >= MAX_ENVIRONMENT_REGIONS:
+            break
+        try:
+            if isinstance(region, dict):
+                min_x = float(region["min_x"])
+                max_x = float(region["max_x"])
+                min_z = float(region["min_z"])
+                max_z = float(region["max_z"])
+                factor = float(region.get("factor", 1.0))
+                doorway = region.get("doorway")
+            else:
+                min_x = float(region[0])
+                max_x = float(region[1])
+                min_z = float(region[2])
+                max_z = float(region[3])
+                factor = float(region[4]) if len(region) > 4 else 1.0
+                doorway = None
+        except Exception:
+            continue
+
+        if max_x < min_x:
+            min_x, max_x = max_x, min_x
+        if max_z < min_z:
+            min_z, max_z = max_z, min_z
+        regions.append((min_x, max_x, min_z, max_z))
+        factors.append(max(0.0, min(1.0, factor)))
+        if isinstance(doorway, dict):
+            try:
+                side = str(doorway.get("side", "")).lower()
+                side_code = side_codes[side]
+                center_x = float(doorway.get("center_x", (min_x + max_x) * 0.5))
+                center_z = float(doorway.get("center_z", (min_z + max_z) * 0.5))
+                width = max(1.0, float(doorway.get("width", 48.0)))
+                depth = max(1.0, float(doorway.get("depth", 64.0)))
+                side_fade = max(1.0, float(doorway.get("side_fade", width * 0.25)))
+                edge_factor = max(
+                    0.0,
+                    min(1.0, float(doorway.get("edge_factor", 1.0))),
+                )
+                doorways.append((side_code, center_x, center_z, width))
+                doorway_params.append((depth, side_fade, edge_factor, 1.0))
+                continue
+            except Exception:
+                pass
+        doorways.append((-1.0, 0.0, 0.0, 1.0))
+        doorway_params.append((1.0, 1.0, 1.0, 0.0))
+
+    return tuple(regions), tuple(factors), tuple(doorways), tuple(doorway_params)
+
+
 def set_texture_lighting_state(
     *,
     base_brightness: float | None = None,
     lighting=None,
     sun_direction=None,
     brightness_areas=None,
+    covered_regions=None,
     ambient: float | None = None,
     diffuse: float | None = None,
     max_factor: float | None = None,
@@ -615,6 +870,8 @@ def set_texture_lighting_state(
             base_brightness = getattr(lighting, "base_brightness")
         if brightness_areas is None and hasattr(lighting, "brightness_modifiers"):
             brightness_areas = getattr(lighting, "brightness_modifiers")
+        if covered_regions is None and hasattr(lighting, "covered_regions"):
+            covered_regions = getattr(lighting, "covered_regions")
 
     current = _texture_lighting_state
     (
@@ -632,6 +889,21 @@ def set_texture_lighting_state(
             current.brightness_bounds,
             current.brightness_indoor_only,
             current.brightness_floor_scales,
+        )
+    )
+    (
+        environment_regions,
+        environment_region_factors,
+        environment_doorways,
+        environment_doorway_params,
+    ) = (
+        _environment_region_uniforms(covered_regions)
+        if covered_regions is not None
+        else (
+            current.environment_regions,
+            current.environment_region_factors,
+            current.environment_doorways,
+            current.environment_doorway_params,
         )
     )
 
@@ -662,6 +934,10 @@ def set_texture_lighting_state(
         brightness_bounds=area_bounds,
         brightness_indoor_only=area_indoor_only,
         brightness_floor_scales=area_floor_scales,
+        environment_regions=environment_regions,
+        environment_region_factors=environment_region_factors,
+        environment_doorways=environment_doorways,
+        environment_doorway_params=environment_doorway_params,
     )
 
     if exposure_scale is not None:
