@@ -18,6 +18,7 @@ from config import *
 from camera import Camera
 from core.compat_shader import set_texture_lighting_state
 from core.scene import Scene
+from engine.entity import Entity
 from engine.rendering.decal import Decal
 from engine.rendering.decal_batch import DecalBatch
 from engine.rendering.sprite import WorldSprite, draw_sprites_batched
@@ -44,9 +45,10 @@ class WorldScene(Scene):
     ) -> None:
         super().__init__()
         self.sprite_items: list[WorldSprite] = []
+        self.entities: list[Entity] = []
         self.decals: list[Decal] = []
         self.decal_batches: list[DecalBatch] = []
-        self.wall_tiles: list[WallTile] = []
+        self.wall_tiles: list[object] = []
         self.wall_tile_batches: list[object] = []
         self.polygons: list[Polygon] = []
         self.others: list[object] = []
@@ -226,6 +228,25 @@ class WorldScene(Scene):
         if log:
             print(f"{message} took {end_time - start_time:.6f} seconds")
 
+    def add_entity(self, entity: Entity) -> Entity:
+        """Register a runtime entity and its scene-facing resources."""
+        if entity not in self.entities:
+            self.entities.append(entity)
+
+        get_sprites = getattr(entity, "get_sprites", None)
+        if callable(get_sprites):
+            for sprite in get_sprites() or ():
+                if sprite not in self.sprite_items:
+                    self.sprite_items.append(sprite)
+
+        get_collision_meshes = getattr(entity, "get_collision_meshes", None)
+        if callable(get_collision_meshes):
+            for mesh in get_collision_meshes() or ():
+                if mesh not in self.wall_tiles:
+                    self.wall_tiles.append(mesh)
+
+        return entity
+
     def _sync_lighting_aliases(self):
         """Keep older scene attributes pointing at the shared lighting model."""
         lighting = getattr(self, "lighting", None)
@@ -259,7 +280,10 @@ class WorldScene(Scene):
             for batch in self.wall_tile_batches:
                 batch.draw()
         else:
+            entity_ids = {id(entity) for entity in self.entities}
             for wall in self.wall_tiles:
+                if id(wall) in entity_ids:
+                    continue
                 wall.draw(camera=self.camera)
         end_draw_wall_tiles_time = time.perf_counter()
         if enable_timing:
@@ -370,6 +394,41 @@ class WorldScene(Scene):
             print(
                 "Drawing other objects took "
                 f"{end_draw_other_time - starting_draw_other_time:.6f} seconds"
+            )
+
+        start_draw_entities_time = time.perf_counter()
+        cam_pos = self.camera.position if self.camera is not None else None
+        for entity in self.entities:
+            if not getattr(entity, "enabled", True) or not getattr(
+                entity,
+                "visible",
+                True,
+            ):
+                continue
+
+            if cam_pos is not None:
+                pos = _approx_pos(entity)
+                if pos is not None:
+                    try:
+                        dx = pos[0] - cam_pos.x
+                        dy = pos[1] - cam_pos.y
+                        dz = pos[2] - cam_pos.z
+                        if (dx * dx + dy * dy + dz * dz) > view_distance_sq:
+                            continue
+                    except Exception:
+                        pass
+
+            draw_entity = getattr(entity, "draw", None)
+            if callable(draw_entity):
+                try:
+                    draw_entity(camera=self.camera)
+                except TypeError:
+                    draw_entity()
+        end_draw_entities_time = time.perf_counter()
+        if enable_timing:
+            print(
+                "Drawing entities took "
+                f"{end_draw_entities_time - start_draw_entities_time:.6f} seconds"
             )
 
         start_draw_sprites_time = time.perf_counter()
@@ -722,6 +781,7 @@ class WorldScene(Scene):
             "roads",
             "building_roads",
             "others",
+            "entities",
         ):
             for obj in getattr(self, attr_name, ()) or ():
                 dispose_once(obj)
@@ -737,3 +797,4 @@ class WorldScene(Scene):
         self.roads = []
         self.building_roads = []
         self.others = []
+        self.entities = []

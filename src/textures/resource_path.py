@@ -59,6 +59,7 @@ FENCE6_TEXTURE_PATH: str = _asset("textures", "fences", "fence6.png")
 # Wall textures
 WALL1_TEXTURE_PATH: str = _asset("textures", "wall1.png")
 TORCH_TEXTURE_PATH: str = _asset("textures", "torch.png")
+DOOR_TEXTURE_PATH: str = _asset("textures", "door.png")
 
 # Sounds
 BIRDS_SOUND_PATH: str = _asset("sounds", "birds.ogg")

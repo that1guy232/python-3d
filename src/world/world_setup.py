@@ -162,6 +162,7 @@ def load_assets(scene) -> None:
     scene.fence_textures = tex.get("fence_textures", [])
     scene.wall_tex = tex.get("wall_tex")
     scene.torch_tex = tex.get("torch_tex")
+    scene.door_tex = tex.get("door_tex")
 
     Sounds.ensure_init()
     Sounds.load_optional("footstep", LEAVES02_SOUND_PATH)

@@ -63,6 +63,89 @@ def _wall_collision_meshes(scene):
     return getattr(scene, "wall_tiles", None) or []
 
 
+def _update_entities(scene, dt: float) -> None:
+    for entity in getattr(scene, "entities", ()) or ():
+        if not getattr(entity, "enabled", True):
+            continue
+        update_entity = getattr(entity, "update", None)
+        if callable(update_entity):
+            update_entity(dt)
+
+
+def _entity_interaction_position(entity):
+    get_position = getattr(entity, "get_interaction_position", None)
+    if callable(get_position):
+        try:
+            return get_position()
+        except Exception:
+            return None
+    return getattr(entity, "position", None)
+
+
+def _try_interact_with_focused_entity(scene) -> bool:
+    camera = getattr(scene, "camera", None)
+    if camera is None:
+        return False
+
+    forward = getattr(camera, "_forward", None)
+    camera_position = getattr(camera, "position", None)
+    if forward is None or camera_position is None:
+        return False
+
+    forward_xz = Vector3(float(forward.x), 0.0, float(forward.z))
+    if forward_xz.length_squared() <= 1e-8:
+        return False
+    forward_xz = forward_xz.normalize()
+
+    best_entity = None
+    best_score = float("inf")
+    for entity in getattr(scene, "entities", ()) or ():
+        if not getattr(entity, "enabled", True):
+            continue
+        interact = getattr(entity, "interact", None)
+        if not callable(interact):
+            continue
+
+        max_distance = float(getattr(entity, "interaction_distance", 0.0) or 0.0)
+        if max_distance <= 0.0:
+            continue
+
+        position = _entity_interaction_position(entity)
+        if position is None:
+            continue
+
+        delta = Vector3(
+            float(position.x) - float(camera_position.x),
+            0.0,
+            float(position.z) - float(camera_position.z),
+        )
+        distance_sq = delta.length_squared()
+        if distance_sq > max_distance * max_distance:
+            continue
+
+        distance = math.sqrt(distance_sq)
+        facing = 1.0 if distance <= 1e-6 else forward_xz.dot(delta / distance)
+        if facing < -0.15:
+            continue
+
+        score = distance - facing * 20.0
+        if score < best_score:
+            best_score = score
+            best_entity = entity
+
+    if best_entity is None:
+        return False
+
+    interact = getattr(best_entity, "interact")
+    try:
+        return bool(interact(actor=camera, scene=scene))
+    except TypeError:
+        try:
+            return bool(interact(camera))
+        except TypeError:
+            return bool(interact())
+
+
 def _support_height_at(scene, x: float, z: float, foot_y: float | None = None) -> float:
     ground_y = scene.ground_height_at(x, z)
     if foot_y is None:
@@ -112,6 +195,7 @@ def update(scene, dt: float) -> None:
 
     moving, sprinting = scene._camera_controller.update(dt)
     scene._sway_controller.update(dt)
+    _update_entities(scene, dt)
 
     foot_offset = _player_foot_offset(scene)
     head_offset = _player_head_offset(scene)
@@ -215,6 +299,10 @@ def handle_event(scene, event) -> None:
 
     if getattr(scene, "inventory_open", False):
         return
+
+    if event.type == pygame.KEYDOWN and event.key == pygame.K_e:
+        if _try_interact_with_focused_entity(scene):
+            return
 
     try:
         if hasattr(scene, "_camera_controller") and hasattr(

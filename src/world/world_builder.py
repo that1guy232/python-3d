@@ -19,7 +19,7 @@ from textures.texture_utils import (
     create_tree_shadow_texture,
     load_texture,
 )
-from world.objects import Road, Torch
+from world.objects import Door, Road, Torch
 from world.objects.building import Building
 from world.objects.fence import build_textured_fence_ring
 from world.objects.ground import TexturedGroundGridBuilder
@@ -172,6 +172,43 @@ def _build_building_torches(scene) -> None:
         ground_height_at=scene.ground_height_at,
     )
     scene.sprite_items.extend(scene.torches)
+
+
+def _build_building_doors(scene) -> None:
+    for door in getattr(scene, "doors", ()) or ():
+        try:
+            if door in scene.entities:
+                scene.entities.remove(door)
+            for sprite in door.get_sprites() or ():
+                if sprite in scene.sprite_items:
+                    scene.sprite_items.remove(sprite)
+            for mesh in door.get_collision_meshes() or ():
+                if mesh in scene.wall_tiles:
+                    scene.wall_tiles.remove(mesh)
+        except Exception:
+            continue
+
+    door_tex = Door.texture_or_load(getattr(scene, "door_tex", None))
+    scene.door_tex = door_tex
+    scene.doors = []
+    add_entity = getattr(scene, "add_entity", None)
+    for spec in getattr(scene, "building_specs", ()) or ():
+        try:
+            door = Door.from_building_spec(
+                spec,
+                texture=door_tex,
+                camera=scene.camera,
+                ground_height_at=scene.ground_height_at,
+            )
+        except (KeyError, TypeError, ValueError, AttributeError):
+            continue
+        scene.doors.append(door)
+        if callable(add_entity):
+            add_entity(door)
+        else:
+            scene.entities.append(door)
+            scene.sprite_items.extend(door.get_sprites())
+            scene.wall_tiles.extend(door.get_collision_meshes())
 
 
 def create_building_specs(scene, count: int = 10) -> list[dict]:
@@ -389,6 +426,7 @@ def _build_buildings(scene) -> None:
     scene.log_timing("Building pieces", start_time, time.perf_counter())
     scene.wall_tiles.extend(scene.walls)
     _build_building_torches(scene)
+    _build_building_doors(scene)
 
 
 def _build_showcase_polygons(scene) -> None:

@@ -24,6 +24,7 @@ def load_world_textures() -> Dict[str, object]:
       - item_textures (dict)
       - wall_tex
       - torch_tex
+      - door_tex
     """
     # Core textures
     ground_tex = load_texture(GRASS_TEXTURE_PATH)
@@ -80,6 +81,7 @@ def load_world_textures() -> Dict[str, object]:
     # Wall texture
     wall_tex = load_texture(WALL1_TEXTURE_PATH)
     torch_tex = load_texture(TORCH_TEXTURE_PATH)
+    door_tex = load_texture(DOOR_TEXTURE_PATH)
 
     return {
         "ground_tex": ground_tex,
@@ -91,5 +93,6 @@ def load_world_textures() -> Dict[str, object]:
         "item_textures": item_textures,
         "wall_tex": wall_tex,
         "torch_tex": torch_tex,
+        "door_tex": door_tex,
     }
 
