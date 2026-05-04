@@ -19,7 +19,7 @@ from textures.texture_utils import (
     create_tree_shadow_texture,
     load_texture,
 )
-from world.objects import Door, Road, Torch
+from world.objects import Door, Road, Torch, Window
 from world.objects.building import Building
 from world.objects.fence import build_textured_fence_ring
 from world.objects.ground import TexturedGroundGridBuilder
@@ -35,12 +35,25 @@ BUILDING_ROOF_OVERHANG = 6.0
 BUILDING_WALL_TERRAIN_EMBED_DEPTH = 8.0
 BUILDING_WALL_TERRAIN_SAMPLE_SPACING = 18.0
 SHADOW_BUILDING_CLIP_MARGIN = 2.0
+WINDOW_LIGHT_EDGE_FACTOR = 0.86
 
 _SIDE_NORMALS = {
     "north": (0.0, 1.0),
     "east": (1.0, 0.0),
     "south": (0.0, -1.0),
     "west": (-1.0, 0.0),
+}
+_OPPOSITE_SIDES = {
+    "north": "south",
+    "east": "west",
+    "south": "north",
+    "west": "east",
+}
+_WINDOW_SIDE_BY_DOORWAY = {
+    "north": "east",
+    "east": "south",
+    "south": "west",
+    "west": "north",
 }
 
 
@@ -56,6 +69,42 @@ def _dispose_value(obj) -> None:
 def _dispose_values(values) -> None:
     for value in values or ():
         _dispose_value(value)
+
+
+def _opening_light_center(spec: dict, side: str, offset: float) -> tuple[float, float]:
+    position = spec["position"]
+    x = float(position.x)
+    z = float(position.z)
+    side_key = str(side).lower()
+    if side_key in {"north", "south"}:
+        return x + float(offset), z
+    if side_key in {"east", "west"}:
+        return x, z + float(offset)
+    return x, z
+
+
+def _window_light_opening(spec: dict, window: dict) -> dict | None:
+    try:
+        side = str(window.get("side", "north")).lower()
+        width = max(1.0, float(window.get("width", Window.DEFAULT_WIDTH)))
+        offset = float(window.get("offset", 0.0))
+        half_x = float(spec["width"]) * 0.5
+        half_z = float(spec["depth"]) * 0.5
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None
+
+    center_x, center_z = _opening_light_center(spec, side, offset)
+    depth = max(36.0, min(86.0, min(half_x, half_z) * 0.58))
+    return {
+        "type": "window",
+        "side": side,
+        "center_x": center_x,
+        "center_z": center_z,
+        "width": max(width * 1.4, width + 10.0),
+        "depth": depth,
+        "side_fade": max(8.0, width * 0.42),
+        "edge_factor": WINDOW_LIGHT_EDGE_FACTOR,
+    }
 
 
 def _building_covered_regions(scene) -> list[object]:
@@ -77,6 +126,26 @@ def _building_covered_regions(scene) -> list[object]:
         max_z = z + half_z
         doorway_depth = max(42.0, min(78.0, min(half_x, half_z) * 0.78))
         indoor_factor = INDOOR_LIGHT_FACTOR
+        doorway = {
+            "type": "doorway",
+            "side": side,
+            "center_x": x,
+            "center_z": z,
+            "width": max(doorway_width * 1.16, doorway_width + 8.0),
+            "depth": doorway_depth,
+            "side_fade": max(10.0, doorway_width * 0.26),
+            "edge_factor": indoor_factor,
+            "closed_edge_factor": indoor_factor,
+            "open_edge_factor": 1.0,
+        }
+        windows = [
+            opening
+            for opening in (
+                _window_light_opening(spec, window)
+                for window in (spec.get("windows", ()) or ())
+            )
+            if opening is not None
+        ]
         regions.append(
             {
                 "min_x": min_x,
@@ -84,17 +153,9 @@ def _building_covered_regions(scene) -> list[object]:
                 "min_z": min_z,
                 "max_z": max_z,
                 "factor": indoor_factor,
-                "doorway": {
-                    "side": side,
-                    "center_x": x,
-                    "center_z": z,
-                    "width": max(doorway_width * 1.16, doorway_width + 8.0),
-                    "depth": doorway_depth,
-                    "side_fade": max(10.0, doorway_width * 0.26),
-                    "edge_factor": indoor_factor,
-                    "closed_edge_factor": indoor_factor,
-                    "open_edge_factor": 1.0,
-                },
+                "doorway": doorway,
+                "windows": windows,
+                "openings": [doorway, *windows],
             }
         )
     return regions
@@ -226,6 +287,118 @@ def _build_building_doors(scene) -> None:
             scene.wall_tiles.extend(door.get_collision_meshes())
 
 
+def _normalize_window_specs_for_building(spec: dict) -> list[dict]:
+    normalized: list[dict] = []
+    try:
+        wall_height = float(spec["height"])
+    except (KeyError, TypeError, ValueError):
+        return normalized
+
+    default_side = _WINDOW_SIDE_BY_DOORWAY.get(
+        str(spec.get("doorway_side", "south")).lower(),
+        "north",
+    )
+    max_top = max(4.0, wall_height - 4.0)
+    for raw_window in spec.get("windows", ()) or ():
+        if not isinstance(raw_window, dict):
+            continue
+
+        side = str(raw_window.get("side", default_side)).lower()
+        if side not in _SIDE_NORMALS:
+            side = default_side
+
+        try:
+            sill_height = max(
+                0.0,
+                float(raw_window.get("sill_height", Window.DEFAULT_SILL_HEIGHT)),
+            )
+            height_value = raw_window.get("height", None)
+            width_value = raw_window.get("width", None)
+            if height_value is not None:
+                height = max(4.0, float(height_value))
+            elif width_value is not None:
+                height = max(4.0, float(width_value) / Window.TEXTURE_ASPECT)
+            else:
+                height = Window.DEFAULT_HEIGHT
+            offset = float(raw_window.get("offset", 0.0))
+        except (TypeError, ValueError):
+            continue
+
+        if sill_height + height > max_top:
+            height = max(4.0, max_top - sill_height)
+        if sill_height + height > max_top:
+            sill_height = max(0.0, max_top - height)
+        width = max(4.0, height * Window.TEXTURE_ASPECT)
+
+        try:
+            span = float(spec["width"] if side in {"north", "south"} else spec["depth"])
+        except (KeyError, TypeError, ValueError):
+            span = width
+        max_offset = max(0.0, (span - width) * 0.5 - 8.0)
+        offset = max(-max_offset, min(max_offset, offset))
+
+        normalized.append(
+            {
+                "side": side,
+                "offset": offset,
+                "width": width,
+                "height": height,
+                "sill_height": sill_height,
+            }
+        )
+
+    spec["windows"] = normalized
+    return normalized
+
+
+def _build_building_windows(scene) -> None:
+    for window in getattr(scene, "windows", ()) or ():
+        try:
+            if window in scene.entities:
+                scene.entities.remove(window)
+            for sprite in window.get_sprites() or ():
+                if sprite in scene.sprite_items:
+                    scene.sprite_items.remove(sprite)
+            for mesh in window.get_collision_meshes() or ():
+                if mesh in scene.wall_tiles:
+                    scene.wall_tiles.remove(mesh)
+        except Exception:
+            continue
+
+    window_tex = Window.texture_or_load(getattr(scene, "window_tex", None))
+    scene.window_tex = window_tex
+    scene.windows = []
+    add_entity = getattr(scene, "add_entity", None)
+    lighting = getattr(scene, "lighting", None)
+    sun_direction = getattr(
+        lighting,
+        "sun_direction",
+        getattr(scene, "sun_direction", None),
+    )
+    for spec in getattr(scene, "building_specs", ()) or ():
+        for window_spec in spec.get("windows", ()) or ():
+            try:
+                window = Window.from_building_spec(
+                    spec,
+                    window_spec=window_spec,
+                    texture=window_tex,
+                    backing_texture=getattr(scene, "wall_tex", None),
+                    camera=scene.camera,
+                    ground_height_at=scene.ground_height_at,
+                    lighting=lighting,
+                    sun_direction=sun_direction,
+                )
+            except (KeyError, TypeError, ValueError, AttributeError):
+                continue
+            scene.windows.append(window)
+            if callable(add_entity):
+                add_entity(window)
+            else:
+                scene.entities.append(window)
+                scene.sprite_items.extend(window.get_sprites())
+                scene.wall_tiles.extend(window.get_collision_meshes())
+
+
 def create_building_specs(scene, count: int = 10) -> list[dict]:
     rng = random.Random()
     min_x, max_x, min_z, max_z = scene.ground_bounds
@@ -246,6 +419,7 @@ def create_building_specs(scene, count: int = 10) -> list[dict]:
         width = rng.uniform(140.0, 420.0)
         depth = rng.uniform(100.0, 260.0)
         doorway_side = rng.choice(doorway_sides)
+        window_side = _WINDOW_SIDE_BY_DOORWAY.get(doorway_side, "north")
 
         cell_min_x = min_x + col * cell_width
         cell_max_x = min_x + (col + 1) * cell_width
@@ -280,6 +454,15 @@ def create_building_specs(scene, count: int = 10) -> list[dict]:
                 "doorway_side": doorway_side,
                 "doorway_width": Door.DEFAULT_WIDTH,
                 "doorway_height": Door.DEFAULT_HEIGHT,
+                "windows": [
+                    {
+                        "side": window_side,
+                        "offset": 0.0,
+                        "width": Window.DEFAULT_WIDTH,
+                        "height": Window.DEFAULT_HEIGHT,
+                        "sill_height": Window.DEFAULT_SILL_HEIGHT,
+                    }
+                ],
             }
         )
 
@@ -328,6 +511,8 @@ def create_world_objects_steps(
     start_time = time.perf_counter()
     scene.buildings: list[Building] = []
     scene.building_specs = create_building_specs(scene, count=10)
+    for spec in scene.building_specs:
+        _normalize_window_specs_for_building(spec)
     for spec in scene.building_specs:
         scene.buildings.append(Building(position=spec["position"]))
     scene.covered_regions = _building_covered_regions(scene)
@@ -423,6 +608,7 @@ def _build_buildings(scene) -> None:
         spec["doorway_height"] = doorway_height
         spec["doorway_width"] = doorway_width
         spec["wall_thickness"] = wall_thickness
+        windows = _normalize_window_specs_for_building(spec)
 
         pieces = building.create_perimeter_walls(
             wall_height=spec["height"],
@@ -436,6 +622,7 @@ def _build_buildings(scene) -> None:
             doorway_side=spec["doorway_side"],
             doorway_width=spec["doorway_width"],
             doorway_height=doorway_height,
+            windows=windows,
             roof=True,
             roof_thickness=4.0,
             roof_overhang=BUILDING_ROOF_OVERHANG,
@@ -461,6 +648,7 @@ def _build_buildings(scene) -> None:
     scene.wall_tiles.extend(scene.walls)
     _build_building_torches(scene)
     _build_building_doors(scene)
+    _build_building_windows(scene)
 
 
 def _build_showcase_polygons(scene) -> None:

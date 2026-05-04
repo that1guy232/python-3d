@@ -15,6 +15,7 @@ from engine.rendering.lighting import (
     apply_directional_sunlight,
     covered_region_factor_at,
     covered_region_mask,
+    region_light_openings,
     with_textured_normals,
 )
 
@@ -301,56 +302,60 @@ class TexturedGroundGridBuilder:
                         or region_min_z >= max_z
                     ):
                         continue
-                    doorway = region.get("doorway") if isinstance(region, dict) else None
-                    if not isinstance(doorway, dict):
-                        continue
-                    try:
-                        side = str(doorway.get("side", "")).lower()
-                        width = float(doorway.get("width", 48.0))
-                        depth = float(doorway.get("depth", 64.0))
-                        side_fade = float(doorway.get("side_fade", width * 0.25))
-                        center_x = float(doorway.get("center_x", (region_min_x + region_max_x) * 0.5))
-                        center_z = float(doorway.get("center_z", (region_min_z + region_max_z) * 0.5))
-                    except (TypeError, ValueError):
-                        continue
+                    for opening in region_light_openings(region):
+                        try:
+                            side = str(opening.get("side", "")).lower()
+                            width = float(opening.get("width", 48.0))
+                            depth = float(opening.get("depth", 64.0))
+                            side_fade = float(opening.get("side_fade", width * 0.25))
+                            center_x = float(opening.get(
+                                "center_x",
+                                (region_min_x + region_max_x) * 0.5,
+                            ))
+                            center_z = float(opening.get(
+                                "center_z",
+                                (region_min_z + region_max_z) * 0.5,
+                            ))
+                        except (TypeError, ValueError):
+                            continue
 
-                    half = width * 0.5
-                    if side in {"north", "south"}:
-                        doorway_breaks_x.extend(
-                            (
-                                center_x - half - side_fade,
-                                center_x - half,
-                                center_x + half,
-                                center_x + half + side_fade,
+                        half = width * 0.5
+                        if side in {"north", "south"}:
+                            doorway_breaks_x.extend(
+                                (
+                                    center_x - half - side_fade,
+                                    center_x - half,
+                                    center_x + half,
+                                    center_x + half + side_fade,
+                                )
                             )
-                        )
-                        edge_z = region_max_z if side == "north" else region_min_z
-                        step = -depth if side == "north" else depth
-                        doorway_breaks_z.extend(
-                            (
-                                edge_z + step * 0.35,
-                                edge_z + step * 0.7,
-                                edge_z + step,
+                            edge_z = region_max_z if side == "north" else region_min_z
+                            step = -depth if side == "north" else depth
+                            doorway_breaks_z.extend(
+                                (
+                                    edge_z + step * 0.35,
+                                    edge_z + step * 0.7,
+                                    edge_z + step,
+                                )
                             )
-                        )
-                    elif side in {"east", "west"}:
-                        doorway_breaks_z.extend(
-                            (
-                                center_z - half - side_fade,
-                                center_z - half,
-                                center_z + half,
-                                center_z + half + side_fade,
+                        elif side in {"east", "west"}:
+                            doorway_breaks_z.extend(
+                                (
+                                    center_z - half - side_fade,
+                                    center_z - half,
+                                    center_z + half,
+                                    center_z + half + side_fade,
+                                )
                             )
-                        )
-                        edge_x = region_max_x if side == "east" else region_min_x
-                        step = -depth if side == "east" else depth
-                        doorway_breaks_x.extend(
-                            (
-                                edge_x + step * 0.35,
-                                edge_x + step * 0.7,
-                                edge_x + step,
+                            edge_x = region_max_x if side == "east" else region_min_x
+                            step = -depth if side == "east" else depth
+                            doorway_breaks_x.extend(
+                                (
+                                    edge_x + step * 0.35,
+                                    edge_x + step * 0.7,
+                                    edge_x + step,
+                                )
                             )
-                        )
 
                 for value in doorway_breaks_x:
                     self._append_breakpoint(x_breaks, value, min_x, max_x)

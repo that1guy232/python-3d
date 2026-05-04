@@ -530,28 +530,43 @@ def _smooth01(value: float) -> float:
     return value * value * (3.0 - 2.0 * value)
 
 
-def _doorway_region_factor(
-    region,
+def region_light_openings(region) -> list[dict[str, Any]]:
+    """Return light openings on a covered region, preserving legacy doorway data."""
+
+    if not isinstance(region, dict):
+        return []
+
+    openings = region.get("openings")
+    if isinstance(openings, Sequence) and not isinstance(openings, (str, bytes)):
+        return [opening for opening in openings if isinstance(opening, dict)]
+
+    results: list[dict[str, Any]] = []
+    doorway = region.get("doorway")
+    if isinstance(doorway, dict):
+        results.append(doorway)
+
+    windows = region.get("windows")
+    if isinstance(windows, Sequence) and not isinstance(windows, (str, bytes)):
+        results.extend(window for window in windows if isinstance(window, dict))
+
+    return results
+
+
+def _opening_region_factor(
+    opening: dict,
     values: tuple[float, float, float, float, float],
     x: float,
     z: float,
 ) -> float:
     min_x, max_x, min_z, max_z, factor = values
-    if not isinstance(region, dict):
-        return factor
-
-    doorway = region.get("doorway")
-    if not isinstance(doorway, dict):
-        return factor
-
-    side = str(doorway.get("side", "")).lower()
+    side = str(opening.get("side", "")).lower()
     try:
-        width = max(1.0, float(doorway.get("width", 48.0)))
-        depth = max(1.0, float(doorway.get("depth", 64.0)))
-        side_fade = max(1.0, float(doorway.get("side_fade", width * 0.25)))
-        edge_factor = max(0.0, min(1.0, float(doorway.get("edge_factor", 1.0))))
-        center_x = float(doorway.get("center_x", (min_x + max_x) * 0.5))
-        center_z = float(doorway.get("center_z", (min_z + max_z) * 0.5))
+        width = max(1.0, float(opening.get("width", 48.0)))
+        depth = max(1.0, float(opening.get("depth", 64.0)))
+        side_fade = max(1.0, float(opening.get("side_fade", width * 0.25)))
+        edge_factor = max(0.0, min(1.0, float(opening.get("edge_factor", 1.0))))
+        center_x = float(opening.get("center_x", (min_x + max_x) * 0.5))
+        center_z = float(opening.get("center_z", (min_z + max_z) * 0.5))
     except (TypeError, ValueError):
         return factor
 
@@ -585,6 +600,21 @@ def _doorway_region_factor(
     depth_influence = 1.0 - _smooth01(inward_depth / depth)
     influence = max(0.0, min(1.0, width_influence * depth_influence))
     return factor + (edge_factor - factor) * influence
+
+
+def _doorway_region_factor(
+    region,
+    values: tuple[float, float, float, float, float],
+    x: float,
+    z: float,
+) -> float:
+    if not isinstance(region, dict):
+        return values[4]
+
+    best = values[4]
+    for opening in region_light_openings(region):
+        best = max(best, _opening_region_factor(opening, values, x, z))
+    return best
 
 
 def covered_region_factor_at(

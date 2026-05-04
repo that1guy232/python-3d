@@ -54,6 +54,7 @@ class Building:
         doorway_side: str = "south",
         doorway_width: Optional[float] = None,
         doorway_height: Optional[float] = None,
+        windows: Optional[list[dict]] = None,
         roof: bool = True,
         roof_thickness: float = 3.0,
         roof_overhang: float = 5.0,
@@ -77,6 +78,7 @@ class Building:
             doorway_side=doorway_side,
             doorway_width=doorway_width,
             doorway_height=doorway_height,
+            windows=windows,
             terrain_height_at=terrain_height_at,
             terrain_embed_depth=terrain_embed_depth,
             terrain_sample_spacing=terrain_sample_spacing,
@@ -109,6 +111,7 @@ class Building:
         texture: Optional[int], uv_repeat: tuple[float, float], base_y: float,
         max_tile_width: float, doorway: bool, doorway_side: str,
         doorway_width: Optional[float], doorway_height: Optional[float],
+        windows: Optional[list[dict]],
         terrain_height_at: Optional[Callable[[float, float], float]],
         terrain_embed_depth: float,
         terrain_sample_spacing: float,
@@ -119,25 +122,52 @@ class Building:
         walls: list[WallTile] = []
         
         for nx, nz in self.WALL_NORMALS:
+            openings: list[dict[str, float]] = []
             if doorway and self._normals_match((nx, nz), door_normal):
+                _, _, span_half, _ = self._get_side_geometry(
+                    nx, nz, outer_x, outer_z, wall_thickness
+                )
+                full_span = span_half * 2.0
+                door_width = self._resolve_doorway_width(full_span, doorway_width)
+                door_height = self._resolve_doorway_height(wall_height, doorway_height)
+                openings.append(
+                    {
+                        "offset": 0.0,
+                        "width": door_width,
+                        "y_min": 0.0,
+                        "y_max": door_height,
+                    }
+                )
+
+            openings.extend(
+                self._window_openings_for_side(
+                    nx,
+                    nz,
+                    windows=windows,
+                    wall_height=wall_height,
+                )
+            )
+
+            if openings:
                 walls.extend(
-                    self._create_doorway_wall_side(
+                    self._create_wall_side_with_openings(
                         nx, nz, outer_x, outer_z, wall_height, wall_thickness,
                         texture, uv_repeat, base_y, max_tile_width,
-                        doorway_width, doorway_height,
+                        openings,
                         terrain_height_at, terrain_embed_depth,
                         terrain_sample_spacing,
                     )
                 )
-            else:
-                walls.extend(
-                    self._create_wall_side(
-                        nx, nz, outer_x, outer_z, wall_height, wall_thickness,
-                        texture, uv_repeat, base_y, max_tile_width,
-                        terrain_height_at, terrain_embed_depth,
-                        terrain_sample_spacing,
-                    )
+                continue
+
+            walls.extend(
+                self._create_wall_side(
+                    nx, nz, outer_x, outer_z, wall_height, wall_thickness,
+                    texture, uv_repeat, base_y, max_tile_width,
+                    terrain_height_at, terrain_embed_depth,
+                    terrain_sample_spacing,
                 )
+            )
             
         return walls
 
@@ -168,6 +198,139 @@ class Building:
             terrain_embed_depth=terrain_embed_depth,
             terrain_sample_spacing=terrain_sample_spacing,
         )
+
+    def _window_openings_for_side(
+        self,
+        nx: float,
+        nz: float,
+        *,
+        windows: Optional[list[dict]],
+        wall_height: float,
+    ) -> list[dict[str, float]]:
+        openings: list[dict[str, float]] = []
+        for window in windows or ():
+            if not isinstance(window, dict):
+                continue
+            side = str(window.get("side", "")).lower()
+            if not side:
+                continue
+            if not self._normals_match((nx, nz), self._normal_from_side(side)):
+                continue
+
+            try:
+                width = max(1.0, float(window.get("width", 0.0)))
+                height = max(1.0, float(window.get("height", 0.0)))
+                sill_height = max(0.0, float(window.get("sill_height", 0.0)))
+                offset = float(window.get("offset", 0.0))
+            except (TypeError, ValueError):
+                continue
+
+            y_min = max(0.0, min(float(wall_height), sill_height))
+            y_max = max(0.0, min(float(wall_height), sill_height + height))
+            if y_max <= y_min + 1e-6:
+                continue
+
+            openings.append(
+                {
+                    "offset": offset,
+                    "width": width,
+                    "y_min": y_min,
+                    "y_max": y_max,
+                }
+            )
+        return openings
+
+    def _create_wall_side_with_openings(
+        self, nx: float, nz: float, outer_x: float, outer_z: float,
+        wall_height: float, wall_thickness: float, texture: Optional[int],
+        uv_repeat: tuple[float, float], base_y: float, max_tile_width: float,
+        openings: list[dict[str, float]],
+        terrain_height_at: Optional[Callable[[float, float], float]],
+        terrain_embed_depth: float, terrain_sample_spacing: float,
+    ) -> List[WallTile]:
+        """Create one wall side with rectangular openings cut out."""
+        _, _, span_half, _ = self._get_side_geometry(
+            nx, nz, outer_x, outer_z, wall_thickness
+        )
+        clipped_openings = self._clip_wall_openings(
+            openings,
+            span_half=span_half,
+            wall_height=wall_height,
+        )
+        if not clipped_openings:
+            return self._create_wall_side(
+                nx, nz, outer_x, outer_z, wall_height, wall_thickness,
+                texture, uv_repeat, base_y, max_tile_width,
+                terrain_height_at, terrain_embed_depth,
+                terrain_sample_spacing,
+            )
+
+        span_breaks = [-span_half, span_half]
+        y_breaks = [0.0, float(wall_height)]
+        for left, right, y_min, y_max in clipped_openings:
+            span_breaks.extend((left, right))
+            y_breaks.extend((y_min, y_max))
+
+        span_breaks = sorted(set(round(value, 6) for value in span_breaks))
+        y_breaks = sorted(set(round(value, 6) for value in y_breaks))
+        walls: list[WallTile] = []
+        for span_idx in range(len(span_breaks) - 1):
+            span_min = span_breaks[span_idx]
+            span_max = span_breaks[span_idx + 1]
+            if span_max <= span_min:
+                continue
+            span_mid = (span_min + span_max) * 0.5
+            for y_idx in range(len(y_breaks) - 1):
+                y_min = y_breaks[y_idx]
+                y_max = y_breaks[y_idx + 1]
+                if y_max <= y_min:
+                    continue
+                y_mid = (y_min + y_max) * 0.5
+                if any(
+                    left <= span_mid <= right and bottom <= y_mid <= top
+                    for left, right, bottom, top in clipped_openings
+                ):
+                    continue
+
+                walls.extend(
+                    self._create_wall_segment(
+                        nx, nz, outer_x, outer_z, wall_thickness,
+                        texture, uv_repeat, base_y, max_tile_width,
+                        span_min, span_max, y_min, y_max,
+                        terrain_height_at=terrain_height_at,
+                        terrain_embed_depth=terrain_embed_depth,
+                        terrain_sample_spacing=terrain_sample_spacing,
+                    )
+                )
+
+        return walls
+
+    def _clip_wall_openings(
+        self,
+        openings: list[dict[str, float]],
+        *,
+        span_half: float,
+        wall_height: float,
+    ) -> list[tuple[float, float, float, float]]:
+        clipped: list[tuple[float, float, float, float]] = []
+        min_span = -float(span_half)
+        max_span = float(span_half)
+        max_y = float(wall_height)
+        for opening in openings:
+            try:
+                half_width = max(0.5, float(opening["width"]) * 0.5)
+                offset = float(opening.get("offset", 0.0))
+                left = max(min_span, offset - half_width)
+                right = min(max_span, offset + half_width)
+                y_min = max(0.0, min(max_y, float(opening["y_min"])))
+                y_max = max(0.0, min(max_y, float(opening["y_max"])))
+            except (KeyError, TypeError, ValueError):
+                continue
+
+            if right <= left + 1e-6 or y_max <= y_min + 1e-6:
+                continue
+            clipped.append((left, right, y_min, y_max))
+        return clipped
 
     def _create_doorway_wall_side(
         self, nx: float, nz: float, outer_x: float, outer_z: float,
