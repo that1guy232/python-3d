@@ -1,4 +1,3 @@
-import math
 import numpy as np
 from pygame.math import Vector3
 from core.object3d import Object3D
@@ -11,7 +10,6 @@ from OpenGL.GL import (
     glEnd,
     glTexCoord2f,
     glVertex3f,
-    glColor3f,
     glColor4f,
     glBlendFunc,
     glAlphaFunc,
@@ -218,7 +216,6 @@ class WallTile(Object3D):
             getattr(camera, "brightness_default", 0.0) if camera else 0.0
         )
 
-        u_repeat, v_repeat = self.uv_repeat
         tex_size = get_texture_size(self.texture)
 
         if self.texture:
@@ -242,83 +239,13 @@ class WallTile(Object3D):
                 indoor_factor = _indoor_light_factor(self, face_idx)
                 surface_indoor = indoor_factor < 1.0
                 a, b, c, d = face
-                va = world_verts[a]
-                vb = world_verts[b]
-                vc = world_verts[c]
-
-                e1 = vb - va
-                e2 = vc - vb
-                span_u = e1.length()
-                span_v = e2.length()
-
-                u_r, v_r = u_repeat, v_repeat
-                if tex_size and (u_repeat == 1.0 and v_repeat == 1.0):
-                    tex_w, tex_h = tex_size
-                    u_r = span_u / max(1e-6, float(tex_w))
-                    v_r = span_v / max(1e-6, float(tex_h))
-
-                # Default base uv mapping for a quad (bottom-left -> top-right)
-                face_uvs = [
-                    (0.0, 0.0),
-                    (u_r, 0.0),
-                    (u_r, v_r),
-                    (0.0, v_r),
-                ]
-
-
-                if self.thickness > 0.0 and tex_size:
-                    tex_w, tex_h = tex_size
-                    strip_u = max(
-                        1.0 / max(1.0, float(tex_w)) * u_repeat, 0.001 * u_repeat
-                    )
-                    strip_v = max(
-                        1.0 / max(1.0, float(tex_h)) * v_repeat, 0.001 * v_repeat
-                    )
-
-
-                    if face_idx in (0, 1):
-                        face_uvs = [
-                            (0.0, 0.0),
-                            (u_r, 0.0),
-                            (u_r, v_r),
-                            (0.0, v_r),
-                        ]
-                    elif face_idx == 2:
-                        u_min = max(0.0, u_repeat - strip_u)
-                        u_max = u_repeat
-                        face_uvs = [
-                            (u_min, 0.0),
-                            (u_max, 0.0),
-                            (u_max, v_r),
-                            (u_min, v_r),
-                        ]
-                    elif face_idx == 3:
-                        u_min = 0.0
-                        u_max = min(strip_u, u_repeat)
-                        face_uvs = [
-                            (u_min, 0.0),
-                            (u_max, 0.0),
-                            (u_max, v_r),
-                            (u_min, v_r),
-                        ]
-                    elif face_idx == 4:
-                        v_min = max(0.0, v_r - strip_v)
-                        v_max = v_r
-                        face_uvs = [
-                            (0.0, v_min),
-                            (u_r, v_min),
-                            (u_r, v_max),
-                            (0.0, v_max),
-                        ]
-                    elif face_idx == 5:
-                        v_min = 0.0
-                        v_max = min(strip_v, v_r)
-                        face_uvs = [
-                            (0.0, v_min),
-                            (u_r, v_min),
-                            (u_r, v_max),
-                            (0.0, v_max),
-                        ]
+                face_uvs = _textured_face_uvs(
+                    self,
+                    face_idx,
+                    face,
+                    world_verts,
+                    tex_size,
+                )
 
                 glBegin(GL_QUADS)
                 for vi, idx in enumerate((a, b, c, d)):

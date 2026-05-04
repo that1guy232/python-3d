@@ -8,18 +8,13 @@ from pygame.math import Vector3
 from OpenGL.GL import (
     GL_ALPHA_TEST,
     GL_BLEND,
-    GL_GREATER,
-    GL_ONE_MINUS_SRC_ALPHA,
     GL_QUADS,
-    GL_SRC_ALPHA,
     GL_TEXTURE_2D,
     GL_TEXTURE_WRAP_S,
     GL_TEXTURE_WRAP_T,
     GL_REPEAT,
-    glAlphaFunc,
     glBegin,
     glBindTexture,
-    glBlendFunc,
     glColor4f,
     glDisable,
     glEnable,
@@ -30,9 +25,13 @@ from OpenGL.GL import (
 )
 
 from engine.entity import Entity
-from engine.rendering.lighting import (
-    INDOOR_NORMAL,
-    sunlight_factor_for_normal,
+from engine.rendering.lighting import INDOOR_NORMAL
+from .slab import (
+    TexturedSlabMixin,
+    axis_wall_tangent_for_normal,
+    normal_for_side,
+    texture_id,
+    texture_uv_rect,
 )
 from textures.resource_path import WINDOW_TEXTURE_PATH
 from textures.texture_utils import get_texture_size, load_texture
@@ -62,40 +61,14 @@ WINDOW_CORNER_BACKING_BANDS = (
     (0.98, 1.0, 0.24),
 )
 
-_SIDE_NORMALS = {
-    "north": Vector3(0.0, 0.0, 1.0),
-    "east": Vector3(1.0, 0.0, 0.0),
-    "south": Vector3(0.0, 0.0, -1.0),
-    "west": Vector3(-1.0, 0.0, 0.0),
-}
 
-
-def _normal_for_side(side: str) -> Vector3:
-    return _SIDE_NORMALS.get(str(side).lower(), _SIDE_NORMALS["south"]).copy()
-
-
-def _window_tangent(normal: Vector3) -> Vector3:
-    if abs(float(normal.z)) > 0.0:
-        return Vector3(1.0, 0.0, 0.0)
-    return Vector3(0.0, 0.0, 1.0)
-
-
-class Window(Entity):
+class Window(TexturedSlabMixin, Entity):
     """A fixed window that blocks movement but always lets light through."""
 
     TEXTURE_ASPECT = WINDOW_TEXTURE_ASPECT
     DEFAULT_WIDTH = WINDOW_DEFAULT_WIDTH
     DEFAULT_HEIGHT = WINDOW_DEFAULT_HEIGHT
     DEFAULT_SILL_HEIGHT = WINDOW_DEFAULT_SILL_HEIGHT
-
-    faces = [
-        (0, 1, 2, 3),  # front
-        (5, 4, 7, 6),  # back
-        (4, 0, 3, 7),  # left edge
-        (1, 5, 6, 2),  # right edge
-        (3, 2, 6, 7),  # top
-        (4, 5, 1, 0),  # bottom
-    ]
 
     def __init__(
         self,
@@ -118,8 +91,8 @@ class Window(Entity):
         self.camera = camera
         self.center = position.copy()
         self.side = str(side).lower()
-        self.normal = _normal_for_side(self.side)
-        self.tangent = _window_tangent(self.normal)
+        self.normal = normal_for_side(self.side)
+        self.tangent = axis_wall_tangent_for_normal(self.normal)
         self.width = max(1.0, float(width))
         self.height = max(1.0, float(height))
         self.thickness = max(0.1, float(thickness))
@@ -130,16 +103,10 @@ class Window(Entity):
             float(collision_thickness or self.thickness),
         )
         self.collision_enabled = True
-        self.texture = int(getattr(texture, "texture", texture) or 0)
-        self.uv_rect = getattr(texture, "uv_rect", (0.0, 0.0, 1.0, 1.0))
-        self.backing_texture = int(
-            getattr(backing_texture, "texture", backing_texture) or 0
-        )
-        self.backing_uv_rect = getattr(
-            backing_texture,
-            "uv_rect",
-            (0.0, 0.0, 1.0, 1.0),
-        )
+        self.texture = texture_id(texture)
+        self.uv_rect = texture_uv_rect(texture)
+        self.backing_texture = texture_id(backing_texture)
+        self.backing_uv_rect = texture_uv_rect(backing_texture)
         self.backing_texture_size = get_texture_size(backing_texture)
         self.lighting = lighting
         self.sun_direction = sun_direction
@@ -170,8 +137,8 @@ class Window(Entity):
         window = window_spec or {}
         side = str(window.get("side", spec.get("window_side", "north"))).lower()
         wall_thickness = float(window.get("wall_thickness", spec.get("wall_thickness", wall_thickness)))
-        normal = _normal_for_side(side)
-        tangent = _window_tangent(normal)
+        normal = normal_for_side(side)
+        tangent = axis_wall_tangent_for_normal(normal)
         center = spec["position"]
         half_x = float(spec["width"]) * 0.5
         half_z = float(spec["depth"]) * 0.5
@@ -228,37 +195,6 @@ class Window(Entity):
             collision_thickness=max(WINDOW_THICKNESS, wall_thickness),
         )
 
-    def get_collision_meshes(self):
-        return (self,)
-
-    def _face_normal(self, face_idx: int) -> Vector3:
-        if face_idx == 0:
-            return self.depth_axis
-        if face_idx == 1:
-            return -self.depth_axis
-        if face_idx == 2:
-            return -self.panel_axis
-        if face_idx == 3:
-            return self.panel_axis
-        if face_idx == 4:
-            return Vector3(0.0, 1.0, 0.0)
-        return Vector3(0.0, -1.0, 0.0)
-
-    def _sunlight_factor(self, normal) -> float:
-        lighting = getattr(self, "lighting", None)
-        sun_direction = getattr(
-            lighting,
-            "sun_direction",
-            getattr(self, "sun_direction", None),
-        )
-        if lighting is None and sun_direction is None:
-            return 1.0
-        return sunlight_factor_for_normal(
-            normal,
-            lighting=lighting,
-            sun_direction=sun_direction,
-        )
-
     def _face_shade(self, face_idx: int) -> float:
         if face_idx == 0:
             base = 1.0
@@ -276,45 +212,6 @@ class Window(Entity):
             base = WINDOW_EDGE_SHADE
             normal = self._face_normal(face_idx)
         return max(0.0, min(1.0, base * self._sunlight_factor(normal)))
-
-    def _visual_vertices(self) -> list[Vector3]:
-        return self._box_vertices(
-            self.position,
-            self.panel_axis,
-            self.depth_axis,
-            width=self.width,
-            height=self.height,
-            thickness=self.thickness,
-        )
-
-    @staticmethod
-    def _box_vertices(
-        center: Vector3,
-        width_axis: Vector3,
-        depth_axis: Vector3,
-        *,
-        width: float,
-        height: float,
-        thickness: float,
-    ) -> list[Vector3]:
-        half_w = float(width) * 0.5
-        half_h = float(height) * 0.5
-        half_t = float(thickness) * 0.5
-        up = Vector3(0.0, 1.0, 0.0)
-        width_offset = width_axis * half_w
-        height_offset = up * half_h
-        depth_offset = depth_axis * half_t
-
-        return [
-            center - width_offset - height_offset + depth_offset,
-            center + width_offset - height_offset + depth_offset,
-            center + width_offset + height_offset + depth_offset,
-            center - width_offset + height_offset + depth_offset,
-            center - width_offset - height_offset - depth_offset,
-            center + width_offset - height_offset - depth_offset,
-            center + width_offset + height_offset - depth_offset,
-            center - width_offset + height_offset - depth_offset,
-        ]
 
     def _face_uvs(self, face_idx: int) -> list[tuple[float, float]]:
         u0, v0, u1, v1 = self.uv_rect
@@ -432,57 +329,4 @@ class Window(Entity):
             return
 
         self._draw_corner_backing()
-
-        glEnable(GL_TEXTURE_2D)
-        glEnable(GL_BLEND)
-        glEnable(GL_ALPHA_TEST)
-        glAlphaFunc(GL_GREATER, 0.01)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-        glBindTexture(GL_TEXTURE_2D, self.texture)
-        glColor4f(1.0, 1.0, 1.0, 1.0)
-
-        glBegin(GL_QUADS)
-        try:
-            for face_idx, face in enumerate(self.faces):
-                shade = self._face_shade(face_idx)
-                glColor4f(shade, shade, shade, 1.0)
-                for vertex_idx, uv in zip(face, self._face_uvs(face_idx)):
-                    vertex = verts[vertex_idx]
-                    glTexCoord2f(uv[0], uv[1])
-                    glVertex3f(vertex.x, vertex.y, vertex.z)
-        finally:
-            glEnd()
-            glColor4f(1.0, 1.0, 1.0, 1.0)
-            glDisable(GL_ALPHA_TEST)
-            glDisable(GL_BLEND)
-            glDisable(GL_TEXTURE_2D)
-
-    def get_world_vertices(self):
-        if not self.collision_enabled:
-            return []
-
-        return self._box_vertices(
-            self.position,
-            self.panel_axis,
-            self.depth_axis,
-            width=self.collision_width,
-            height=self.collision_height,
-            thickness=self.collision_thickness,
-        )
-
-    def get_bounding_box(self):
-        if not self.collision_enabled:
-            return None
-        if self._bounds_cache is not None:
-            return self._bounds_cache
-
-        verts = self.get_world_vertices()
-        if not verts:
-            return None
-
-        min_x = min(v.x for v in verts)
-        max_x = max(v.x for v in verts)
-        min_z = min(v.z for v in verts)
-        max_z = max(v.z for v in verts)
-        self._bounds_cache = (min_x, max_x, min_z, max_z)
-        return self._bounds_cache
+        self._draw_textured_slab_faces(verts)
