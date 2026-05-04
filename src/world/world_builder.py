@@ -30,6 +30,7 @@ from world.world_spawner import spawn_world_sprites
 
 
 CREATE_WORLD_OBJECT_STEPS = 10
+BUILDING_HEIGHT = 66.0
 BUILDING_ROOF_OVERHANG = 6.0
 BUILDING_WALL_TERRAIN_EMBED_DEPTH = 8.0
 BUILDING_WALL_TERRAIN_SAMPLE_SPACING = 18.0
@@ -75,13 +76,14 @@ def _building_covered_regions(scene) -> list[object]:
         min_z = z - half_z
         max_z = z + half_z
         doorway_depth = max(42.0, min(78.0, min(half_x, half_z) * 0.78))
+        indoor_factor = INDOOR_LIGHT_FACTOR
         regions.append(
             {
                 "min_x": min_x,
                 "max_x": max_x,
                 "min_z": min_z,
                 "max_z": max_z,
-                "factor": INDOOR_LIGHT_FACTOR,
+                "factor": indoor_factor,
                 "doorway": {
                     "side": side,
                     "center_x": x,
@@ -89,7 +91,9 @@ def _building_covered_regions(scene) -> list[object]:
                     "width": max(doorway_width * 1.16, doorway_width + 8.0),
                     "depth": doorway_depth,
                     "side_fade": max(10.0, doorway_width * 0.26),
-                    "edge_factor": 1.0,
+                    "edge_factor": indoor_factor,
+                    "closed_edge_factor": indoor_factor,
+                    "open_edge_factor": 1.0,
                 },
             }
         )
@@ -192,16 +196,27 @@ def _build_building_doors(scene) -> None:
     scene.door_tex = door_tex
     scene.doors = []
     add_entity = getattr(scene, "add_entity", None)
-    for spec in getattr(scene, "building_specs", ()) or ():
+    covered_regions = list(getattr(scene, "covered_regions", ()) or ())
+    lighting = getattr(scene, "lighting", None)
+    sun_direction = getattr(
+        lighting,
+        "sun_direction",
+        getattr(scene, "sun_direction", None),
+    )
+    for spec_index, spec in enumerate(getattr(scene, "building_specs", ()) or ()):
         try:
             door = Door.from_building_spec(
                 spec,
                 texture=door_tex,
                 camera=scene.camera,
                 ground_height_at=scene.ground_height_at,
+                lighting=lighting,
+                sun_direction=sun_direction,
             )
         except (KeyError, TypeError, ValueError, AttributeError):
             continue
+        if spec_index < len(covered_regions):
+            door.bind_doorway_light(covered_regions[spec_index])
         scene.doors.append(door)
         if callable(add_entity):
             add_entity(door)
@@ -256,15 +271,15 @@ def create_building_specs(scene, count: int = 10) -> list[dict]:
         x = max(min_x + x_margin, min(max_x - x_margin, x))
         z = max(min_z + z_margin, min(max_z - z_margin, z))
 
-        doorway_span = width if doorway_side in {"north", "south"} else depth
         specs.append(
             {
                 "position": Vector3(x, 0, z),
                 "width": width,
                 "depth": depth,
-                "height": 50,
+                "height": BUILDING_HEIGHT,
                 "doorway_side": doorway_side,
-                "doorway_width": min(90.0, max(36.0, doorway_span * 0.22)),
+                "doorway_width": Door.DEFAULT_WIDTH,
+                "doorway_height": Door.DEFAULT_HEIGHT,
             }
         )
 
@@ -390,7 +405,12 @@ def _build_buildings(scene) -> None:
         else:
             base_y = None
         wall_thickness = 2.5
-        doorway_height = spec["height"] * 0.68
+        max_doorway_height = max(8.0, float(spec["height"]) - 4.0)
+        doorway_height = min(
+            float(spec.get("doorway_height", Door.DEFAULT_HEIGHT)),
+            max_doorway_height,
+        )
+        doorway_width = doorway_height * Door.TEXTURE_ASPECT
         spec["base_y"] = (
             float(base_y)
             if base_y is not None
@@ -401,6 +421,7 @@ def _build_buildings(scene) -> None:
             )
         )
         spec["doorway_height"] = doorway_height
+        spec["doorway_width"] = doorway_width
         spec["wall_thickness"] = wall_thickness
 
         pieces = building.create_perimeter_walls(
