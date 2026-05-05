@@ -597,6 +597,8 @@ def _opening_wall_light_center(
 def _opening_wall_light_bounds(
     region: dict,
     opening: dict,
+    *,
+    radius: float | None = None,
 ) -> tuple[float, float, float, float]:
     inset = OPENING_WALL_LIGHT_BOUNDS_INSET
     min_x = float(region["min_x"]) + inset
@@ -613,36 +615,48 @@ def _opening_wall_light_bounds(
     center_z = float(opening.get("center_z", (min_z + max_z) * 0.5))
     width = max(1.0, float(opening.get("width", 48.0)))
     side_fade = max(1.0, float(opening.get("side_fade", width * 0.25)))
-    lateral_half = width * 0.5 + side_fade + OPENING_WALL_LIGHT_LATERAL_PAD
-    band_depth = max(4.0, float(OPENING_WALL_LIGHT_BAND_DEPTH))
+    influence_radius = max(0.0, float(radius)) if radius is not None else 0.0
+    wall_light_inset = max(
+        0.0,
+        float(opening.get("wall_light_inset", OPENING_WALL_LIGHT_INSET)),
+    )
+    lateral_half = max(
+        width * 0.5 + side_fade + OPENING_WALL_LIGHT_LATERAL_PAD,
+        influence_radius,
+    )
+    band_depth = max(
+        4.0,
+        float(OPENING_WALL_LIGHT_BAND_DEPTH),
+        influence_radius + wall_light_inset,
+    )
 
     if side == "north":
         return (
-            center_x - lateral_half,
-            center_x + lateral_half,
-            max_z - band_depth,
+            max(min_x, center_x - lateral_half),
+            min(max_x, center_x + lateral_half),
+            max(min_z, max_z - band_depth),
             max_z,
         )
     if side == "south":
         return (
-            center_x - lateral_half,
-            center_x + lateral_half,
+            max(min_x, center_x - lateral_half),
+            min(max_x, center_x + lateral_half),
             min_z,
-            min_z + band_depth,
+            min(max_z, min_z + band_depth),
         )
     if side == "east":
         return (
-            max_x - band_depth,
+            max(min_x, max_x - band_depth),
             max_x,
-            center_z - lateral_half,
-            center_z + lateral_half,
+            max(min_z, center_z - lateral_half),
+            min(max_z, center_z + lateral_half),
         )
     if side == "west":
         return (
             min_x,
-            min_x + band_depth,
-            center_z - lateral_half,
-            center_z + lateral_half,
+            min(max_x, min_x + band_depth),
+            max(min_z, center_z - lateral_half),
+            min(max_z, center_z + lateral_half),
         )
     return min_x, max_x, min_z, max_z
 
@@ -666,16 +680,19 @@ def _opening_wall_light_modifier(
     try:
         opening_type = str(opening.get("type", "")).lower()
         x, z = _opening_wall_light_center(region, opening)
-        bounds = _opening_wall_light_bounds(region, opening)
     except (KeyError, TypeError, ValueError, AttributeError):
         return None
 
     if opening_type == "doorway":
-        open_radius = _opening_wall_light_radius(
-            opening,
-            min_radius=DOORWAY_WALL_LIGHT_MIN_RADIUS,
-            max_radius=DOORWAY_WALL_LIGHT_MAX_RADIUS,
-        )
+        try:
+            open_radius = _opening_wall_light_radius(
+                opening,
+                min_radius=DOORWAY_WALL_LIGHT_MIN_RADIUS,
+                max_radius=DOORWAY_WALL_LIGHT_MAX_RADIUS,
+            )
+            bounds = _opening_wall_light_bounds(region, opening, radius=open_radius)
+        except (KeyError, TypeError, ValueError, AttributeError):
+            return None
         return {
             "center": Vector3(x, 0.0, z),
             "radius": 0.0,
@@ -691,11 +708,15 @@ def _opening_wall_light_modifier(
         }
 
     if opening_type == "window":
-        radius = _opening_wall_light_radius(
-            opening,
-            min_radius=WINDOW_WALL_LIGHT_MIN_RADIUS,
-            max_radius=WINDOW_WALL_LIGHT_MAX_RADIUS,
-        )
+        try:
+            radius = _opening_wall_light_radius(
+                opening,
+                min_radius=WINDOW_WALL_LIGHT_MIN_RADIUS,
+                max_radius=WINDOW_WALL_LIGHT_MAX_RADIUS,
+            )
+            bounds = _opening_wall_light_bounds(region, opening, radius=radius)
+        except (KeyError, TypeError, ValueError, AttributeError):
+            return None
         return {
             "center": Vector3(x, 0.0, z),
             "radius": radius,
