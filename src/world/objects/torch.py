@@ -79,17 +79,33 @@ class Torch(AnimatedWorldSprite):
 
     @classmethod
     def light_xz_for_building_spec(cls, spec: dict) -> tuple[float, float]:
+        return cls.light_xz_for_building_torch_spec(spec)
+
+    @classmethod
+    def light_xz_for_building_torch_spec(
+        cls,
+        spec: dict,
+        torch_spec: dict | None = None,
+    ) -> tuple[float, float]:
         position = spec["position"]
-        side = cls.side_for_building_spec(spec)
+        torch_spec = torch_spec if isinstance(torch_spec, dict) else {}
+        fallback_side = cls.side_for_building_spec(spec)
+        side = str(torch_spec.get("side", fallback_side)).lower()
+        if side not in _SIDE_NORMALS:
+            side = fallback_side
         nx, nz = _SIDE_NORMALS[side]
         half_x = float(spec["width"]) * 0.5
         half_z = float(spec["depth"]) * 0.5
         x = float(position.x)
         z = float(position.z)
+        offset = float(torch_spec.get("offset", 0.0))
+        wall_inset = max(0.0, float(torch_spec.get("wall_inset", TORCH_WALL_INSET)))
         if abs(nx) > 0.0:
-            x += nx * max(0.0, half_x - TORCH_WALL_INSET)
+            x += nx * max(0.0, half_x - wall_inset)
+            z += offset
         else:
-            z += nz * max(0.0, half_z - TORCH_WALL_INSET)
+            x += offset
+            z += nz * max(0.0, half_z - wall_inset)
         return x, z
 
     @classmethod
@@ -112,8 +128,12 @@ class Torch(AnimatedWorldSprite):
         )
 
     @classmethod
-    def brightness_modifier_for_building_spec(cls, spec: dict) -> dict[str, Any]:
-        x, z = cls.light_xz_for_building_spec(spec)
+    def brightness_modifier_for_building_spec(
+        cls,
+        spec: dict,
+        torch_spec: dict | None = None,
+    ) -> dict[str, Any]:
+        x, z = cls.light_xz_for_building_torch_spec(spec, torch_spec)
         return {
             "center": Vector3(x, 0.0, z),
             "radius": cls.light_radius_for_building_spec(spec),
@@ -125,13 +145,31 @@ class Torch(AnimatedWorldSprite):
         }
 
     @classmethod
+    def brightness_modifiers_for_building_spec(
+        cls,
+        spec: dict,
+    ) -> list[dict[str, Any]]:
+        torch_specs = spec.get("torches", None)
+        if not isinstance(torch_specs, (list, tuple)):
+            return [cls.brightness_modifier_for_building_spec(spec)]
+
+        modifiers: list[dict[str, Any]] = []
+        for torch_spec in torch_specs:
+            if not isinstance(torch_spec, dict):
+                continue
+            modifiers.append(
+                cls.brightness_modifier_for_building_spec(spec, torch_spec)
+            )
+        return modifiers
+
+    @classmethod
     def brightness_modifiers_for_building_specs(
         cls, specs: Iterable[dict]
     ) -> list[dict[str, Any]]:
         modifiers: list[dict[str, Any]] = []
         for spec in specs or ():
             try:
-                modifiers.append(cls.brightness_modifier_for_building_spec(spec))
+                modifiers.extend(cls.brightness_modifiers_for_building_spec(spec))
             except (KeyError, TypeError, ValueError, AttributeError):
                 continue
         return modifiers

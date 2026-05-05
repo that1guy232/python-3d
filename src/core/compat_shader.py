@@ -33,8 +33,9 @@ from OpenGL.GL import (
     glUseProgram,
 )
 
-MAX_BRIGHTNESS_AREAS = 32
+MAX_BRIGHTNESS_AREAS = 64
 MAX_ENVIRONMENT_REGIONS = 32
+MAX_ENVIRONMENT_OPENINGS = 64
 
 
 _TEXTURE_COLOR_EXPOSURE_VERTEX = """#version 120
@@ -70,19 +71,18 @@ uniform float u_light_ambient;
 uniform float u_light_diffuse;
 uniform float u_light_max_factor;
 uniform int u_brightness_area_count;
-uniform vec4 u_brightness_areas[32];
-uniform float u_brightness_falloffs[32];
-uniform vec4 u_brightness_bounds[32];
-uniform float u_brightness_indoor_only[32];
-uniform float u_brightness_floor_scales[32];
+uniform vec4 u_brightness_areas[64];
+uniform float u_brightness_falloffs[64];
+uniform vec4 u_brightness_bounds[64];
+uniform float u_brightness_indoor_only[64];
+uniform float u_brightness_floor_scales[64];
 uniform int u_environment_enabled;
 uniform int u_environment_region_count;
 uniform vec4 u_environment_regions[32];
 uniform float u_environment_region_factors[32];
-uniform vec4 u_environment_doorways[32];
-uniform vec4 u_environment_doorway_params[32];
-uniform vec4 u_environment_windows[32];
-uniform vec4 u_environment_window_params[32];
+uniform int u_environment_opening_count;
+uniform vec4 u_environment_openings[64];
+uniform vec4 u_environment_opening_params[64];
 uniform int u_fog_enabled;
 uniform float u_fog_density;
 uniform vec4 u_fog_color;
@@ -107,17 +107,17 @@ float opening_region_factor(
     vec3 world_pos
 )
 {
-    if (params.w <= 0.5) {
+    if (opening.x < -0.5) {
         return region_factor;
     }
 
-    float side = opening.x;
-    float center_x = opening.y;
-    float center_z = opening.z;
-    float width = max(1.0, opening.w);
-    float depth = max(1.0, params.x);
-    float side_fade = max(1.0, params.y);
-    float edge_factor = clamp(params.z, 0.0, 1.0);
+    float side = opening.y;
+    float center_x = opening.z;
+    float center_z = opening.w;
+    float width = max(1.0, params.x);
+    float depth = max(1.0, params.y);
+    float side_fade = max(1.0, params.z);
+    float edge_factor = clamp(params.w, 0.0, 1.0);
     float inward_depth = 0.0;
     float lateral = 0.0;
 
@@ -178,21 +178,27 @@ float environment_factor_at(vec3 world_pos)
                 0.0,
                 1.0
             );
-            float doorway_factor = opening_region_factor(
-                u_environment_doorways[i],
-                u_environment_doorway_params[i],
-                region,
-                base_region_factor,
-                world_pos
-            );
-            float window_factor = opening_region_factor(
-                u_environment_windows[i],
-                u_environment_window_params[i],
-                region,
-                base_region_factor,
-                world_pos
-            );
-            factor = min(factor, max(doorway_factor, window_factor));
+            float region_opening_factor = base_region_factor;
+            for (int j = 0; j < 64; ++j) {
+                if (j >= u_environment_opening_count) {
+                    break;
+                }
+                vec4 opening = u_environment_openings[j];
+                if (abs(opening.x - float(i)) > 0.5) {
+                    continue;
+                }
+                region_opening_factor = max(
+                    region_opening_factor,
+                    opening_region_factor(
+                        opening,
+                        u_environment_opening_params[j],
+                        region,
+                        base_region_factor,
+                        world_pos
+                    )
+                );
+            }
+            factor = min(factor, region_opening_factor);
         }
     }
     return factor;
@@ -201,7 +207,7 @@ float environment_factor_at(vec3 world_pos)
 float brightness_at(vec3 world_pos, float receiver_factor, vec3 surface_normal)
 {
     float brightness = u_base_brightness;
-    for (int i = 0; i < 32; ++i) {
+    for (int i = 0; i < 64; ++i) {
         if (i >= u_brightness_area_count) {
             break;
         }
@@ -308,6 +314,9 @@ class TextureColorExposureShader:
     environment_region_count_location: int
     environment_region_locations: tuple[int, ...]
     environment_region_factor_locations: tuple[int, ...]
+    environment_opening_count_location: int
+    environment_opening_locations: tuple[int, ...]
+    environment_opening_param_locations: tuple[int, ...]
     environment_doorway_locations: tuple[int, ...]
     environment_doorway_param_locations: tuple[int, ...]
     environment_window_locations: tuple[int, ...]
@@ -433,6 +442,28 @@ class TextureColorExposureShader:
             )
             glUniform1f(location, value)
 
+        if self.environment_opening_count_location >= 0:
+            glUniform1i(
+                self.environment_opening_count_location,
+                len(state.environment_openings),
+            )
+
+        for index, location in enumerate(self.environment_opening_locations):
+            if location < 0:
+                continue
+            if index < len(state.environment_openings):
+                glUniform4f(location, *state.environment_openings[index])
+            else:
+                glUniform4f(location, -1.0, -1.0, 0.0, 0.0)
+
+        for index, location in enumerate(self.environment_opening_param_locations):
+            if location < 0:
+                continue
+            if index < len(state.environment_opening_params):
+                glUniform4f(location, *state.environment_opening_params[index])
+            else:
+                glUniform4f(location, 1.0, 1.0, 1.0, 1.0)
+
         for index, location in enumerate(self.environment_doorway_locations):
             if location < 0:
                 continue
@@ -488,6 +519,8 @@ class TextureLightingState:
     brightness_floor_scales: tuple[float, ...] = ()
     environment_regions: tuple[tuple[float, float, float, float], ...] = ()
     environment_region_factors: tuple[float, ...] = ()
+    environment_openings: tuple[tuple[float, float, float, float], ...] = ()
+    environment_opening_params: tuple[tuple[float, float, float, float], ...] = ()
     environment_doorways: tuple[tuple[float, float, float, float], ...] = ()
     environment_doorway_params: tuple[tuple[float, float, float, float], ...] = ()
     environment_windows: tuple[tuple[float, float, float, float], ...] = ()
@@ -644,6 +677,22 @@ def get_texture_color_exposure_shader() -> TextureColorExposureShader | None:
                     )
                 )
                 for index in range(MAX_ENVIRONMENT_REGIONS)
+            ),
+            environment_opening_count_location=int(
+                glGetUniformLocation(program, "u_environment_opening_count")
+            ),
+            environment_opening_locations=tuple(
+                int(glGetUniformLocation(program, f"u_environment_openings[{index}]"))
+                for index in range(MAX_ENVIRONMENT_OPENINGS)
+            ),
+            environment_opening_param_locations=tuple(
+                int(
+                    glGetUniformLocation(
+                        program,
+                        f"u_environment_opening_params[{index}]",
+                    )
+                )
+                for index in range(MAX_ENVIRONMENT_OPENINGS)
             ),
             environment_doorway_locations=tuple(
                 int(glGetUniformLocation(program, f"u_environment_doorways[{index}]"))
@@ -844,21 +893,18 @@ def _environment_region_uniforms(
     tuple[tuple[float, float, float, float], ...],
     tuple[tuple[float, float, float, float], ...],
     tuple[tuple[float, float, float, float], ...],
+    tuple[tuple[float, float, float, float], ...],
+    tuple[tuple[float, float, float, float], ...],
 ]:
     regions: list[tuple[float, float, float, float]] = []
     factors: list[float] = []
-    doorways: list[tuple[float, float, float, float]] = []
-    doorway_params: list[tuple[float, float, float, float]] = []
-    windows: list[tuple[float, float, float, float]] = []
-    window_params: list[tuple[float, float, float, float]] = []
+    openings: list[tuple[float, float, float, float]] = []
+    opening_params: list[tuple[float, float, float, float]] = []
     side_codes = {"north": 0.0, "east": 1.0, "south": 2.0, "west": 3.0}
 
-    def inactive_opening():
-        return (-1.0, 0.0, 0.0, 1.0), (1.0, 1.0, 1.0, 0.0)
-
-    def pack_opening(opening, min_x, max_x, min_z, max_z):
+    def pack_opening(opening, region_index, min_x, max_x, min_z, max_z):
         if not isinstance(opening, dict):
-            return inactive_opening()
+            return None
         try:
             side = str(opening.get("side", "")).lower()
             side_code = side_codes[side]
@@ -872,10 +918,10 @@ def _environment_region_uniforms(
                 min(1.0, float(opening.get("edge_factor", 1.0))),
             )
         except Exception:
-            return inactive_opening()
+            return None
         return (
-            (side_code, center_x, center_z, width),
-            (depth, side_fade, edge_factor, 1.0),
+            (float(region_index), side_code, center_x, center_z),
+            (width, depth, side_fade, edge_factor),
         )
 
     for region in covered_regions or ():
@@ -922,37 +968,34 @@ def _environment_region_uniforms(
             min_z, max_z = max_z, min_z
         regions.append((min_x, max_x, min_z, max_z))
         factors.append(max(0.0, min(1.0, factor)))
+        region_index = len(regions) - 1
 
-        primary = None
-        secondary = None
         for opening in opening_values:
-            opening_type = str(opening.get("type", "")).lower()
-            if opening_type == "doorway" and primary is None:
-                primary = opening
-            elif opening_type == "window" and secondary is None:
-                secondary = opening
-        if primary is None and opening_values:
-            primary = opening_values[0]
-        if secondary is None:
-            for opening in opening_values:
-                if opening is not primary:
-                    secondary = opening
-                    break
-
-        doorway, doorway_param = pack_opening(primary, min_x, max_x, min_z, max_z)
-        window, window_param = pack_opening(secondary, min_x, max_x, min_z, max_z)
-        doorways.append(doorway)
-        doorway_params.append(doorway_param)
-        windows.append(window)
-        window_params.append(window_param)
+            if len(openings) >= MAX_ENVIRONMENT_OPENINGS:
+                break
+            packed = pack_opening(
+                opening,
+                region_index,
+                min_x,
+                max_x,
+                min_z,
+                max_z,
+            )
+            if packed is None:
+                continue
+            opening, opening_param = packed
+            openings.append(opening)
+            opening_params.append(opening_param)
 
     return (
         tuple(regions),
         tuple(factors),
-        tuple(doorways),
-        tuple(doorway_params),
-        tuple(windows),
-        tuple(window_params),
+        tuple(openings),
+        tuple(opening_params),
+        (),
+        (),
+        (),
+        (),
     )
 
 
@@ -1002,6 +1045,8 @@ def set_texture_lighting_state(
     (
         environment_regions,
         environment_region_factors,
+        environment_openings,
+        environment_opening_params,
         environment_doorways,
         environment_doorway_params,
         environment_windows,
@@ -1012,6 +1057,8 @@ def set_texture_lighting_state(
         else (
             current.environment_regions,
             current.environment_region_factors,
+            current.environment_openings,
+            current.environment_opening_params,
             current.environment_doorways,
             current.environment_doorway_params,
             current.environment_windows,
@@ -1048,6 +1095,8 @@ def set_texture_lighting_state(
         brightness_floor_scales=area_floor_scales,
         environment_regions=environment_regions,
         environment_region_factors=environment_region_factors,
+        environment_openings=environment_openings,
+        environment_opening_params=environment_opening_params,
         environment_doorways=environment_doorways,
         environment_doorway_params=environment_doorway_params,
         environment_windows=environment_windows,

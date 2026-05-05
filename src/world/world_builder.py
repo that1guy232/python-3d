@@ -36,16 +36,20 @@ BUILDING_WALL_TERRAIN_EMBED_DEPTH = 8.0
 BUILDING_WALL_TERRAIN_SAMPLE_SPACING = 18.0
 SHADOW_BUILDING_CLIP_MARGIN = 2.0
 WINDOW_LIGHT_EDGE_FACTOR = 0.86
-DOORWAY_WALL_LIGHT_VALUE = 1.55
+DOORWAY_WALL_LIGHT_VALUE = 1.0
+DOORWAY_WALL_SPLASH_VALUE = 1.36
 DOORWAY_WALL_LIGHT_FALLOFF = 1.65
 DOORWAY_WALL_LIGHT_MIN_RADIUS = 54.0
 DOORWAY_WALL_LIGHT_MAX_RADIUS = 118.0
-WINDOW_WALL_LIGHT_VALUE = 1.38
+WINDOW_WALL_LIGHT_VALUE = 0.96
+WINDOW_WALL_SPLASH_VALUE = 1.26
 WINDOW_WALL_LIGHT_FALLOFF = 1.9
 WINDOW_WALL_LIGHT_MIN_RADIUS = 42.0
 WINDOW_WALL_LIGHT_MAX_RADIUS = 96.0
 OPENING_WALL_LIGHT_INSET = 10.0
 OPENING_WALL_LIGHT_BOUNDS_INSET = 2.0
+OPENING_WALL_LIGHT_BAND_DEPTH = 18.0
+OPENING_WALL_LIGHT_LATERAL_PAD = 28.0
 OPENING_WALL_LIGHT_FLOOR_SCALE = 0.0
 
 _SIDE_NORMALS = {
@@ -66,6 +70,362 @@ _WINDOW_SIDE_BY_DOORWAY = {
     "south": "west",
     "west": "north",
 }
+_BUILDING_FEATURE_SIDES = ("north", "east", "south", "west")
+_FEATURE_WALL_MARGIN = 18.0
+_WINDOW_WALL_MIN_SPAN = 130.0
+_WINDOW_WALL_SPACING = 190.0
+_WINDOW_WALL_MAX_COUNT = 2
+_WINDOW_WALL_SKIP_CHANCE = 0.3
+_WINDOW_BUILDING_SPACING = 280.0
+_WINDOW_BUILDING_MAX_COUNT = 5
+_WINDOW_FEATURE_CLEARANCE = 16.0
+_TORCH_WALL_MIN_SPAN = 150.0
+_TORCH_WALL_SPACING = 220.0
+_TORCH_WALL_MAX_COUNT = 1
+_TORCH_WALL_SKIP_CHANCE = 0.6
+_TORCH_BUILDING_SPACING = 520.0
+_TORCH_BUILDING_MAX_COUNT = 3
+_TORCH_FEATURE_WIDTH = 18.0
+_TORCH_FEATURE_CLEARANCE = 18.0
+
+
+def _wall_span_for_side(width: float, depth: float, side: str) -> float:
+    side_key = str(side).lower()
+    return float(width if side_key in {"north", "south"} else depth)
+
+
+def _feature_count_for_wall(
+    rng: random.Random,
+    span: float,
+    *,
+    min_span: float,
+    spacing: float,
+    max_count: int,
+    skip_chance: float,
+) -> int:
+    if span < min_span:
+        return 0
+
+    exact = 1.0 + max(0.0, span - min_span) / max(1.0, spacing)
+    count = int(exact)
+    if count < max_count and rng.random() < exact - count:
+        count += 1
+    if count > 0 and rng.random() < skip_chance:
+        return 0
+    return max(0, min(max_count, count))
+
+
+def _feature_count_for_building(
+    rng: random.Random,
+    *,
+    width: float,
+    depth: float,
+    spacing: float,
+    max_count: int,
+) -> int:
+    perimeter = max(0.0, (float(width) + float(depth)) * 2.0)
+    exact = max(1.0, perimeter / max(1.0, spacing))
+    count = int(exact)
+    if count < max_count and rng.random() < exact - count:
+        count += 1
+    return max(1, min(max_count, count))
+
+
+def _limit_feature_specs(
+    rng: random.Random,
+    features: list[dict],
+    max_count: int,
+) -> list[dict]:
+    if len(features) <= max_count:
+        return features
+    limited = list(features)
+    rng.shuffle(limited)
+    return limited[:max_count]
+
+
+def _door_blocked_ranges_for_side(
+    side: str,
+    doorway_side: str,
+    doorway_width: float,
+) -> list[tuple[float, float]]:
+    if str(side).lower() != str(doorway_side).lower():
+        return []
+    half_width = max(0.0, float(doorway_width)) * 0.5
+    return [(-half_width, half_width)]
+
+
+def _feature_center_segments_for_wall(
+    span: float,
+    feature_width: float,
+    blocked_ranges: list[tuple[float, float]],
+    *,
+    wall_margin: float,
+    clearance: float,
+) -> list[tuple[float, float]]:
+    half_span = max(0.0, float(span)) * 0.5
+    half_feature = max(0.0, float(feature_width)) * 0.5
+    center_min = -half_span + max(0.0, wall_margin) + half_feature
+    center_max = half_span - max(0.0, wall_margin) - half_feature
+    if center_max < center_min:
+        return []
+
+    segments = [(center_min, center_max)]
+    for blocked_min, blocked_max in blocked_ranges:
+        if blocked_max < blocked_min:
+            blocked_min, blocked_max = blocked_max, blocked_min
+        blocked_min -= half_feature + max(0.0, clearance)
+        blocked_max += half_feature + max(0.0, clearance)
+
+        next_segments: list[tuple[float, float]] = []
+        for segment_min, segment_max in segments:
+            if blocked_max <= segment_min or blocked_min >= segment_max:
+                next_segments.append((segment_min, segment_max))
+                continue
+            if blocked_min > segment_min:
+                next_segments.append((segment_min, min(segment_max, blocked_min)))
+            if blocked_max < segment_max:
+                next_segments.append((max(segment_min, blocked_max), segment_max))
+        segments = [
+            (segment_min, segment_max)
+            for segment_min, segment_max in next_segments
+            if segment_max >= segment_min
+        ]
+        if not segments:
+            break
+
+    return segments
+
+
+def _pick_feature_offset(
+    rng: random.Random,
+    segments: list[tuple[float, float]],
+) -> float | None:
+    total = sum(
+        max(0.0, segment_max - segment_min)
+        for segment_min, segment_max in segments
+    )
+    if total <= 0.0:
+        return None
+
+    choice = rng.uniform(0.0, total)
+    for segment_min, segment_max in segments:
+        length = max(0.0, segment_max - segment_min)
+        if choice <= length:
+            return segment_min + choice
+        choice -= length
+    return segments[-1][1]
+
+
+def _random_feature_offsets_for_wall(
+    rng: random.Random,
+    span: float,
+    count: int,
+    feature_width: float,
+    blocked_ranges: list[tuple[float, float]],
+    *,
+    wall_margin: float = _FEATURE_WALL_MARGIN,
+    clearance: float,
+) -> list[float]:
+    offsets: list[float] = []
+    occupied = list(blocked_ranges)
+    for _ in range(max(0, int(count))):
+        segments = _feature_center_segments_for_wall(
+            span,
+            feature_width,
+            occupied,
+            wall_margin=wall_margin,
+            clearance=clearance,
+        )
+        offset = _pick_feature_offset(rng, segments)
+        if offset is None:
+            break
+        offsets.append(offset)
+        half_width = feature_width * 0.5
+        occupied.append((offset - half_width, offset + half_width))
+    return offsets
+
+
+def _random_window_specs_for_building(
+    rng: random.Random,
+    *,
+    width: float,
+    depth: float,
+    doorway_side: str,
+    doorway_width: float,
+) -> list[dict]:
+    windows: list[dict] = []
+    sides = list(_BUILDING_FEATURE_SIDES)
+    rng.shuffle(sides)
+
+    for side in sides:
+        span = _wall_span_for_side(width, depth, side)
+        count = _feature_count_for_wall(
+            rng,
+            span,
+            min_span=_WINDOW_WALL_MIN_SPAN,
+            spacing=_WINDOW_WALL_SPACING,
+            max_count=_WINDOW_WALL_MAX_COUNT,
+            skip_chance=_WINDOW_WALL_SKIP_CHANCE,
+        )
+        blocked_ranges = _door_blocked_ranges_for_side(
+            side,
+            doorway_side,
+            doorway_width,
+        )
+        offsets = _random_feature_offsets_for_wall(
+            rng,
+            span,
+            count,
+            Window.DEFAULT_WIDTH,
+            blocked_ranges,
+            clearance=_WINDOW_FEATURE_CLEARANCE,
+        )
+        for offset in offsets:
+            windows.append(
+                {
+                    "side": side,
+                    "offset": offset,
+                    "width": Window.DEFAULT_WIDTH,
+                    "height": Window.DEFAULT_HEIGHT,
+                    "sill_height": Window.DEFAULT_SILL_HEIGHT,
+                }
+            )
+
+    if windows:
+        max_windows = _feature_count_for_building(
+            rng,
+            width=width,
+            depth=depth,
+            spacing=_WINDOW_BUILDING_SPACING,
+            max_count=_WINDOW_BUILDING_MAX_COUNT,
+        )
+        return _limit_feature_specs(rng, windows, max_windows)
+
+    fallback_sides = sorted(
+        _BUILDING_FEATURE_SIDES,
+        key=lambda side: _wall_span_for_side(width, depth, side),
+        reverse=True,
+    )
+    for side in fallback_sides:
+        span = _wall_span_for_side(width, depth, side)
+        blocked_ranges = _door_blocked_ranges_for_side(
+            side,
+            doorway_side,
+            doorway_width,
+        )
+        offsets = _random_feature_offsets_for_wall(
+            rng,
+            span,
+            1,
+            Window.DEFAULT_WIDTH,
+            blocked_ranges,
+            clearance=_WINDOW_FEATURE_CLEARANCE,
+        )
+        if not offsets:
+            continue
+        return [
+            {
+                "side": side,
+                "offset": offsets[0],
+                "width": Window.DEFAULT_WIDTH,
+                "height": Window.DEFAULT_HEIGHT,
+                "sill_height": Window.DEFAULT_SILL_HEIGHT,
+            }
+        ]
+    return []
+
+
+def _window_ranges_by_side(windows: list[dict]) -> dict[str, list[tuple[float, float]]]:
+    ranges_by_side = {side: [] for side in _BUILDING_FEATURE_SIDES}
+    for window in windows:
+        try:
+            side = str(window.get("side", "")).lower()
+            offset = float(window.get("offset", 0.0))
+            width = max(1.0, float(window.get("width", Window.DEFAULT_WIDTH)))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if side not in ranges_by_side:
+            continue
+        half_width = width * 0.5
+        ranges_by_side[side].append((offset - half_width, offset + half_width))
+    return ranges_by_side
+
+
+def _random_torch_specs_for_building(
+    rng: random.Random,
+    *,
+    width: float,
+    depth: float,
+    doorway_side: str,
+    doorway_width: float,
+    windows: list[dict],
+) -> list[dict]:
+    torches: list[dict] = []
+    windows_by_side = _window_ranges_by_side(windows)
+    sides = list(_BUILDING_FEATURE_SIDES)
+    rng.shuffle(sides)
+
+    for side in sides:
+        span = _wall_span_for_side(width, depth, side)
+        count = _feature_count_for_wall(
+            rng,
+            span,
+            min_span=_TORCH_WALL_MIN_SPAN,
+            spacing=_TORCH_WALL_SPACING,
+            max_count=_TORCH_WALL_MAX_COUNT,
+            skip_chance=_TORCH_WALL_SKIP_CHANCE,
+        )
+        blocked_ranges = _door_blocked_ranges_for_side(
+            side,
+            doorway_side,
+            doorway_width,
+        )
+        blocked_ranges.extend(windows_by_side.get(side, ()))
+        offsets = _random_feature_offsets_for_wall(
+            rng,
+            span,
+            count,
+            _TORCH_FEATURE_WIDTH,
+            blocked_ranges,
+            clearance=_TORCH_FEATURE_CLEARANCE,
+        )
+        for offset in offsets:
+            torches.append({"side": side, "offset": offset})
+
+    if torches:
+        max_torches = _feature_count_for_building(
+            rng,
+            width=width,
+            depth=depth,
+            spacing=_TORCH_BUILDING_SPACING,
+            max_count=_TORCH_BUILDING_MAX_COUNT,
+        )
+        return _limit_feature_specs(rng, torches, max_torches)
+
+    fallback_sides = sorted(
+        _BUILDING_FEATURE_SIDES,
+        key=lambda side: _wall_span_for_side(width, depth, side),
+        reverse=True,
+    )
+    for side in fallback_sides:
+        span = _wall_span_for_side(width, depth, side)
+        blocked_ranges = _door_blocked_ranges_for_side(
+            side,
+            doorway_side,
+            doorway_width,
+        )
+        blocked_ranges.extend(windows_by_side.get(side, ()))
+        offsets = _random_feature_offsets_for_wall(
+            rng,
+            span,
+            1,
+            _TORCH_FEATURE_WIDTH,
+            blocked_ranges,
+            clearance=_TORCH_FEATURE_CLEARANCE,
+        )
+        if offsets:
+            return [{"side": side, "offset": offsets[0]}]
+    return []
 
 
 def _dispose_value(obj) -> None:
@@ -234,7 +594,10 @@ def _opening_wall_light_center(
     return center_x, center_z
 
 
-def _opening_wall_light_bounds(region: dict) -> tuple[float, float, float, float]:
+def _opening_wall_light_bounds(
+    region: dict,
+    opening: dict,
+) -> tuple[float, float, float, float]:
     inset = OPENING_WALL_LIGHT_BOUNDS_INSET
     min_x = float(region["min_x"]) + inset
     max_x = float(region["max_x"]) - inset
@@ -244,6 +607,43 @@ def _opening_wall_light_bounds(region: dict) -> tuple[float, float, float, float
         min_x, max_x = max_x, min_x
     if max_z < min_z:
         min_z, max_z = max_z, min_z
+
+    side = str(opening.get("side", "")).lower()
+    center_x = float(opening.get("center_x", (min_x + max_x) * 0.5))
+    center_z = float(opening.get("center_z", (min_z + max_z) * 0.5))
+    width = max(1.0, float(opening.get("width", 48.0)))
+    side_fade = max(1.0, float(opening.get("side_fade", width * 0.25)))
+    lateral_half = width * 0.5 + side_fade + OPENING_WALL_LIGHT_LATERAL_PAD
+    band_depth = max(4.0, float(OPENING_WALL_LIGHT_BAND_DEPTH))
+
+    if side == "north":
+        return (
+            center_x - lateral_half,
+            center_x + lateral_half,
+            max_z - band_depth,
+            max_z,
+        )
+    if side == "south":
+        return (
+            center_x - lateral_half,
+            center_x + lateral_half,
+            min_z,
+            min_z + band_depth,
+        )
+    if side == "east":
+        return (
+            max_x - band_depth,
+            max_x,
+            center_z - lateral_half,
+            center_z + lateral_half,
+        )
+    if side == "west":
+        return (
+            min_x,
+            min_x + band_depth,
+            center_z - lateral_half,
+            center_z + lateral_half,
+        )
     return min_x, max_x, min_z, max_z
 
 
@@ -266,7 +666,7 @@ def _opening_wall_light_modifier(
     try:
         opening_type = str(opening.get("type", "")).lower()
         x, z = _opening_wall_light_center(region, opening)
-        bounds = _opening_wall_light_bounds(region)
+        bounds = _opening_wall_light_bounds(region, opening)
     except (KeyError, TypeError, ValueError, AttributeError):
         return None
 
@@ -279,7 +679,7 @@ def _opening_wall_light_modifier(
         return {
             "center": Vector3(x, 0.0, z),
             "radius": 0.0,
-            "value": DOORWAY_WALL_LIGHT_VALUE,
+            "value": DOORWAY_WALL_SPLASH_VALUE,
             "falloff": DOORWAY_WALL_LIGHT_FALLOFF,
             "bounds": bounds,
             "indoor_only": True,
@@ -287,7 +687,7 @@ def _opening_wall_light_modifier(
             "opening_type": "doorway",
             "closed_radius": 0.0,
             "open_radius": open_radius,
-            "open_value": DOORWAY_WALL_LIGHT_VALUE,
+            "open_value": DOORWAY_WALL_SPLASH_VALUE,
         }
 
     if opening_type == "window":
@@ -299,7 +699,7 @@ def _opening_wall_light_modifier(
         return {
             "center": Vector3(x, 0.0, z),
             "radius": radius,
-            "value": WINDOW_WALL_LIGHT_VALUE,
+            "value": WINDOW_WALL_SPLASH_VALUE,
             "falloff": WINDOW_WALL_LIGHT_FALLOFF,
             "bounds": bounds,
             "indoor_only": True,
@@ -385,11 +785,6 @@ def _install_building_torch_lights(scene) -> None:
     scene.window_light_modifiers = []
     scene.opening_light_modifiers = []
 
-    for modifier in torch_modifiers:
-        installed = _install_scene_brightness_modifier(scene, modifier)
-        if installed is not None:
-            scene.torch_light_modifiers.append(installed)
-
     for modifier in doorway_modifiers_by_region:
         if modifier is None:
             scene.doorway_light_modifiers_by_region.append(None)
@@ -409,6 +804,11 @@ def _install_building_torch_lights(scene) -> None:
             _copy_opening_light_metadata(installed, modifier)
             scene.window_light_modifiers.append(installed)
             scene.opening_light_modifiers.append(installed)
+
+    for modifier in torch_modifiers:
+        installed = _install_scene_brightness_modifier(scene, modifier)
+        if installed is not None:
+            scene.torch_light_modifiers.append(installed)
 
     lighting = getattr(scene, "lighting", None)
     if lighting is not None:
@@ -623,7 +1023,8 @@ def create_building_specs(scene, count: int = 10) -> list[dict]:
         width = rng.uniform(140.0, 420.0)
         depth = rng.uniform(100.0, 260.0)
         doorway_side = rng.choice(doorway_sides)
-        window_side = _WINDOW_SIDE_BY_DOORWAY.get(doorway_side, "north")
+        doorway_width = Door.DEFAULT_WIDTH
+        doorway_height = Door.DEFAULT_HEIGHT
 
         cell_min_x = min_x + col * cell_width
         cell_max_x = min_x + (col + 1) * cell_width
@@ -649,6 +1050,22 @@ def create_building_specs(scene, count: int = 10) -> list[dict]:
         x = max(min_x + x_margin, min(max_x - x_margin, x))
         z = max(min_z + z_margin, min(max_z - z_margin, z))
 
+        windows = _random_window_specs_for_building(
+            rng,
+            width=width,
+            depth=depth,
+            doorway_side=doorway_side,
+            doorway_width=doorway_width,
+        )
+        torches = _random_torch_specs_for_building(
+            rng,
+            width=width,
+            depth=depth,
+            doorway_side=doorway_side,
+            doorway_width=doorway_width,
+            windows=windows,
+        )
+
         specs.append(
             {
                 "position": Vector3(x, 0, z),
@@ -656,17 +1073,10 @@ def create_building_specs(scene, count: int = 10) -> list[dict]:
                 "depth": depth,
                 "height": BUILDING_HEIGHT,
                 "doorway_side": doorway_side,
-                "doorway_width": Door.DEFAULT_WIDTH,
-                "doorway_height": Door.DEFAULT_HEIGHT,
-                "windows": [
-                    {
-                        "side": window_side,
-                        "offset": 0.0,
-                        "width": Window.DEFAULT_WIDTH,
-                        "height": Window.DEFAULT_HEIGHT,
-                        "sill_height": Window.DEFAULT_SILL_HEIGHT,
-                    }
-                ],
+                "doorway_width": doorway_width,
+                "doorway_height": doorway_height,
+                "windows": windows,
+                "torches": torches,
             }
         )
 
