@@ -80,6 +80,13 @@ def _update_entities(scene, dt: float) -> None:
             update_entity(dt)
 
 
+def _update_sprites(scene, dt: float) -> None:
+    for sprite in getattr(scene, "sprite_items", ()) or ():
+        update_sprite = getattr(sprite, "update", None)
+        if callable(update_sprite):
+            update_sprite(dt)
+
+
 def _entity_interaction_position(entity):
     get_position = getattr(entity, "get_interaction_position", None)
     if callable(get_position):
@@ -209,6 +216,8 @@ def update(scene, dt: float) -> None:
         scene._sway_controller.update(dt)
     with _profile(scene, "update.entities"):
         _update_entities(scene, dt)
+    with _profile(scene, "update.sprites"):
+        _update_sprites(scene, dt)
 
     with _profile(scene, "update.player_height"):
         foot_offset = _player_foot_offset(scene)

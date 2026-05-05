@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from pygame.math import Vector3
@@ -11,9 +12,9 @@ from engine.rendering.lighting import (
     install_brightness_modifier_on_camera,
     normalize_brightness_modifier,
 )
-from engine.rendering.sprite import WorldSprite
-from textures.resource_path import TORCH_TEXTURE_PATH
-from textures.texture_utils import get_texture_size, load_texture
+from engine.rendering.sprite import AnimatedWorldSprite
+from textures.resource_path import TORCH_FRAME_TEXTURE_PATHS, TORCH_TEXTURE_PATH
+from textures.texture_utils import get_texture_size, load_texture, load_texture_atlas
 
 
 TORCH_LIGHT_VALUE = 3.4
@@ -25,6 +26,8 @@ TORCH_WALL_INSET = 8.0
 TORCH_SPRITE_HEIGHT = 16.0
 TORCH_MOUNT_HEIGHT = 28.0
 TORCH_COLOR = (1.0, 0.82, 0.55)
+TORCH_ANIMATION_FPS = 9.0
+TORCH_ANIMATION_FRAME_DURATION = 1.0 / TORCH_ANIMATION_FPS
 
 _SIDE_NORMALS = {
     "north": (0.0, 1.0),
@@ -41,16 +44,33 @@ _OPPOSITE_SIDE = {
 
 
 @dataclass
-class Torch(WorldSprite):
+class Torch(AnimatedWorldSprite):
     """A textured torch billboard plus its matching brightness-area metadata."""
 
     brightness_modifier: dict[str, Any] | None = None
 
     @classmethod
-    def texture_or_load(cls, texture: Any | None = None) -> Any:
-        if texture:
-            return texture
-        return load_texture(TORCH_TEXTURE_PATH)
+    def animation_frames(cls, texture: Any | None = None) -> tuple[Any, ...]:
+        if isinstance(texture, (list, tuple)):
+            return tuple(frame for frame in texture if frame)
+        return (texture,) if texture else ()
+
+    @classmethod
+    def texture_or_load(cls, texture: Any | None = None) -> tuple[Any, ...]:
+        frames = cls.animation_frames(texture)
+        if frames:
+            return frames
+
+        frame_paths = [
+            path for path in TORCH_FRAME_TEXTURE_PATHS if Path(path).is_file()
+        ]
+        if frame_paths:
+            frames = tuple(load_texture_atlas(frame_paths))
+            if frames:
+                return frames
+
+        fallback = load_texture(TORCH_TEXTURE_PATH)
+        return (fallback,) if fallback else ()
 
     @classmethod
     def side_for_building_spec(cls, spec: dict) -> str:
@@ -147,12 +167,19 @@ class Torch(WorldSprite):
         normalized = cls.normalize_brightness_modifier(modifier)
         center = normalized["center"]
         floor_y = float(ground_height_at(center.x, center.z))
+        frames = cls.animation_frames(texture)
+        if not frames:
+            raise ValueError("Torch requires at least one texture frame")
+        frame_index = int(abs(center.x * 0.19 + center.z * 0.31)) % len(frames)
         return cls(
             position=Vector3(center.x, floor_y + mount_height, center.z),
-            size=size if size is not None else cls.sprite_size_for_texture(texture),
-            texture=texture,
+            size=size if size is not None else cls.sprite_size_for_texture(frames[0]),
+            texture=frames[0],
             camera=camera,
             color=color,
+            frames=frames,
+            frame_duration=TORCH_ANIMATION_FRAME_DURATION,
+            frame_index=frame_index,
             brightness_modifier=normalized,
         )
 
@@ -165,18 +192,18 @@ class Torch(WorldSprite):
         camera: object,
         ground_height_at: Callable[[float, float], float],
     ) -> list["Torch"]:
-        texture = cls.texture_or_load(texture)
-        if not texture:
+        frames = cls.texture_or_load(texture)
+        if not frames:
             return []
 
-        size = cls.sprite_size_for_texture(texture)
+        size = cls.sprite_size_for_texture(frames[0])
         torches: list[Torch] = []
         for modifier in modifiers or ():
             try:
                 torches.append(
                     cls.from_brightness_modifier(
                         modifier,
-                        texture=texture,
+                        texture=frames,
                         camera=camera,
                         ground_height_at=ground_height_at,
                         size=size,

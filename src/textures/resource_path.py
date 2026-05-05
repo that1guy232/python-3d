@@ -59,6 +59,10 @@ FENCE6_TEXTURE_PATH: str = _asset("textures", "fences", "fence6.png")
 # Wall textures
 WALL1_TEXTURE_PATH: str = _asset("textures", "wall1.png")
 TORCH_TEXTURE_PATH: str = _asset("textures", "torch.png")
+TORCH_TEXTURE_DIR_PATH: str = _asset("textures", "torches")
+TORCH_FRAME_TEXTURE_PATHS: tuple[str, ...] = tuple(
+    _asset("textures", "torches", f"torch{i}.png") for i in range(1, 6)
+)
 DOOR_TEXTURE_PATH: str = _asset("textures", "door.png")
 WINDOW_TEXTURE_PATH: str = _asset("textures", "window.png")
 

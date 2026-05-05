@@ -36,6 +36,17 @@ BUILDING_WALL_TERRAIN_EMBED_DEPTH = 8.0
 BUILDING_WALL_TERRAIN_SAMPLE_SPACING = 18.0
 SHADOW_BUILDING_CLIP_MARGIN = 2.0
 WINDOW_LIGHT_EDGE_FACTOR = 0.86
+DOORWAY_WALL_LIGHT_VALUE = 1.55
+DOORWAY_WALL_LIGHT_FALLOFF = 1.65
+DOORWAY_WALL_LIGHT_MIN_RADIUS = 54.0
+DOORWAY_WALL_LIGHT_MAX_RADIUS = 118.0
+WINDOW_WALL_LIGHT_VALUE = 1.38
+WINDOW_WALL_LIGHT_FALLOFF = 1.9
+WINDOW_WALL_LIGHT_MIN_RADIUS = 42.0
+WINDOW_WALL_LIGHT_MAX_RADIUS = 96.0
+OPENING_WALL_LIGHT_INSET = 10.0
+OPENING_WALL_LIGHT_BOUNDS_INSET = 2.0
+OPENING_WALL_LIGHT_FLOOR_SCALE = 0.0
 
 _SIDE_NORMALS = {
     "north": (0.0, 1.0),
@@ -199,32 +210,214 @@ def _outside_building_shadow_receiver(
     return receives_shadow
 
 
+def _opening_wall_light_center(
+    region: dict,
+    opening: dict,
+) -> tuple[float, float]:
+    side = str(opening.get("side", "")).lower()
+    min_x = float(region["min_x"])
+    max_x = float(region["max_x"])
+    min_z = float(region["min_z"])
+    max_z = float(region["max_z"])
+    center_x = float(opening.get("center_x", (min_x + max_x) * 0.5))
+    center_z = float(opening.get("center_z", (min_z + max_z) * 0.5))
+    inset = max(0.0, float(opening.get("wall_light_inset", OPENING_WALL_LIGHT_INSET)))
+
+    if side == "north":
+        return center_x, max_z - inset
+    if side == "south":
+        return center_x, min_z + inset
+    if side == "east":
+        return max_x - inset, center_z
+    if side == "west":
+        return min_x + inset, center_z
+    return center_x, center_z
+
+
+def _opening_wall_light_bounds(region: dict) -> tuple[float, float, float, float]:
+    inset = OPENING_WALL_LIGHT_BOUNDS_INSET
+    min_x = float(region["min_x"]) + inset
+    max_x = float(region["max_x"]) - inset
+    min_z = float(region["min_z"]) + inset
+    max_z = float(region["max_z"]) - inset
+    if max_x < min_x:
+        min_x, max_x = max_x, min_x
+    if max_z < min_z:
+        min_z, max_z = max_z, min_z
+    return min_x, max_x, min_z, max_z
+
+
+def _opening_wall_light_radius(
+    opening: dict,
+    *,
+    min_radius: float,
+    max_radius: float,
+) -> float:
+    width = max(1.0, float(opening.get("width", 48.0)))
+    depth = max(1.0, float(opening.get("depth", 64.0)))
+    radius = max(width * 1.08, depth * 0.92)
+    return max(min_radius, min(max_radius, radius))
+
+
+def _opening_wall_light_modifier(
+    region: dict,
+    opening: dict,
+) -> dict | None:
+    try:
+        opening_type = str(opening.get("type", "")).lower()
+        x, z = _opening_wall_light_center(region, opening)
+        bounds = _opening_wall_light_bounds(region)
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None
+
+    if opening_type == "doorway":
+        open_radius = _opening_wall_light_radius(
+            opening,
+            min_radius=DOORWAY_WALL_LIGHT_MIN_RADIUS,
+            max_radius=DOORWAY_WALL_LIGHT_MAX_RADIUS,
+        )
+        return {
+            "center": Vector3(x, 0.0, z),
+            "radius": 0.0,
+            "value": DOORWAY_WALL_LIGHT_VALUE,
+            "falloff": DOORWAY_WALL_LIGHT_FALLOFF,
+            "bounds": bounds,
+            "indoor_only": True,
+            "floor_scale": OPENING_WALL_LIGHT_FLOOR_SCALE,
+            "opening_type": "doorway",
+            "closed_radius": 0.0,
+            "open_radius": open_radius,
+            "open_value": DOORWAY_WALL_LIGHT_VALUE,
+        }
+
+    if opening_type == "window":
+        radius = _opening_wall_light_radius(
+            opening,
+            min_radius=WINDOW_WALL_LIGHT_MIN_RADIUS,
+            max_radius=WINDOW_WALL_LIGHT_MAX_RADIUS,
+        )
+        return {
+            "center": Vector3(x, 0.0, z),
+            "radius": radius,
+            "value": WINDOW_WALL_LIGHT_VALUE,
+            "falloff": WINDOW_WALL_LIGHT_FALLOFF,
+            "bounds": bounds,
+            "indoor_only": True,
+            "floor_scale": OPENING_WALL_LIGHT_FLOOR_SCALE,
+            "opening_type": "window",
+        }
+
+    return None
+
+
+def _opening_wall_light_modifiers_for_regions(
+    regions,
+) -> tuple[list[dict | None], list[dict]]:
+    doorway_modifiers: list[dict | None] = []
+    window_modifiers: list[dict] = []
+
+    for region in regions or ():
+        if not isinstance(region, dict):
+            doorway_modifiers.append(None)
+            continue
+
+        doorway_modifier = None
+        doorway = region.get("doorway")
+        if isinstance(doorway, dict):
+            doorway_modifier = _opening_wall_light_modifier(region, doorway)
+        doorway_modifiers.append(doorway_modifier)
+
+        windows = region.get("windows")
+        if isinstance(windows, (list, tuple)):
+            for window in windows:
+                if not isinstance(window, dict):
+                    continue
+                modifier = _opening_wall_light_modifier(region, window)
+                if modifier is not None:
+                    window_modifiers.append(modifier)
+
+    return doorway_modifiers, window_modifiers
+
+
+def _copy_opening_light_metadata(target: dict, source: dict) -> dict:
+    for key in (
+        "opening_type",
+        "closed_radius",
+        "open_radius",
+        "open_value",
+    ):
+        if key in source:
+            target[key] = source[key]
+    return target
+
+
+def _install_scene_brightness_modifier(scene, modifier: dict) -> dict | None:
+    lighting = getattr(scene, "lighting", None)
+    camera = getattr(scene, "camera", None)
+    if lighting is not None:
+        try:
+            return lighting.add_brightness_modifier(modifier, camera=camera)
+        except (KeyError, TypeError, ValueError, AttributeError):
+            return None
+
+    if not hasattr(scene, "brightness_modifiers") or scene.brightness_modifiers is None:
+        scene.brightness_modifiers = []
+    scene.brightness_modifiers.append(modifier)
+    try:
+        Torch.install_brightness_modifier(camera, modifier)
+    except (KeyError, TypeError, ValueError, AttributeError):
+        pass
+    return modifier
+
+
 def _install_building_torch_lights(scene) -> None:
-    modifiers = Torch.brightness_modifiers_for_building_specs(
+    torch_modifiers = Torch.brightness_modifiers_for_building_specs(
         getattr(scene, "building_specs", ()) or ()
     )
-    scene.torch_light_modifiers = modifiers
+    doorway_modifiers_by_region, window_modifiers = (
+        _opening_wall_light_modifiers_for_regions(
+            getattr(scene, "covered_regions", ()) or ()
+        )
+    )
+    scene.torch_light_modifiers = []
+    scene.doorway_light_modifiers_by_region = []
     scene.doorway_light_modifiers = []
+    scene.window_light_modifiers = []
+    scene.opening_light_modifiers = []
+
+    for modifier in torch_modifiers:
+        installed = _install_scene_brightness_modifier(scene, modifier)
+        if installed is not None:
+            scene.torch_light_modifiers.append(installed)
+
+    for modifier in doorway_modifiers_by_region:
+        if modifier is None:
+            scene.doorway_light_modifiers_by_region.append(None)
+            continue
+        installed = _install_scene_brightness_modifier(scene, modifier)
+        if installed is not None:
+            _copy_opening_light_metadata(installed, modifier)
+            scene.doorway_light_modifiers_by_region.append(installed)
+            scene.doorway_light_modifiers.append(installed)
+            scene.opening_light_modifiers.append(installed)
+        else:
+            scene.doorway_light_modifiers_by_region.append(None)
+
+    for modifier in window_modifiers:
+        installed = _install_scene_brightness_modifier(scene, modifier)
+        if installed is not None:
+            _copy_opening_light_metadata(installed, modifier)
+            scene.window_light_modifiers.append(installed)
+            scene.opening_light_modifiers.append(installed)
+
     lighting = getattr(scene, "lighting", None)
     if lighting is not None:
-        lighting.extend_brightness_modifiers(
-            modifiers,
-            camera=getattr(scene, "camera", None),
-        )
         sync_aliases = getattr(scene, "_sync_lighting_aliases", None)
         if callable(sync_aliases):
             sync_aliases()
         else:
             scene.brightness_modifiers = lighting.brightness_modifiers
         return
-
-    if not hasattr(scene, "brightness_modifiers") or scene.brightness_modifiers is None:
-        scene.brightness_modifiers = []
-    scene.brightness_modifiers.extend(modifiers)
-
-    camera = getattr(scene, "camera", None)
-    for modifier in modifiers:
-        Torch.install_brightness_modifier(camera, modifier)
 
 
 def _build_building_torches(scene) -> None:
@@ -258,6 +451,9 @@ def _build_building_doors(scene) -> None:
     scene.doors = []
     add_entity = getattr(scene, "add_entity", None)
     covered_regions = list(getattr(scene, "covered_regions", ()) or ())
+    doorway_light_modifiers = list(
+        getattr(scene, "doorway_light_modifiers_by_region", ()) or ()
+    )
     lighting = getattr(scene, "lighting", None)
     sun_direction = getattr(
         lighting,
@@ -277,7 +473,15 @@ def _build_building_doors(scene) -> None:
         except (KeyError, TypeError, ValueError, AttributeError):
             continue
         if spec_index < len(covered_regions):
-            door.bind_doorway_light(covered_regions[spec_index])
+            brightness_modifier = (
+                doorway_light_modifiers[spec_index]
+                if spec_index < len(doorway_light_modifiers)
+                else None
+            )
+            door.bind_doorway_light(
+                covered_regions[spec_index],
+                brightness_modifier=brightness_modifier,
+            )
         scene.doors.append(door)
         if callable(add_entity):
             add_entity(door)

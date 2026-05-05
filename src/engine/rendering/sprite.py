@@ -113,6 +113,7 @@ def _sprite_data_cache(owner, sprites: list["WorldSprite"], *, static_data: bool
 
     if cache_valid:
         if static_data:
+            _refresh_dynamic_sprite_data_cache(cache, sprites)
             return cache
         _refresh_sprite_data_cache(cache, sprites)
         return cache
@@ -147,6 +148,11 @@ def _sprite_data_cache(owner, sprites: list["WorldSprite"], *, static_data: bool
         "limit": np.empty(sprite_count, dtype=np.float32),
         "mask": np.empty(sprite_count, dtype=bool),
         "mask_tmp": np.empty(sprite_count, dtype=bool),
+        "dynamic_indices": [
+            i
+            for i, sprite in enumerate(sprites)
+            if not getattr(sprite, "sprite_data_static", True)
+        ],
     }
     _refresh_sprite_data_cache(cache, sprites)
     setattr(owner, "_sprite_cull_cache", cache)
@@ -154,35 +160,58 @@ def _sprite_data_cache(owner, sprites: list["WorldSprite"], *, static_data: bool
 
 
 def _refresh_sprite_data_cache(cache: dict, sprites: list["WorldSprite"]) -> None:
+    for i, sprite in enumerate(sprites):
+        _refresh_sprite_data_cache_entry(cache, i, sprite)
+
+
+def _refresh_dynamic_sprite_data_cache(
+    cache: dict, sprites: list["WorldSprite"]
+) -> None:
+    for i in cache.get("dynamic_indices", ()):
+        if i < len(sprites):
+            _refresh_sprite_data_cache_entry(cache, i, sprites[i])
+
+
+def _refresh_sprite_data_cache_entry(
+    cache: dict, i: int, sprite: "WorldSprite"
+) -> None:
     positions = cache["positions"]
     sizes = cache["sizes"]
     uvs = cache["uvs"]
     rgb = cache["rgb"]
     textures = cache["textures"]
 
-    for i, sprite in enumerate(sprites):
-        texture = getattr(sprite, "texture", None)
+    texture = getattr(sprite, "texture", None)
+    texture_id = getattr(texture, "texture", None)
+    if texture_id is not None:
+        textures[i] = int(texture_id or 0)
+        uv = getattr(
+            texture,
+            "uv_rect",
+            getattr(sprite, "uv_rect", (0.0, 0.0, 1.0, 1.0)),
+        )
+    else:
         textures[i] = int(texture or 0)
-
-        pos = sprite.position
-        positions[i, 0] = pos.x
-        positions[i, 1] = pos.y
-        positions[i, 2] = pos.z
-
-        size = sprite.size
-        sizes[i, 0] = float(size[0])
-        sizes[i, 1] = float(size[1])
-
         uv = sprite.uv_rect
-        uvs[i, 0] = float(uv[0])
-        uvs[i, 1] = float(uv[1])
-        uvs[i, 2] = float(uv[2])
-        uvs[i, 3] = float(uv[3])
 
-        color = sprite.color
-        rgb[i, 0] = float(color[0])
-        rgb[i, 1] = float(color[1])
-        rgb[i, 2] = float(color[2])
+    pos = sprite.position
+    positions[i, 0] = pos.x
+    positions[i, 1] = pos.y
+    positions[i, 2] = pos.z
+
+    size = sprite.size
+    sizes[i, 0] = float(size[0])
+    sizes[i, 1] = float(size[1])
+
+    uvs[i, 0] = float(uv[0])
+    uvs[i, 1] = float(uv[1])
+    uvs[i, 2] = float(uv[2])
+    uvs[i, 3] = float(uv[3])
+
+    color = sprite.color
+    rgb[i, 0] = float(color[0])
+    rgb[i, 1] = float(color[1])
+    rgb[i, 2] = float(color[2])
 
 
 def _length_sq(v: Vector3) -> float:
@@ -207,6 +236,10 @@ class WorldSprite:
         if texture_id is not None:
             self.uv_rect = getattr(self.texture, "uv_rect", self.uv_rect)
             self.texture = int(texture_id)
+
+    @property
+    def sprite_data_static(self) -> bool:
+        return True
 
     @property
     def faces(self):
@@ -319,6 +352,53 @@ class WorldSprite:
         bl = center - right * hw - up * hh
 
         return [tl, tr, br, bl]
+
+
+@dataclass
+class AnimatedWorldSprite(WorldSprite):
+    frames: tuple[Any, ...] = ()
+    frame_duration: float = 0.12
+    animation_elapsed: float = 0.0
+    frame_index: int = 0
+    playing: bool = True
+
+    @property
+    def sprite_data_static(self) -> bool:
+        return False
+
+    def __post_init__(self) -> None:
+        self.frames = tuple(
+            frame for frame in (self.frames or (self.texture,)) if frame
+        )
+        self.frame_duration = max(1e-6, float(self.frame_duration))
+        if not self.frames:
+            self.texture = 0
+            return
+        self.frame_index = int(self.frame_index) % len(self.frames)
+        self._apply_frame(self.frame_index)
+
+    def _apply_frame(self, frame_index: int) -> None:
+        frame = self.frames[frame_index]
+        texture_id = getattr(frame, "texture", None)
+        if texture_id is not None:
+            self.texture = int(texture_id or 0)
+            self.uv_rect = getattr(frame, "uv_rect", self.uv_rect)
+        else:
+            self.texture = int(frame or 0)
+            self.uv_rect = (0.0, 0.0, 1.0, 1.0)
+
+    def update(self, dt: float) -> None:
+        if not self.playing or len(self.frames) <= 1:
+            return
+
+        self.animation_elapsed += max(0.0, float(dt))
+        frame_steps = int(self.animation_elapsed / self.frame_duration)
+        if frame_steps <= 0:
+            return
+
+        self.animation_elapsed -= frame_steps * self.frame_duration
+        self.frame_index = (self.frame_index + frame_steps) % len(self.frames)
+        self._apply_frame(self.frame_index)
 
 
 def draw_sprites_batched(

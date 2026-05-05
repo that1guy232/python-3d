@@ -7,7 +7,8 @@ initializer smaller and clearer.
 """
 
 from __future__ import annotations
-from typing import Dict, List, Optional
+from pathlib import Path
+from typing import Dict
 from textures.texture_utils import load_texture, load_texture_atlas
 from textures.resource_path import *
 
@@ -23,7 +24,7 @@ def load_world_textures() -> Dict[str, object]:
       - fence_textures (list)
       - item_textures (dict)
       - wall_tex
-      - torch_tex
+      - torch_tex (animated frame regions when available)
       - door_tex
       - window_tex
     """
@@ -81,7 +82,14 @@ def load_world_textures() -> Dict[str, object]:
 
     # Wall texture
     wall_tex = load_texture(WALL1_TEXTURE_PATH)
-    torch_tex = load_texture(TORCH_TEXTURE_PATH)
+    torch_frame_paths = [
+        path for path in TORCH_FRAME_TEXTURE_PATHS if Path(path).is_file()
+    ]
+    torch_tex = (
+        load_texture_atlas(torch_frame_paths)
+        if torch_frame_paths
+        else load_texture(TORCH_TEXTURE_PATH)
+    )
     door_tex = load_texture(DOOR_TEXTURE_PATH)
     window_tex = load_texture(WINDOW_TEXTURE_PATH)
 

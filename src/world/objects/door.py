@@ -99,6 +99,12 @@ class Door(TexturedSlabMixin, Entity):
         self._doorway_light_open_factor = 1.0
         self._doorway_light_closed_factor: float | None = None
         self._last_doorway_light_factor: float | None = None
+        self._doorway_brightness_modifier: dict[str, Any] | None = None
+        self._doorway_brightness_open_radius = 0.0
+        self._doorway_brightness_closed_radius = 0.0
+        self._doorway_brightness_open_value = 1.0
+        self._last_doorway_brightness_radius: float | None = None
+        self._last_doorway_brightness_value: float | None = None
         self.hinge = self.closed_center - self.tangent * (self.width * 0.5)
         self.panel_axis = self.tangent.copy()
         self.depth_axis = self.normal.copy()
@@ -229,7 +235,12 @@ class Door(TexturedSlabMixin, Entity):
         self.position = self.hinge + self.panel_axis * half_width
         self._mark_slab_mesh_dirty()
 
-    def bind_doorway_light(self, region: object) -> None:
+    def bind_doorway_light(
+        self,
+        region: object,
+        *,
+        brightness_modifier: object | None = None,
+    ) -> None:
         if not isinstance(region, dict):
             return
 
@@ -247,6 +258,40 @@ class Door(TexturedSlabMixin, Entity):
             self._doorway_light_closed_factor = max(0.0, min(1.0, float(closed_factor)))
         except (TypeError, ValueError):
             self._doorway_light_closed_factor = None
+
+        if isinstance(brightness_modifier, dict):
+            self._doorway_brightness_modifier = brightness_modifier
+            try:
+                self._doorway_brightness_open_radius = max(
+                    0.0,
+                    float(
+                        brightness_modifier.get(
+                            "open_radius",
+                            brightness_modifier.get("radius", 0.0),
+                        )
+                    ),
+                )
+            except (TypeError, ValueError):
+                self._doorway_brightness_open_radius = 0.0
+            try:
+                self._doorway_brightness_closed_radius = max(
+                    0.0,
+                    float(brightness_modifier.get("closed_radius", 0.0)),
+                )
+            except (TypeError, ValueError):
+                self._doorway_brightness_closed_radius = 0.0
+            try:
+                self._doorway_brightness_open_value = max(
+                    0.0,
+                    float(
+                        brightness_modifier.get(
+                            "open_value",
+                            brightness_modifier.get("value", 1.0),
+                        )
+                    ),
+                )
+            except (TypeError, ValueError):
+                self._doorway_brightness_open_value = 1.0
         self._sync_doorway_light(force=True)
 
     def _sync_doorway_light(self, *, force: bool = False) -> None:
@@ -274,15 +319,45 @@ class Door(TexturedSlabMixin, Entity):
         edge_factor = closed_factor + (
             self._doorway_light_open_factor - closed_factor
         ) * amount
+        light_changed = (
+            force
+            or self._last_doorway_light_factor is None
+            or abs(edge_factor - self._last_doorway_light_factor) > 1e-4
+        )
+
+        if light_changed:
+            doorway["edge_factor"] = edge_factor
+            self._last_doorway_light_factor = edge_factor
+        self._sync_doorway_brightness(amount, force=force)
+
+    def _sync_doorway_brightness(
+        self,
+        amount: float,
+        *,
+        force: bool = False,
+    ) -> None:
+        modifier = self._doorway_brightness_modifier
+        if not isinstance(modifier, dict):
+            return
+
+        radius = self._doorway_brightness_closed_radius + (
+            self._doorway_brightness_open_radius
+            - self._doorway_brightness_closed_radius
+        ) * amount
+        value = self._doorway_brightness_open_value
         if (
             not force
-            and self._last_doorway_light_factor is not None
-            and abs(edge_factor - self._last_doorway_light_factor) <= 1e-4
+            and self._last_doorway_brightness_radius is not None
+            and self._last_doorway_brightness_value is not None
+            and abs(radius - self._last_doorway_brightness_radius) <= 1e-4
+            and abs(value - self._last_doorway_brightness_value) <= 1e-4
         ):
             return
 
-        doorway["edge_factor"] = edge_factor
-        self._last_doorway_light_factor = edge_factor
+        modifier["radius"] = max(0.0, radius)
+        modifier["value"] = max(0.0, value)
+        self._last_doorway_brightness_radius = radius
+        self._last_doorway_brightness_value = value
 
     def _face_shade(self, face_idx: int) -> float:
         if face_idx == 0:
