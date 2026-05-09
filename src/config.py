@@ -49,6 +49,13 @@ GRAVITY = 800.0
 PLAYER_RADIUS = 16.0
 PLAYER_HEAD_CLEARANCE = 6.0
 
+# Goblins
+GOBLIN_COUNT = 60
+GOBLIN_SPAWN_TREE_RADIUS = 130.0
+GOBLIN_SPAWN_CLEARANCE = 24.0
+GOBLIN_MIN_SEPARATION = 90.0
+GOBLIN_SPAWN_ATTEMPTS = 90
+
 # Performance logging.
 # Enable in config, press F3 at runtime, or launch with:
 #   $env:PY3D_PERF_LOG="1"; py src/main.py

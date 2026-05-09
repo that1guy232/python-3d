@@ -13,6 +13,20 @@ from textures.texture_utils import load_texture, load_texture_atlas
 from textures.resource_path import *
 
 
+def _frame_sort_key(path: Path) -> tuple[int, int | str]:
+    stem = path.stem
+    if stem.isdigit():
+        return (0, int(stem))
+    return (1, stem.lower())
+
+
+def _png_sequence_paths(directory: str) -> list[str]:
+    frame_dir = Path(directory)
+    if not frame_dir.is_dir():
+        return []
+    return [str(path) for path in sorted(frame_dir.glob("*.png"), key=_frame_sort_key)]
+
+
 def load_world_textures() -> Dict[str, object]:
     """Load and return common world textures.
 
@@ -27,6 +41,7 @@ def load_world_textures() -> Dict[str, object]:
       - torch_tex (animated frame regions when available)
       - door_tex
       - window_tex
+      - goblin_front_tex (animated front-facing frame regions when available)
     """
     # Core textures
     ground_tex = load_texture(GRASS_TEXTURE_PATH)
@@ -92,6 +107,8 @@ def load_world_textures() -> Dict[str, object]:
     )
     door_tex = load_texture(DOOR_TEXTURE_PATH)
     window_tex = load_texture(WINDOW_TEXTURE_PATH)
+    goblin_front_frame_paths = _png_sequence_paths(GOBLIN_FRONT_TEXTURE_DIR_PATH)
+    goblin_front_tex = load_texture_atlas(goblin_front_frame_paths)
 
     return {
         "ground_tex": ground_tex,
@@ -105,5 +122,6 @@ def load_world_textures() -> Dict[str, object]:
         "torch_tex": torch_tex,
         "door_tex": door_tex,
         "window_tex": window_tex,
+        "goblin_front_tex": goblin_front_tex,
     }
 

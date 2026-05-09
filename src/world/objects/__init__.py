@@ -15,5 +15,6 @@ from .road import Road
 from .torch import Torch
 from .door import Door
 from .window import Window
+from .goblin import Goblin
 
-__all__ = ["GroundTile", "WallTile", "Road", "Torch", "Door", "Window"]
+__all__ = ["GroundTile", "WallTile", "Road", "Torch", "Door", "Window", "Goblin"]

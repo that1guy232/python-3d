@@ -9,6 +9,13 @@ from typing import Iterator
 
 from pygame.math import Vector3
 
+from config import (
+    GOBLIN_COUNT,
+    GOBLIN_MIN_SEPARATION,
+    GOBLIN_SPAWN_ATTEMPTS,
+    GOBLIN_SPAWN_CLEARANCE,
+    GOBLIN_SPAWN_TREE_RADIUS,
+)
 from engine.rendering.decal import Decal
 from engine.rendering.decal_batch import DecalBatch
 from engine.rendering.lighting import INDOOR_LIGHT_FACTOR
@@ -19,7 +26,7 @@ from textures.texture_utils import (
     create_tree_shadow_texture,
     load_texture,
 )
-from world.objects import Door, Road, Torch, Window
+from world.objects import Door, Goblin, Road, Torch, Window
 from world.objects.building import Building
 from world.objects.fence import build_textured_fence_ring
 from world.objects.ground import TexturedGroundGridBuilder
@@ -29,7 +36,7 @@ from world.world_road_planner import create_building_access_roads
 from world.world_spawner import spawn_world_sprites
 
 
-CREATE_WORLD_OBJECT_STEPS = 10
+CREATE_WORLD_OBJECT_STEPS = 11
 BUILDING_HEIGHT = 66.0
 BUILDING_ROOF_OVERHANG = 6.0
 BUILDING_WALL_TERRAIN_EMBED_DEPTH = 8.0
@@ -1474,6 +1481,11 @@ def _build_roads_and_spawn_sprites_steps(
     )
     yield (label, True)
 
+    label = "Spawning goblins"
+    yield (label, False)
+    _build_goblins(scene)
+    yield (label, True)
+
     label = "Spawning grass"
     yield (label, False)
     _spawn_sprite_layer(
@@ -1503,6 +1515,127 @@ def _build_roads_and_spawn_sprites_steps(
         max_spawn_z=(scene.ground_bounds[3] - scene.ground_bounds[2]) / 2,
     )
     yield (label, True)
+
+
+def _goblin_position_blocker(scene):
+    min_x, max_x, min_z, max_z = scene.ground_bounds
+    buildings = list(getattr(scene, "buildings", ()) or ())
+
+    def blocked(x: float, z: float, margin: float = 0.0) -> bool:
+        clearance = max(0.0, float(margin))
+        if (
+            x < min_x + clearance
+            or x > max_x - clearance
+            or z < min_z + clearance
+            or z > max_z - clearance
+        ):
+            return True
+
+        if scene.is_on_road(x, z, margin=clearance):
+            return True
+
+        for building in buildings:
+            contains_point = getattr(building, "contains_point", None)
+            if not callable(contains_point):
+                continue
+            if contains_point(x, z, margin=clearance):
+                return True
+
+        return False
+
+    return blocked
+
+
+def _random_goblin_spawn_near_tree(scene, rng: random.Random):
+    trees = list(getattr(scene, "trees", ()) or ())
+    min_x, max_x, min_z, max_z = scene.ground_bounds
+
+    if not trees:
+        x = rng.uniform(min_x, max_x)
+        z = rng.uniform(min_z, max_z)
+        return x, z
+
+    anchor = rng.choice(trees).position
+    angle = rng.uniform(0.0, math.tau)
+    radius = max(0.0, float(GOBLIN_SPAWN_TREE_RADIUS)) * math.sqrt(rng.random())
+    return (
+        float(anchor.x) + math.cos(angle) * radius,
+        float(anchor.z) + math.sin(angle) * radius,
+    )
+
+
+def _build_goblins(scene) -> None:
+    for goblin in getattr(scene, "goblins", ()) or ():
+        try:
+            if goblin in scene.entities:
+                scene.entities.remove(goblin)
+            for sprite in goblin.get_sprites() or ():
+                if sprite in scene.sprite_items:
+                    scene.sprite_items.remove(sprite)
+        except Exception:
+            continue
+
+    frames = Goblin.texture_or_load(getattr(scene, "goblin_front_tex", None))
+    scene.goblin_front_tex = frames
+    scene.goblins = []
+    count = max(0, int(getattr(scene, "goblin_count", GOBLIN_COUNT)))
+    if count <= 0 or not frames:
+        print("Spawned 0 goblins.")
+        return
+
+    rng = random.Random()
+    blocked = _goblin_position_blocker(scene)
+    clearance = max(
+        float(GOBLIN_SPAWN_CLEARANCE),
+        float(getattr(Goblin, "DEFAULT_HEIGHT", 0.0)) * 0.3,
+    )
+    min_separation_sq = max(0.0, float(GOBLIN_MIN_SEPARATION)) ** 2
+    max_attempts = max(1, int(GOBLIN_SPAWN_ATTEMPTS))
+    add_entity = getattr(scene, "add_entity", None)
+
+    for _ in range(count):
+        spawn = None
+        for _attempt in range(max_attempts):
+            x, z = _random_goblin_spawn_near_tree(scene, rng)
+            if blocked(x, z, clearance):
+                continue
+
+            too_close = False
+            for other in scene.goblins:
+                dx = other.spawn_position.x - x
+                dz = other.spawn_position.z - z
+                if dx * dx + dz * dz < min_separation_sq:
+                    too_close = True
+                    break
+            if too_close:
+                continue
+
+            spawn = Vector3(x, scene.ground_height_at(x, z), z)
+            break
+
+        if spawn is None:
+            continue
+
+        try:
+            goblin = Goblin(
+                spawn,
+                texture=frames,
+                camera=scene.camera,
+                ground_height_at=scene.ground_height_at,
+                position_blocked=blocked,
+                rng=random.Random(rng.randrange(1 << 30)),
+            )
+        except (TypeError, ValueError, AttributeError):
+            continue
+
+        scene.goblins.append(goblin)
+        if callable(add_entity):
+            add_entity(goblin)
+        else:
+            scene.entities.append(goblin)
+            scene.sprite_items.extend(goblin.get_sprites())
+
+    print(f"Spawned {len(scene.goblins)} goblins.")
 
 
 def _spawn_sprite_layer(
