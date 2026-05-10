@@ -368,7 +368,7 @@ class Goblin(Entity):
         dz = float(target.z) - self.position.z
         distance_sq = dx * dx + dz * dz
         reached = max(0.0, float(stop_distance))
-        if distance_sq <= reached * reached:
+        if self._target_reached(target, distance_sq, reached):
             self._set_facing(dx, dz)
             return "reached"
 
@@ -389,6 +389,31 @@ class Goblin(Entity):
         self._set_facing(next_x - self.position.x, next_z - self.position.z)
         self._set_xz(next_x, next_z)
         return "moved"
+
+    def _target_reached(
+        self,
+        target: Vector3,
+        horizontal_distance_sq: float,
+        stop_distance: float,
+    ) -> bool:
+        stop_distance = max(0.0, float(stop_distance))
+        if horizontal_distance_sq > stop_distance * stop_distance:
+            return False
+        if stop_distance <= 0.0:
+            return True
+
+        try:
+            target_ground_y = float(
+                self.ground_height_at(float(target.x), float(target.z))
+            )
+        except Exception:
+            return True
+
+        height_delta = target_ground_y - float(
+            getattr(self, "_ground_y", self.position.y)
+        )
+        surface_distance_sq = horizontal_distance_sq + height_delta * height_delta
+        return surface_distance_sq <= stop_distance * stop_distance
 
     def _pause_before_next_roam(self) -> None:
         self._target = None
