@@ -361,6 +361,7 @@ class AnimatedWorldSprite(WorldSprite):
     animation_elapsed: float = 0.0
     frame_index: int = 0
     playing: bool = True
+    flip_x: bool = False
 
     @property
     def sprite_data_static(self) -> bool:
@@ -382,10 +383,16 @@ class AnimatedWorldSprite(WorldSprite):
         texture_id = getattr(frame, "texture", None)
         if texture_id is not None:
             self.texture = int(texture_id or 0)
-            self.uv_rect = getattr(frame, "uv_rect", self.uv_rect)
+            uv_rect = getattr(frame, "uv_rect", self.uv_rect)
         else:
             self.texture = int(frame or 0)
-            self.uv_rect = (0.0, 0.0, 1.0, 1.0)
+            uv_rect = (0.0, 0.0, 1.0, 1.0)
+
+        if self.flip_x:
+            u0, v0, u1, v1 = uv_rect
+            self.uv_rect = (u1, v0, u0, v1)
+        else:
+            self.uv_rect = uv_rect
 
     def update(self, dt: float) -> None:
         if not self.playing or len(self.frames) <= 1:
@@ -616,6 +623,7 @@ def draw_sprites_batched(
 
     # Group adjacent depth-sorted sprites by texture. If callers provide atlas
     # regions, many logical sprites share the same underlying GL texture.
+    visible_count = len(visible_indices)
     batches = []
     with _profile(profiler, "sprites.batch_build"):
         textures = data_cache["textures"]
@@ -623,9 +631,10 @@ def draw_sprites_batched(
         split_points = np.flatnonzero(visible_textures[1:] != visible_textures[:-1]) + 1
         start = 0
         for end in split_points:
-            batches.append((int(visible_textures[start]), visible_indices[start:end]))
-            start = int(end)
-        batches.append((int(visible_textures[start]), visible_indices[start:]))
+            batch_end = int(end)
+            batches.append((int(visible_textures[start]), start, batch_end - start))
+            start = batch_end
+        batches.append((int(visible_textures[start]), start, visible_count - start))
     _count(profiler, "sprites.batches", len(batches))
 
     with _profile(profiler, "sprites.draw_gl"):
@@ -655,101 +664,104 @@ def draw_sprites_batched(
         source_rgb = data_cache["rgb"]
 
         try:
-            for tex, batch_indices in batches:
-                sprite_count = len(batch_indices)
-                vertex_count = sprite_count * 6
-                _count(profiler, "sprites.vertices", vertex_count)
+            sprite_count = visible_count
+            vertex_count = sprite_count * 6
+            _count(profiler, "sprites.vertices", vertex_count)
 
-                with _profile(profiler, "sprites.build_arrays"):
-                    scratch = _sprite_array_scratch(camera, sprite_count)
-                    positions = scratch["positions"][:sprite_count]
-                    sizes = scratch["sizes"][:sprite_count]
-                    uvs = scratch["uvs"][:sprite_count]
-                    rgb = scratch["rgb"][:sprite_count]
-                    vertices = scratch["vertices"][:vertex_count]
-                    colors = scratch["colors"][:vertex_count]
-                    texcoords = scratch["texcoords"][:vertex_count]
-                    normals = scratch["normals"][:vertex_count] if use_shader_lighting else None
+            with _profile(profiler, "sprites.build_arrays"):
+                scratch = _sprite_array_scratch(camera, sprite_count)
+                positions = scratch["positions"][:sprite_count]
+                sizes = scratch["sizes"][:sprite_count]
+                uvs = scratch["uvs"][:sprite_count]
+                rgb = scratch["rgb"][:sprite_count]
+                vertices = scratch["vertices"][:vertex_count]
+                colors = scratch["colors"][:vertex_count]
+                texcoords = scratch["texcoords"][:vertex_count]
+                normals = scratch["normals"][:vertex_count] if use_shader_lighting else None
 
-                    np.take(source_positions, batch_indices, axis=0, out=positions)
-                    np.take(source_sizes, batch_indices, axis=0, out=sizes)
-                    np.take(source_uvs, batch_indices, axis=0, out=uvs)
+                np.take(source_positions, visible_indices, axis=0, out=positions)
+                np.take(source_sizes, visible_indices, axis=0, out=sizes)
+                np.take(source_uvs, visible_indices, axis=0, out=uvs)
+                np.take(source_rgb, visible_indices, axis=0, out=rgb)
 
-                    if use_shader_lighting:
-                        np.take(source_rgb, batch_indices, axis=0, out=rgb)
+                if not use_shader_lighting:
+                    if has_brightness_areas and get_brightness_at is not None:
+                        for out_i, sprite_idx in enumerate(visible_indices):
+                            brightness = get_brightness_at(
+                                sprites[int(sprite_idx)].position
+                            )
+                            if brightness < brightness_default:
+                                brightness = brightness_default
+                            rgb[out_i, 0] *= brightness * sun_factor
+                            rgb[out_i, 1] *= brightness * sun_factor
+                            rgb[out_i, 2] *= brightness * sun_factor
                     else:
-                        np.take(source_rgb, batch_indices, axis=0, out=rgb)
-                        if has_brightness_areas and get_brightness_at is not None:
-                            for out_i, sprite_idx in enumerate(batch_indices):
-                                brightness = get_brightness_at(
-                                    sprites[int(sprite_idx)].position
-                                )
-                                if brightness < brightness_default:
-                                    brightness = brightness_default
-                                rgb[out_i, 0] *= brightness * sun_factor
-                                rgb[out_i, 1] *= brightness * sun_factor
-                                rgb[out_i, 2] *= brightness * sun_factor
-                        else:
-                            rgb *= brightness_default * sun_factor
-                        np.clip(rgb, 0.0, 1.0, out=rgb)
+                        rgb *= brightness_default * sun_factor
+                    np.clip(rgb, 0.0, 1.0, out=rgb)
 
-                    hw = sizes[:, 0] * 0.5
-                    hh = sizes[:, 1] * 0.5
+                hw = sizes[:, 0] * 0.5
+                hh = sizes[:, 1] * 0.5
 
-                    vertex_view = vertices.reshape(sprite_count, 6, 3)
-                    vertex_view[:, 0, :] = positions
-                    vertex_view[:, 0, 0] += -rx_x * hw + ux_x * hh
-                    vertex_view[:, 0, 1] += -rx_y * hw + ux_y * hh
-                    vertex_view[:, 0, 2] += -rx_z * hw + ux_z * hh
+                vertex_view = vertices.reshape(sprite_count, 6, 3)
+                vertex_view[:, 0, :] = positions
+                vertex_view[:, 0, 0] += -rx_x * hw + ux_x * hh
+                vertex_view[:, 0, 1] += -rx_y * hw + ux_y * hh
+                vertex_view[:, 0, 2] += -rx_z * hw + ux_z * hh
 
-                    vertex_view[:, 1, :] = positions
-                    vertex_view[:, 1, 0] += rx_x * hw + ux_x * hh
-                    vertex_view[:, 1, 1] += rx_y * hw + ux_y * hh
-                    vertex_view[:, 1, 2] += rx_z * hw + ux_z * hh
+                vertex_view[:, 1, :] = positions
+                vertex_view[:, 1, 0] += rx_x * hw + ux_x * hh
+                vertex_view[:, 1, 1] += rx_y * hw + ux_y * hh
+                vertex_view[:, 1, 2] += rx_z * hw + ux_z * hh
 
-                    vertex_view[:, 2, :] = positions
-                    vertex_view[:, 2, 0] += rx_x * hw - ux_x * hh
-                    vertex_view[:, 2, 1] += rx_y * hw - ux_y * hh
-                    vertex_view[:, 2, 2] += rx_z * hw - ux_z * hh
+                vertex_view[:, 2, :] = positions
+                vertex_view[:, 2, 0] += rx_x * hw - ux_x * hh
+                vertex_view[:, 2, 1] += rx_y * hw - ux_y * hh
+                vertex_view[:, 2, 2] += rx_z * hw - ux_z * hh
 
-                    vertex_view[:, 3, :] = vertex_view[:, 0, :]
-                    vertex_view[:, 4, :] = vertex_view[:, 2, :]
+                vertex_view[:, 3, :] = vertex_view[:, 0, :]
+                vertex_view[:, 4, :] = vertex_view[:, 2, :]
 
-                    vertex_view[:, 5, :] = positions
-                    vertex_view[:, 5, 0] += -rx_x * hw - ux_x * hh
-                    vertex_view[:, 5, 1] += -rx_y * hw - ux_y * hh
-                    vertex_view[:, 5, 2] += -rx_z * hw - ux_z * hh
+                vertex_view[:, 5, :] = positions
+                vertex_view[:, 5, 0] += -rx_x * hw - ux_x * hh
+                vertex_view[:, 5, 1] += -rx_y * hw - ux_y * hh
+                vertex_view[:, 5, 2] += -rx_z * hw - ux_z * hh
 
-                    texcoord_view = texcoords.reshape(sprite_count, 6, 2)
-                    texcoord_view[:, 0, 0] = uvs[:, 0]
-                    texcoord_view[:, 0, 1] = uvs[:, 3]
-                    texcoord_view[:, 1, 0] = uvs[:, 2]
-                    texcoord_view[:, 1, 1] = uvs[:, 3]
-                    texcoord_view[:, 2, 0] = uvs[:, 2]
-                    texcoord_view[:, 2, 1] = uvs[:, 1]
-                    texcoord_view[:, 3, :] = texcoord_view[:, 0, :]
-                    texcoord_view[:, 4, :] = texcoord_view[:, 2, :]
-                    texcoord_view[:, 5, 0] = uvs[:, 0]
-                    texcoord_view[:, 5, 1] = uvs[:, 1]
+                texcoord_view = texcoords.reshape(sprite_count, 6, 2)
+                texcoord_view[:, 0, 0] = uvs[:, 0]
+                texcoord_view[:, 0, 1] = uvs[:, 3]
+                texcoord_view[:, 1, 0] = uvs[:, 2]
+                texcoord_view[:, 1, 1] = uvs[:, 3]
+                texcoord_view[:, 2, 0] = uvs[:, 2]
+                texcoord_view[:, 2, 1] = uvs[:, 1]
+                texcoord_view[:, 3, :] = texcoord_view[:, 0, :]
+                texcoord_view[:, 4, :] = texcoord_view[:, 2, :]
+                texcoord_view[:, 5, 0] = uvs[:, 0]
+                texcoord_view[:, 5, 1] = uvs[:, 1]
 
-                    color_view = colors.reshape(sprite_count, 6, 4)
-                    color_view[:, :, 0:3] = rgb[:, np.newaxis, :]
-                    color_view[:, :, 3] = 1.0
+                color_view = colors.reshape(sprite_count, 6, 4)
+                color_view[:, :, 0:3] = rgb[:, np.newaxis, :]
+                color_view[:, :, 3] = 1.0
 
-                    if normals is not None:
-                        normal_view = normals.reshape(sprite_count, 6, 3)
-                        normal_view[:, :, 0] = fn_x
-                        normal_view[:, :, 1] = fn_y
-                        normal_view[:, :, 2] = fn_z
+                if normals is not None:
+                    normal_view = normals.reshape(sprite_count, 6, 3)
+                    normal_view[:, :, 0] = fn_x
+                    normal_view[:, :, 1] = fn_y
+                    normal_view[:, :, 2] = fn_z
 
-                with _profile(profiler, "sprites.submit_arrays"):
+            with _profile(profiler, "sprites.submit_arrays"):
+                glVertexPointer_local(3, GL_FLOAT, 0, vertices)
+                glColorPointer_local(4, GL_FLOAT, 0, colors)
+                glTexCoordPointer_local(2, GL_FLOAT, 0, texcoords)
+                if normals is not None:
+                    glNormalPointer_local(GL_FLOAT, 0, normals)
+
+                for tex, batch_start, batch_sprite_count in batches:
                     glBindTexture_local(GL_TEXTURE_2D, tex)
-                    glVertexPointer_local(3, GL_FLOAT, 0, vertices)
-                    glColorPointer_local(4, GL_FLOAT, 0, colors)
-                    glTexCoordPointer_local(2, GL_FLOAT, 0, texcoords)
-                    if normals is not None:
-                        glNormalPointer_local(GL_FLOAT, 0, normals)
-                    glDrawArrays_local(GL_TRIANGLES, 0, vertex_count)
+                    glDrawArrays_local(
+                        GL_TRIANGLES,
+                        batch_start * 6,
+                        batch_sprite_count * 6,
+                    )
         finally:
             if shader is not None:
                 use_fixed_pipeline()

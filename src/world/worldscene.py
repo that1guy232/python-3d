@@ -25,6 +25,7 @@ from engine.rendering.decal_batch import DecalBatch
 from engine.rendering.sprite import WorldSprite, draw_sprites_batched
 from world import world_builder, world_runtime, world_setup
 from world.objects import WallTile
+from world.objects.goblin import draw_goblin_shadows_batched
 from world.objects.wall_tile import build_wall_tile_batches
 from world.objects.polygon import Polygon
 from world.world_renderer import WorldRenderer
@@ -47,12 +48,20 @@ class WorldScene(Scene):
         super().__init__()
         self.sprite_items: list[WorldSprite] = []
         self.entities: list[Entity] = []
+        self.immediate_entities: list[Entity] = []
         self.decals: list[Decal] = []
         self.decal_batches: list[DecalBatch] = []
         self.wall_tiles: list[object] = []
         self.wall_tile_batches: list[object] = []
+        self.road_batches: list[object] = []
+        self.door_batches: list[object] = []
+        self.window_batches: list[object] = []
         self.polygons: list[Polygon] = []
+        self.polygon_batches: list[object] = []
         self.others: list[object] = []
+        self._texture_lighting_sync_key = None
+        self._texture_lighting_sync_result = False
+        self._collision_spatial_index = None
 
         self.renderer = WorldRenderer(self)
         self._initialized = False
@@ -241,6 +250,13 @@ class WorldScene(Scene):
         """Register a runtime entity and its scene-facing resources."""
         if entity not in self.entities:
             self.entities.append(entity)
+        if (
+            entity not in self.immediate_entities
+            and not getattr(entity, "door_render_batched", False)
+            and not getattr(entity, "render_batched", False)
+            and not getattr(entity, "shadow_render_batched", False)
+        ):
+            self.immediate_entities.append(entity)
 
         get_sprites = getattr(entity, "get_sprites", None)
         if callable(get_sprites):
@@ -256,6 +272,15 @@ class WorldScene(Scene):
 
         return entity
 
+    def refresh_immediate_entities(self) -> None:
+        self.immediate_entities = [
+            entity
+            for entity in self.entities
+            if not getattr(entity, "door_render_batched", False)
+            and not getattr(entity, "render_batched", False)
+            and not getattr(entity, "shadow_render_batched", False)
+        ]
+
     def _sync_lighting_aliases(self):
         """Keep older scene attributes pointing at the shared lighting model."""
         lighting = getattr(self, "lighting", None)
@@ -266,6 +291,9 @@ class WorldScene(Scene):
         self.brightness_modifiers = lighting.brightness_modifiers
         self.covered_regions = lighting.covered_regions
         return lighting
+
+    def invalidate_texture_lighting_cache(self) -> None:
+        self._texture_lighting_sync_key = None
 
     def draw_sky(self) -> None:  # pragma: no cover - visual
         return self.renderer.draw_sky()
@@ -304,8 +332,13 @@ class WorldScene(Scene):
             )
 
         start_draw_polygons_time = time.perf_counter()
+        with self._profile("objects.polygon_batches"):
+            for batch in getattr(self, "polygon_batches", ()) or ():
+                batch.draw(camera=self.camera)
         with self._profile("objects.polygons"):
             for polygon in self.polygons:
+                if getattr(polygon, "render_batched", False):
+                    continue
                 polygon.draw(camera=self.camera)
         end_draw_polygons_time = time.perf_counter()
         if enable_timing:
@@ -387,8 +420,14 @@ class WorldScene(Scene):
         starting_draw_other_time = time.perf_counter()
         cam_pos = self.camera.position if self.camera is not None else None
         view_distance_sq = VIEWDISTANCE * VIEWDISTANCE
+        with self._profile("objects.road_batches"):
+            for batch in getattr(self, "road_batches", ()) or ():
+                batch.draw()
+
         with self._profile("objects.others"):
             for obj in self.others:
+                if getattr(obj, "render_batched", False):
+                    continue
                 if cam_pos is not None:
                     pos = _approx_pos(obj)
                     if pos is not None:
@@ -411,8 +450,25 @@ class WorldScene(Scene):
 
         start_draw_entities_time = time.perf_counter()
         cam_pos = self.camera.position if self.camera is not None else None
+
+        with self._profile("objects.door_batches"):
+            for batch in getattr(self, "door_batches", ()) or ():
+                batch.draw()
+
+        with self._profile("objects.window_batches"):
+            for batch in getattr(self, "window_batches", ()) or ():
+                batch.draw()
+
+        with self._profile("objects.goblin_shadows"):
+            goblins = getattr(self, "goblins", None) or self.entities
+            draw_goblin_shadows_batched(
+                goblins,
+                camera=self.camera,
+                view_distance=VIEWDISTANCE,
+            )
+
         with self._profile("objects.entities"):
-            for entity in self.entities:
+            for entity in getattr(self, "immediate_entities", ()) or ():
                 if not getattr(entity, "enabled", True) or not getattr(
                     entity,
                     "visible",
@@ -471,6 +527,46 @@ class WorldScene(Scene):
 
     def is_on_road(self, x: float, z: float, *, margin: float = 0.0) -> bool:
         return world_runtime.is_on_road(self, x, z, margin=margin)
+
+    def invalidate_collision_index(self) -> None:
+        return world_runtime.invalidate_collision_index(self)
+
+    def rebuild_collision_index(self) -> dict:
+        return world_runtime.rebuild_collision_index(self)
+
+    def collision_meshes_for_bounds(
+        self,
+        min_x: float,
+        max_x: float,
+        min_z: float,
+        max_z: float,
+        *,
+        include_polygons: bool = True,
+    ) -> list:
+        return world_runtime.collision_meshes_for_bounds(
+            self,
+            min_x,
+            max_x,
+            min_z,
+            max_z,
+            include_polygons=include_polygons,
+        )
+
+    def collision_meshes_at(
+        self,
+        x: float,
+        z: float,
+        radius: float,
+        *,
+        include_polygons: bool = True,
+    ) -> list:
+        return world_runtime.collision_meshes_at(
+            self,
+            x,
+            z,
+            radius,
+            include_polygons=include_polygons,
+        )
 
     def ground_height_at(self, x: float, z: float) -> float:
         return world_runtime.ground_height_at(self, x, z)
@@ -575,6 +671,7 @@ class WorldScene(Scene):
             self._sync_lighting_aliases()
         else:
             self.brightness_modifiers = modifiers
+        self.invalidate_texture_lighting_cache()
 
     @staticmethod
     def _dispose_renderable(obj) -> None:
@@ -633,6 +730,7 @@ class WorldScene(Scene):
                     sun_direction=sun_direction,
                     height_sampler=height_sampler,
                 )
+        world_builder._build_road_batches(self)
 
         for wall in getattr(self, "walls", ()) or ():
             wall.sun_direction = sun_direction
@@ -675,30 +773,216 @@ class WorldScene(Scene):
             if base_brightness is not None
             else float(getattr(camera, "brightness_default", 1.0))
         )
+        brightness_areas = getattr(
+            lighting,
+            "brightness_modifiers",
+            getattr(camera, "brightness_areas", ()),
+        )
+        covered_regions = getattr(
+            lighting,
+            "covered_regions",
+            getattr(self, "covered_regions", ()),
+        )
+        sun_direction = getattr(
+            lighting,
+            "sun_direction",
+            getattr(self, "sun_direction", None),
+        )
+        sync_key = self._texture_lighting_fast_key(
+            brightness=brightness,
+            lighting=lighting,
+            sun_direction=sun_direction,
+            brightness_areas=brightness_areas,
+            covered_regions=covered_regions,
+            compile_shader=compile_shader,
+        )
+        if sync_key == self._texture_lighting_sync_key:
+            return self._texture_lighting_sync_result
+
         if lighting is not None:
             lighting.set_base_brightness(brightness)
             self._sync_lighting_aliases()
-        return set_texture_lighting_state(
+        result = set_texture_lighting_state(
             base_brightness=brightness,
             lighting=lighting,
-            sun_direction=getattr(
-                lighting,
-                "sun_direction",
-                getattr(self, "sun_direction", None),
-            ),
-            brightness_areas=getattr(
-                lighting,
-                "brightness_modifiers",
-                getattr(camera, "brightness_areas", ()),
-            ),
-            covered_regions=getattr(
-                lighting,
-                "covered_regions",
-                getattr(self, "covered_regions", ()),
-            ),
+            sun_direction=sun_direction,
+            brightness_areas=brightness_areas,
+            covered_regions=covered_regions,
             exposure_scale=1.0,
             compile_shader=compile_shader,
         )
+        self._texture_lighting_sync_key = sync_key
+        self._texture_lighting_sync_result = result
+        return result
+
+    def _texture_lighting_fast_key(
+        self,
+        *,
+        brightness: float,
+        lighting,
+        sun_direction,
+        brightness_areas,
+        covered_regions,
+        compile_shader: bool,
+    ):
+        return (
+            bool(compile_shader),
+            self._rounded(brightness),
+            self._vector_key(sun_direction),
+            self._rounded(getattr(lighting, "ambient", 0.72)),
+            self._rounded(getattr(lighting, "diffuse", 0.48)),
+            self._rounded(getattr(lighting, "max_factor", 1.15)),
+            self._collection_identity_key(brightness_areas),
+            self._collection_identity_key(covered_regions),
+            tuple(
+                self._rounded(getattr(door, "open_amount", 0.0), digits=4)
+                for door in getattr(self, "doors", ()) or ()
+            ),
+        )
+
+    @staticmethod
+    def _collection_identity_key(values):
+        try:
+            return (id(values), len(values))
+        except Exception:
+            return (id(values), None)
+
+    @classmethod
+    def _texture_lighting_key(
+        cls,
+        *,
+        brightness: float,
+        lighting,
+        sun_direction,
+        brightness_areas,
+        covered_regions,
+        compile_shader: bool,
+    ):
+        return (
+            bool(compile_shader),
+            cls._rounded(brightness),
+            cls._vector_key(sun_direction),
+            cls._rounded(getattr(lighting, "ambient", 0.72)),
+            cls._rounded(getattr(lighting, "diffuse", 0.48)),
+            cls._rounded(getattr(lighting, "max_factor", 1.15)),
+            cls._brightness_areas_key(brightness_areas),
+            cls._covered_regions_key(covered_regions),
+        )
+
+    @staticmethod
+    def _rounded(value, digits: int = 5):
+        try:
+            return round(float(value), digits)
+        except Exception:
+            return None
+
+    @classmethod
+    def _vector_key(cls, value):
+        try:
+            return (
+                cls._rounded(value.x),
+                cls._rounded(value.y),
+                cls._rounded(value.z),
+            )
+        except Exception:
+            try:
+                return (
+                    cls._rounded(value[0]),
+                    cls._rounded(value[1]),
+                    cls._rounded(value[2]),
+                )
+            except Exception:
+                return None
+
+    @classmethod
+    def _brightness_areas_key(cls, areas):
+        values = []
+        for area in areas or ():
+            try:
+                if isinstance(area, dict):
+                    center = area.get("center")
+                    bounds = area.get("bounds")
+                    values.append(
+                        (
+                            cls._vector_key(center),
+                            cls._rounded(area.get("radius")),
+                            cls._rounded(area.get("value")),
+                            cls._rounded(area.get("falloff", 1.0)),
+                            cls._bounds_key(bounds),
+                            bool(area.get("indoor_only", False)),
+                            cls._rounded(area.get("floor_scale", 1.0)),
+                        )
+                    )
+                else:
+                    center, radius, value, falloff = area[:4]
+                    values.append(
+                        (
+                            cls._vector_key(center),
+                            cls._rounded(radius),
+                            cls._rounded(value),
+                            cls._rounded(falloff),
+                            cls._bounds_key(area[4] if len(area) > 4 else None),
+                            False,
+                            1.0,
+                        )
+                    )
+            except Exception:
+                continue
+        return tuple(values)
+
+    @classmethod
+    def _covered_regions_key(cls, regions):
+        values = []
+        for region in regions or ():
+            if not isinstance(region, dict):
+                try:
+                    values.append(tuple(cls._rounded(part) for part in region[:5]))
+                except Exception:
+                    continue
+                continue
+
+            openings = region.get("openings")
+            if not isinstance(openings, (list, tuple)):
+                openings = [
+                    value
+                    for value in (region.get("doorway"), *(region.get("windows") or ()))
+                    if isinstance(value, dict)
+                ]
+
+            values.append(
+                (
+                    cls._rounded(region.get("min_x")),
+                    cls._rounded(region.get("max_x")),
+                    cls._rounded(region.get("min_z")),
+                    cls._rounded(region.get("max_z")),
+                    cls._rounded(region.get("factor", 1.0)),
+                    tuple(cls._opening_key(opening) for opening in openings),
+                )
+            )
+        return tuple(values)
+
+    @classmethod
+    def _opening_key(cls, opening):
+        if not isinstance(opening, dict):
+            return None
+        return (
+            str(opening.get("side", "")),
+            cls._rounded(opening.get("center_x")),
+            cls._rounded(opening.get("center_z")),
+            cls._rounded(opening.get("width")),
+            cls._rounded(opening.get("depth")),
+            cls._rounded(opening.get("side_fade")),
+            cls._rounded(opening.get("edge_factor", 1.0)),
+        )
+
+    @classmethod
+    def _bounds_key(cls, bounds):
+        if bounds is None:
+            return None
+        try:
+            return tuple(cls._rounded(part) for part in bounds)
+        except Exception:
+            return None
 
     @staticmethod
     def _uses_texture_shader(obj) -> bool:
@@ -719,6 +1003,10 @@ class WorldScene(Scene):
             if not self._uses_texture_shader(mesh):
                 self._set_exposure_cpu(mesh, exposure)
 
+        for batch in getattr(self, "road_batches", ()) or ():
+            if not self._uses_texture_shader(batch):
+                self._set_exposure_cpu(batch, exposure)
+
         for mesh in getattr(self, "wall_tile_batches", ()) or ():
             if not self._uses_texture_shader(mesh):
                 self._set_exposure_cpu(mesh, exposure)
@@ -738,6 +1026,9 @@ class WorldScene(Scene):
 
         for mesh in getattr(self, "fence_meshes", ()) or ():
             self._set_exposure_cpu(mesh, exposure)
+
+        for batch in getattr(self, "road_batches", ()) or ():
+            self._set_exposure_cpu(batch, exposure)
 
         for mesh in getattr(self, "wall_tile_batches", ()) or ():
             self._set_exposure_cpu(mesh, exposure)
@@ -794,10 +1085,14 @@ class WorldScene(Scene):
         for attr_name in (
             "fence_meshes",
             "wall_tile_batches",
+            "road_batches",
             "decal_batches",
             "decals",
             "roads",
             "building_roads",
+            "door_batches",
+            "window_batches",
+            "polygon_batches",
             "others",
             "entities",
         ):
@@ -810,9 +1105,15 @@ class WorldScene(Scene):
         self.decal_batch = None
         self.fence_meshes = []
         self.wall_tile_batches = []
+        self.road_batches = []
         self.decal_batches = []
         self.decals = []
         self.roads = []
         self.building_roads = []
+        self.door_batches = []
+        self.window_batches = []
+        self.polygon_batches = []
+        self._collision_spatial_index = None
         self.others = []
         self.entities = []
+        self.immediate_entities = []

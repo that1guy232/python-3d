@@ -115,6 +115,7 @@ class Window(TexturedSlabMixin, Entity):
         self.panel_axis = self.tangent.copy()
         self.depth_axis = self.normal.copy()
         self._bounds_cache: tuple[float, float, float, float] | None = None
+        self.render_batched = False
 
     def dispose(self) -> None:
         super().dispose()
@@ -427,3 +428,116 @@ class Window(TexturedSlabMixin, Entity):
 
         self._draw_cached_corner_backing()
         self._draw_cached_textured_slab_faces(verts)
+
+
+class WindowRenderBatch:
+    """Combined static render meshes for many windows."""
+
+    def __init__(self, windows) -> None:
+        self.windows = tuple(windows)
+        self._backing_meshes: list[BatchedMesh] = []
+        self._slab_meshes: list[BatchedMesh] = []
+        self._cache_key = None
+
+    def dispose(self) -> None:
+        for mesh in (*self._backing_meshes, *self._slab_meshes):
+            try:
+                mesh.dispose()
+            except Exception:
+                pass
+        self._backing_meshes = []
+        self._slab_meshes = []
+        self._cache_key = None
+
+    def _current_cache_key(self):
+        return tuple(
+            (
+                id(window),
+                bool(getattr(window, "visible", True)),
+                int(getattr(window, "texture", 0) or 0),
+                int(getattr(window, "backing_texture", 0) or 0),
+                window._slab_light_cache_key(),
+            )
+            for window in self.windows
+        )
+
+    @staticmethod
+    def _make_meshes(groups, *, alpha_test: bool) -> list[BatchedMesh]:
+        meshes = []
+        for (texture, _columns), chunks in groups.items():
+            if not chunks:
+                continue
+            vertex_data = np.ascontiguousarray(
+                np.concatenate(chunks, axis=0),
+                dtype=np.float32,
+            )
+            if vertex_data.size == 0:
+                continue
+            meshes.append(
+                BatchedMesh.from_vertex_data(
+                    vertex_data,
+                    texture=texture if texture else None,
+                    alpha_test=alpha_test,
+                    exposure_baseline=1.0,
+                    environment_lighting=False,
+                )
+            )
+        return meshes
+
+    def _rebuild(self) -> None:
+        self.dispose()
+        backing_groups = {}
+        slab_groups = {}
+
+        for window in self.windows:
+            if not getattr(window, "visible", True) or not getattr(
+                window,
+                "texture",
+                0,
+            ):
+                continue
+
+            backing_data = window._corner_backing_vertex_data()
+            if backing_data.size:
+                texture = int(getattr(window, "backing_texture", 0) or 0)
+                if texture:
+                    glBindTexture(GL_TEXTURE_2D, texture)
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
+                backing_groups.setdefault(
+                    (texture, int(backing_data.shape[1])),
+                    [],
+                ).append(backing_data)
+
+            verts = window._visual_vertices()
+            if not verts:
+                continue
+            slab_data = window._slab_vertex_data(verts)
+            if slab_data.size:
+                slab_groups.setdefault(
+                    (int(window.texture), int(slab_data.shape[1])),
+                    [],
+                ).append(slab_data)
+
+        self._backing_meshes = self._make_meshes(backing_groups, alpha_test=False)
+        self._slab_meshes = self._make_meshes(slab_groups, alpha_test=True)
+
+    def draw(self) -> None:  # pragma: no cover - visual
+        cache_key = self._current_cache_key()
+        if cache_key != self._cache_key:
+            self._rebuild()
+            self._cache_key = cache_key
+
+        for mesh in self._backing_meshes:
+            mesh.draw()
+        for mesh in self._slab_meshes:
+            mesh.draw()
+
+
+def build_window_render_batch(windows) -> WindowRenderBatch | None:
+    window_list = [window for window in windows or () if window is not None]
+    if not window_list:
+        return None
+    for window in window_list:
+        window.render_batched = True
+    return WindowRenderBatch(window_list)

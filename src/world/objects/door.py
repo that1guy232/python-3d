@@ -5,8 +5,10 @@ from __future__ import annotations
 import math
 from typing import Any, Callable
 
+import numpy as np
 from pygame.math import Vector3
 
+from core.mesh import BatchedMesh
 from engine.entity import Entity
 from engine.rendering.lighting import (
     INDOOR_LIGHT_FACTOR,
@@ -90,6 +92,8 @@ class Door(TexturedSlabMixin, Entity):
         self.interaction_distance = max(0.0, float(interaction_distance))
         self.open_amount = 0.0
         self.target_open = False
+        self.door_render_batched = False
+        self.runtime_update_enabled = False
         self.collision_enabled = True
         self.texture = texture_id(texture)
         self.uv_rect = texture_uv_rect(texture)
@@ -189,10 +193,12 @@ class Door(TexturedSlabMixin, Entity):
     def open(self) -> None:
         self.target_open = True
         self.collision_enabled = False
+        self.runtime_update_enabled = self.open_amount < 1.0 - 1e-4
 
     def close(self) -> None:
         self.target_open = False
         self.collision_enabled = False
+        self.runtime_update_enabled = self.open_amount > 1e-4
 
     def toggle(self) -> None:
         if self.target_open:
@@ -207,6 +213,7 @@ class Door(TexturedSlabMixin, Entity):
     def update(self, dt: float) -> None:
         target = 1.0 if self.target_open else 0.0
         if self.open_amount == target:
+            self.runtime_update_enabled = False
             return
 
         step = self.swing_speed * max(0.0, float(dt))
@@ -219,6 +226,9 @@ class Door(TexturedSlabMixin, Entity):
 
         if not self.target_open and self.open_amount <= 0.0:
             self.collision_enabled = True
+        if abs(self.open_amount - target) <= 1e-4:
+            self.open_amount = target
+            self.runtime_update_enabled = False
 
         self._bounds_cache = None
         self._sync_visual()
@@ -418,3 +428,88 @@ class Door(TexturedSlabMixin, Entity):
 
     def _collision_depth_axis(self) -> Vector3:
         return self.normal
+
+
+class DoorRenderBatch:
+    """Combined render mesh for interactive door slabs."""
+
+    def __init__(self, doors) -> None:
+        self.doors = tuple(doors)
+        self._meshes: list[BatchedMesh] = []
+        self._cache_key = None
+
+    def dispose(self) -> None:
+        for mesh in self._meshes:
+            try:
+                mesh.dispose()
+            except Exception:
+                pass
+        self._meshes = []
+        self._cache_key = None
+
+    def _current_cache_key(self):
+        return tuple(
+            (
+                id(door),
+                bool(getattr(door, "visible", True)),
+                int(getattr(door, "texture", 0) or 0),
+                round(float(getattr(door, "open_amount", 0.0)), 5),
+                door._slab_light_cache_key(),
+            )
+            for door in self.doors
+        )
+
+    def _rebuild(self) -> None:
+        self.dispose()
+        groups = {}
+
+        for door in self.doors:
+            if not getattr(door, "visible", True) or not getattr(door, "texture", 0):
+                continue
+            verts = door._visual_vertices()
+            if not verts:
+                continue
+            vertex_data = door._slab_vertex_data(verts)
+            if vertex_data.size == 0:
+                continue
+            groups.setdefault(
+                (int(door.texture), int(vertex_data.shape[1])),
+                [],
+            ).append(vertex_data)
+
+        for (texture, _columns), chunks in groups.items():
+            if not chunks:
+                continue
+            vertex_data = np.ascontiguousarray(
+                np.concatenate(chunks, axis=0),
+                dtype=np.float32,
+            )
+            if vertex_data.size == 0:
+                continue
+            self._meshes.append(
+                BatchedMesh.from_vertex_data(
+                    vertex_data,
+                    texture=texture,
+                    alpha_test=True,
+                    exposure_baseline=1.0,
+                    environment_lighting=False,
+                )
+            )
+
+    def draw(self) -> None:  # pragma: no cover - visual
+        cache_key = self._current_cache_key()
+        if cache_key != self._cache_key:
+            self._rebuild()
+            self._cache_key = cache_key
+
+        for mesh in self._meshes:
+            mesh.draw()
+
+
+def build_door_render_batch(doors) -> DoorRenderBatch | None:
+    door_list = [door for door in doors or () if door is not None]
+    if not door_list:
+        return None
+    for door in door_list:
+        door.door_render_batched = True
+    return DoorRenderBatch(door_list)

@@ -66,6 +66,8 @@ TORCH_FRAME_TEXTURE_PATHS: tuple[str, ...] = tuple(
 DOOR_TEXTURE_PATH: str = _asset("textures", "door.png")
 WINDOW_TEXTURE_PATH: str = _asset("textures", "window.png")
 GOBLIN_FRONT_TEXTURE_DIR_PATH: str = _asset("textures", "goblin", "front")
+GOBLIN_RIGHT_TEXTURE_DIR_PATH: str = _asset("textures", "goblin", "right")
+GOBLIN_BACK_TEXTURE_DIR_PATH: str = _asset("textures", "goblin", "back")
 
 # Sounds
 BIRDS_SOUND_PATH: str = _asset("sounds", "birds.ogg")

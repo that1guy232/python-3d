@@ -41,7 +41,7 @@ def load_world_textures() -> Dict[str, object]:
       - torch_tex (animated frame regions when available)
       - door_tex
       - window_tex
-      - goblin_front_tex (animated front-facing frame regions when available)
+      - goblin_tex (front/right/back animated frame regions when available)
     """
     # Core textures
     ground_tex = load_texture(GRASS_TEXTURE_PATH)
@@ -107,8 +107,11 @@ def load_world_textures() -> Dict[str, object]:
     )
     door_tex = load_texture(DOOR_TEXTURE_PATH)
     window_tex = load_texture(WINDOW_TEXTURE_PATH)
-    goblin_front_frame_paths = _png_sequence_paths(GOBLIN_FRONT_TEXTURE_DIR_PATH)
-    goblin_front_tex = load_texture_atlas(goblin_front_frame_paths)
+    goblin_tex = {
+        "front": load_texture_atlas(_png_sequence_paths(GOBLIN_FRONT_TEXTURE_DIR_PATH)),
+        "right": load_texture_atlas(_png_sequence_paths(GOBLIN_RIGHT_TEXTURE_DIR_PATH)),
+        "back": load_texture_atlas(_png_sequence_paths(GOBLIN_BACK_TEXTURE_DIR_PATH)),
+    }
 
     return {
         "ground_tex": ground_tex,
@@ -122,6 +125,6 @@ def load_world_textures() -> Dict[str, object]:
         "torch_tex": torch_tex,
         "door_tex": door_tex,
         "window_tex": window_tex,
-        "goblin_front_tex": goblin_front_tex,
+        "goblin_tex": goblin_tex,
     }
 

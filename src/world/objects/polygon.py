@@ -1,5 +1,6 @@
 from pygame.math import Vector3
 from core.object3d import Object3D
+from core.mesh import BatchedMesh
 from OpenGL.GL import (
     glEnable,
     glDisable,
@@ -25,6 +26,7 @@ from OpenGL.GL import (
     GL_REPEAT,
     GL_TRIANGLE_FAN
 )
+import numpy as np
 from textures.texture_utils import get_texture_size
 from engine.rendering.lighting import sunlight_factor_for_normal
 
@@ -36,6 +38,7 @@ class Polygon(Object3D):
             raise ValueError("A polygon must have at least 3 points.")
         self.thickness = thickness
         self.texture = texture
+        self.render_batched = False
 
         super().__init__(position, rotation)
 
@@ -456,3 +459,238 @@ class Polygon(Object3D):
             glTexCoord2f(uv[0], uv[1])
             glVertex3f(v.x, v.y, v.z)
         glEnd()
+
+
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
+
+
+def _polygon_uv_map(polygon: Polygon):
+    xs = [p[0] for p in polygon.points_2d]
+    ys = [p[1] for p in polygon.points_2d]
+    minx, maxx = min(xs), max(xs)
+    miny, maxy = min(ys), max(ys)
+    spanx = maxx - minx if maxx - minx != 0 else 1.0
+    spany = maxy - miny if maxy - miny != 0 else 1.0
+    return [((x - minx) / spanx, (y - miny) / spany) for x, y in polygon.points_2d]
+
+
+def _quad_face_uvs(polygon: Polygon, world_verts, face, side_idx: int):
+    if len(face) != 4:
+        return ()
+    va, vb, vc, _vd = [world_verts[i] for i in face]
+    edge1 = vb - va
+    edge2 = vc - vb
+    span_u = edge1.length()
+    span_v = edge2.length()
+
+    tex_size = get_texture_size(polygon.texture) if polygon.texture else None
+    if not tex_size:
+        return ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
+
+    tex_w, tex_h = tex_size
+    u_repeat = span_u / max(1e-6, float(tex_w))
+    v_repeat = span_v / max(1e-6, float(tex_h))
+    if polygon.thickness > 0.0:
+        strip_u = max(1.0 / max(1.0, float(tex_w)) * u_repeat, 0.001 * u_repeat)
+        if side_idx % 2 == 0:
+            u_min = 0.0
+            u_max = min(strip_u, u_repeat)
+        else:
+            u_min = max(0.0, u_repeat - strip_u)
+            u_max = u_repeat
+        return ((u_min, 0.0), (u_max, 0.0), (u_max, v_repeat), (u_min, v_repeat))
+
+    return ((0.0, 0.0), (u_repeat, 0.0), (u_repeat, v_repeat), (0.0, v_repeat))
+
+
+def _polygon_vertex_data(polygon: Polygon, camera=None):
+    world_verts = polygon.get_world_vertices()
+    if not world_verts:
+        return None
+
+    textured = bool(polygon.texture)
+    if textured:
+        get_batch = getattr(camera, "get_brightness_batch", None)
+        if callable(get_batch):
+            vertex_brightness = get_batch(world_verts)
+        else:
+            get_at = getattr(camera, "get_brightness_at", None)
+            default_brightness = getattr(camera, "brightness_default", 1.0)
+            vertex_brightness = [
+                get_at(vert) if callable(get_at) else default_brightness
+                for vert in world_verts
+            ]
+        uv_map = _polygon_uv_map(polygon)
+
+    rows = []
+    side_idx = 0
+    front_count = len(polygon.points_2d)
+
+    for face_idx, face in enumerate(polygon.faces):
+        sun_factor = polygon._face_sun_factor(world_verts, face)
+        if textured:
+            if len(face) == 4:
+                uv_values = _quad_face_uvs(polygon, world_verts, face, side_idx)
+                face_vertices = (
+                    (face[0], uv_values[0]),
+                    (face[1], uv_values[1]),
+                    (face[2], uv_values[2]),
+                    (face[0], uv_values[0]),
+                    (face[2], uv_values[2]),
+                    (face[3], uv_values[3]),
+                )
+                side_idx += 1
+            else:
+                face_vertices = [
+                    (idx, uv_map[idx if idx < front_count else idx - front_count])
+                    for idx in face
+                ]
+
+            for idx, uv in face_vertices:
+                vertex = world_verts[idx]
+                brightness = (
+                    vertex_brightness[idx]
+                    if idx < len(vertex_brightness)
+                    else getattr(camera, "brightness_default", 1.0)
+                )
+                color = _clamp01(brightness * sun_factor)
+                rows.append(
+                    (
+                        vertex.x,
+                        vertex.y,
+                        vertex.z,
+                        color,
+                        color,
+                        color,
+                        uv[0],
+                        uv[1],
+                    )
+                )
+            continue
+
+        color = (
+            polygon.face_colors[face_idx]
+            if hasattr(polygon, "face_colors") and face_idx < len(polygon.face_colors)
+            else (1.0, 1.0, 1.0)
+        )
+        if any(channel > 2.0 for channel in color):
+            color = tuple(channel / 255.0 for channel in color)
+        color = tuple(_clamp01(channel * sun_factor) for channel in color)
+
+        if len(face) == 4:
+            face_indices = (face[0], face[1], face[2], face[0], face[2], face[3])
+            side_idx += 1
+        else:
+            face_indices = face
+        for idx in face_indices:
+            vertex = world_verts[idx]
+            rows.append((vertex.x, vertex.y, vertex.z, color[0], color[1], color[2]))
+
+    columns = 8 if textured else 6
+    if not rows:
+        return np.zeros((0, columns), dtype=np.float32)
+    return np.array(rows, dtype=np.float32)
+
+
+class PolygonRenderBatch:
+    """Combined render mesh for static polygon showcase objects."""
+
+    def __init__(self, polygons) -> None:
+        self.polygons = tuple(polygons)
+        self._meshes: list[BatchedMesh] = []
+        self._cache_key = None
+
+    def dispose(self) -> None:
+        for mesh in self._meshes:
+            try:
+                mesh.dispose()
+            except Exception:
+                pass
+        self._meshes = []
+        self._cache_key = None
+
+    def _current_cache_key(self, camera=None):
+        return (
+            tuple(
+                (
+                    id(polygon),
+                    int(getattr(polygon, "texture", 0) or 0),
+                    polygon._transform_cache_key(),
+                    polygon._face_sun_factor(
+                        polygon.get_world_vertices(),
+                        polygon.faces[0],
+                    )
+                    if polygon.faces
+                    else 1.0,
+                )
+                for polygon in self.polygons
+            ),
+            self._camera_brightness_key(camera),
+        )
+
+    @staticmethod
+    def _camera_brightness_key(camera=None):
+        if camera is None:
+            return None
+        areas = []
+        for area in getattr(camera, "_brightness_areas_optimized", ()) or ():
+            try:
+                areas.append(
+                    (
+                        round(float(area.get("center_x", 0.0)), 4),
+                        round(float(area.get("center_z", 0.0)), 4),
+                        round(float(area.get("radius", 0.0)), 4),
+                        round(float(area.get("value", 0.0)), 4),
+                        round(float(area.get("falloff", 1.0)), 4),
+                        area.get("bounds"),
+                        bool(area.get("indoor_only", False)),
+                        round(float(area.get("floor_scale", 1.0)), 4),
+                    )
+                )
+            except Exception:
+                continue
+        return (round(float(getattr(camera, "brightness_default", 1.0)), 4), tuple(areas))
+
+    def _rebuild(self, camera=None) -> None:
+        self.dispose()
+        groups = {}
+        for polygon in self.polygons:
+            vertex_data = _polygon_vertex_data(polygon, camera=camera)
+            if vertex_data is None or vertex_data.size == 0:
+                continue
+            texture = int(getattr(polygon, "texture", 0) or 0)
+            groups.setdefault((texture, int(vertex_data.shape[1])), []).append(vertex_data)
+
+        for (texture, _columns), chunks in groups.items():
+            vertex_data = np.ascontiguousarray(
+                np.concatenate(chunks, axis=0),
+                dtype=np.float32,
+            )
+            self._meshes.append(
+                BatchedMesh.from_vertex_data(
+                    vertex_data,
+                    texture=texture if texture else None,
+                    alpha_test=bool(texture),
+                    exposure_baseline=1.0,
+                    environment_lighting=False,
+                )
+            )
+
+    def draw(self, camera=None) -> None:  # pragma: no cover - visual
+        cache_key = self._current_cache_key(camera)
+        if cache_key != self._cache_key:
+            self._rebuild(camera)
+            self._cache_key = cache_key
+
+        for mesh in self._meshes:
+            mesh.draw()
+
+
+def build_polygon_render_batch(polygons) -> PolygonRenderBatch | None:
+    polygon_list = [polygon for polygon in polygons or () if polygon is not None]
+    if not polygon_list:
+        return None
+    for polygon in polygon_list:
+        polygon.render_batched = True
+    return PolygonRenderBatch(polygon_list)

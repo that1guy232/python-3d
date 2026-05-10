@@ -28,9 +28,12 @@ from textures.texture_utils import (
 )
 from world.objects import Door, Goblin, Road, Torch, Window
 from world.objects.building import Building
+from world.objects.door import build_door_render_batch
 from world.objects.fence import build_textured_fence_ring
 from world.objects.ground import TexturedGroundGridBuilder
-from world.objects.polygon import Polygon
+from world.objects.polygon import Polygon, build_polygon_render_batch
+from world.objects.road import build_road_render_batch
+from world.objects.window import build_window_render_batch
 from world.objects.wall_tile import build_wall_tile_batches
 from world.world_road_planner import create_building_access_roads
 from world.world_spawner import spawn_world_sprites
@@ -449,6 +452,15 @@ def _dispose_values(values) -> None:
         _dispose_value(value)
 
 
+def _build_road_batches(scene) -> None:
+    _dispose_values(getattr(scene, "road_batches", ()))
+    roads = getattr(scene, "roads", ()) or ()
+    for road in roads:
+        setattr(road, "render_batched", False)
+    road_batch = build_road_render_batch(roads)
+    scene.road_batches = [road_batch] if road_batch is not None else []
+
+
 def _opening_light_center(spec: dict, side: str, offset: float) -> tuple[float, float]:
     position = spec["position"]
     x = float(position.x)
@@ -861,6 +873,13 @@ def _build_building_torches(scene) -> None:
 
 
 def _build_building_doors(scene) -> None:
+    for batch in getattr(scene, "door_batches", ()) or ():
+        try:
+            batch.dispose()
+        except Exception:
+            pass
+    scene.door_batches = []
+
     for door in getattr(scene, "doors", ()) or ():
         try:
             if door in scene.entities:
@@ -917,6 +936,12 @@ def _build_building_doors(scene) -> None:
             scene.entities.append(door)
             scene.sprite_items.extend(door.get_sprites())
             scene.wall_tiles.extend(door.get_collision_meshes())
+
+    door_batch = build_door_render_batch(scene.doors)
+    scene.door_batches = [door_batch] if door_batch is not None else []
+    refresh_draw_entities = getattr(scene, "refresh_immediate_entities", None)
+    if callable(refresh_draw_entities):
+        refresh_draw_entities()
 
 
 def _normalize_window_specs_for_building(spec: dict) -> list[dict]:
@@ -984,6 +1009,13 @@ def _normalize_window_specs_for_building(spec: dict) -> list[dict]:
 
 
 def _build_building_windows(scene) -> None:
+    for batch in getattr(scene, "window_batches", ()) or ():
+        try:
+            batch.dispose()
+        except Exception:
+            pass
+    scene.window_batches = []
+
     for window in getattr(scene, "windows", ()) or ():
         try:
             if window in scene.entities:
@@ -1029,6 +1061,12 @@ def _build_building_windows(scene) -> None:
                 scene.entities.append(window)
                 scene.sprite_items.extend(window.get_sprites())
                 scene.wall_tiles.extend(window.get_collision_meshes())
+
+    window_batch = build_window_render_batch(scene.windows)
+    scene.window_batches = [window_batch] if window_batch is not None else []
+    refresh_draw_entities = getattr(scene, "refresh_immediate_entities", None)
+    if callable(refresh_draw_entities):
+        refresh_draw_entities()
 
 
 def create_building_specs(scene, count: int = 10) -> list[dict]:
@@ -1199,6 +1237,9 @@ def create_world_objects_steps(
     label = "Building showcase polygons"
     yield (label, False)
     _build_showcase_polygons(scene)
+    rebuild_collision_index = getattr(scene, "rebuild_collision_index", None)
+    if callable(rebuild_collision_index):
+        rebuild_collision_index()
     yield (label, True)
 
     yield from _build_roads_and_spawn_sprites_steps(
@@ -1295,6 +1336,13 @@ def _build_buildings(scene) -> None:
 
 def _build_showcase_polygons(scene) -> None:
     start_time = time.perf_counter()
+    for batch in getattr(scene, "polygon_batches", ()) or ():
+        try:
+            batch.dispose()
+        except Exception:
+            pass
+    scene.polygon_batches = []
+
     wall_tex = scene.wall_tex
     tri_thickness = 5
     scene.showcase_polygons: list[Polygon] = []
@@ -1401,6 +1449,8 @@ def _build_showcase_polygons(scene) -> None:
         polygon.lighting = lighting
         polygon.sun_direction = sun_direction
     scene.polygons.extend(scene.showcase_polygons)
+    polygon_batch = build_polygon_render_batch(scene.showcase_polygons)
+    scene.polygon_batches = [polygon_batch] if polygon_batch is not None else []
 
 
 def _build_roads_and_spawn_sprites(
@@ -1459,6 +1509,7 @@ def _build_roads_and_spawn_sprites_steps(
     )
     scene.roads.extend(scene.building_roads)
     scene.others.extend(scene.building_roads)
+    _build_road_batches(scene)
     segment_count = len(getattr(scene, "building_road_segments", ()))
     print(
         f"Built {len(scene.building_roads)} building access road routes "
@@ -1575,14 +1626,24 @@ def _build_goblins(scene) -> None:
         except Exception:
             continue
 
-    frames = Goblin.texture_or_load(getattr(scene, "goblin_front_tex", None))
-    scene.goblin_front_tex = frames
+    goblin_tex = Goblin.texture_or_load(getattr(scene, "goblin_tex", None))
+    scene.goblin_tex = goblin_tex
+    front_frames = goblin_tex.get("front", ())
     scene.goblins = []
     count = max(0, int(getattr(scene, "goblin_count", GOBLIN_COUNT)))
-    if count <= 0 or not frames:
+    if count <= 0 or not front_frames:
         print("Spawned 0 goblins.")
         return
 
+    shadow_texture = create_shadow_texture(
+        width_px=96,
+        height_px=96,
+        max_alpha=0.24,
+        inner_ratio=0.14,
+        outer_ratio=0.92,
+        falloff_exp=1.8,
+        pixelated=False,
+    )
     rng = random.Random()
     blocked = _goblin_position_blocker(scene)
     clearance = max(
@@ -1619,10 +1680,11 @@ def _build_goblins(scene) -> None:
         try:
             goblin = Goblin(
                 spawn,
-                texture=frames,
+                texture=goblin_tex,
                 camera=scene.camera,
                 ground_height_at=scene.ground_height_at,
                 position_blocked=blocked,
+                shadow_texture=shadow_texture,
                 rng=random.Random(rng.randrange(1 << 30)),
             )
         except (TypeError, ValueError, AttributeError):
@@ -1636,6 +1698,9 @@ def _build_goblins(scene) -> None:
             scene.sprite_items.extend(goblin.get_sprites())
 
     print(f"Spawned {len(scene.goblins)} goblins.")
+    refresh_draw_entities = getattr(scene, "refresh_immediate_entities", None)
+    if callable(refresh_draw_entities):
+        refresh_draw_entities()
 
 
 def _spawn_sprite_layer(

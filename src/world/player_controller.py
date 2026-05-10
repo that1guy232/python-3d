@@ -49,16 +49,63 @@ class PlayerCameraController:
                 return 0.0
             ground_height = sampler.height_at(self.camera.position.x, self.camera.position.z)
 
+        player_radius = float(getattr(self.scene, "player_radius", PLAYER_RADIUS))
         wall_support = player_support_height_at(
-            getattr(self.scene, "wall_tiles", None) or [],
+            self._collision_meshes_at(
+                self.camera.position.x,
+                self.camera.position.z,
+                player_radius,
+                include_polygons=False,
+            ),
             self.camera.position.x,
             self.camera.position.z,
             self.camera.position.y - self._eye_to_foot_offset(),
-            float(getattr(self.scene, "player_radius", PLAYER_RADIUS)),
+            player_radius,
         )
         if wall_support is None:
             return float(ground_height)
         return max(float(ground_height), float(wall_support))
+
+    def _collision_meshes_at(
+        self,
+        x: float,
+        z: float,
+        radius: float,
+        *,
+        include_polygons: bool,
+    ):
+        get_candidates = getattr(self.scene, "collision_meshes_at", None)
+        if callable(get_candidates):
+            return get_candidates(
+                x,
+                z,
+                radius,
+                include_polygons=include_polygons,
+            )
+        if include_polygons:
+            return (getattr(self.scene, "wall_tiles", None) or []) + (
+                getattr(self.scene, "polygons", None) or []
+            )
+        return getattr(self.scene, "wall_tiles", None) or []
+
+    def _collision_meshes_for_movement(
+        self,
+        old_position: Vector3,
+        new_position: Vector3,
+        player_radius: float,
+    ):
+        get_candidates = getattr(self.scene, "collision_meshes_for_bounds", None)
+        if callable(get_candidates):
+            return get_candidates(
+                min(old_position.x, new_position.x) - player_radius,
+                max(old_position.x, new_position.x) + player_radius,
+                min(old_position.z, new_position.z) - player_radius,
+                max(old_position.z, new_position.z) + player_radius,
+                include_polygons=True,
+            )
+        return (getattr(self.scene, "wall_tiles", None) or []) + (
+            getattr(self.scene, "polygons", None) or []
+        )
 
     def _attempt_boundary_slide(self, old_position: Vector3) -> bool:
         """If current camera position is outside playable area, try axis-aligned
@@ -104,11 +151,12 @@ class PlayerCameraController:
         slid = False
         max_iters = 3
         eps = 1e-6
-        #TODO: These should be passed in through somewere. make make the world collision detection stuff a class on it's own.
-        col_meshes = getattr(self.scene, "wall_tiles", None) or []
-        col_polygons = getattr(self.scene, "polygons", None) or []
-        col_meshes = col_meshes + col_polygons
         player_radius = float(getattr(self.scene, "player_radius", PLAYER_RADIUS))
+        col_meshes = self._collision_meshes_for_movement(
+            old_position,
+            self.camera.position,
+            player_radius,
+        )
         foot_offset = self._eye_to_foot_offset()
         player_bottom_y = min(old_position.y, self.camera.position.y) - foot_offset
         player_top_y = (
@@ -194,47 +242,55 @@ class PlayerCameraController:
         Returns (moving, sprinting) booleans for callers (e.g., headbob).
         """
         # Rotation smoothing toward targets
+        rotation_changed = False
         if self.rot_smooth_hz <= 0 or dt <= 0:
-            self.camera.rotation.x = self.rot_target_x
-            self.camera.rotation.y = self.rot_target_y
+            if (
+                self.camera.rotation.x != self.rot_target_x
+                or self.camera.rotation.y != self.rot_target_y
+            ):
+                self.camera.rotation.x = self.rot_target_x
+                self.camera.rotation.y = self.rot_target_y
+                rotation_changed = True
         else:
-            alpha = 1.0 - math.exp(-self.rot_smooth_hz * dt)
-            self.camera.rotation.x += (
-                self.rot_target_x - self.camera.rotation.x
-            ) * alpha
-            self.camera.rotation.y += (
-                self.rot_target_y - self.camera.rotation.y
-            ) * alpha
-        self.camera.update_rotation(dt)
+            delta_x = self.rot_target_x - self.camera.rotation.x
+            delta_y = self.rot_target_y - self.camera.rotation.y
+            if abs(delta_x) > 1e-8 or abs(delta_y) > 1e-8:
+                alpha = 1.0 - math.exp(-self.rot_smooth_hz * dt)
+                self.camera.rotation.x += delta_x * alpha
+                self.camera.rotation.y += delta_y * alpha
+                rotation_changed = True
+        if rotation_changed:
+            self.camera.update_rotation(dt)
 
         # Read input and handle movement
         keys = pygame.key.get_pressed()
         # pygame ScancodeWrapper is not iterable in some builds; check relevant
         # keys explicitly instead of using any(keys).
-        any_key_down = bool(
+        moving = bool(
             keys[pygame.K_w]
             or keys[pygame.K_a]
             or keys[pygame.K_s]
             or keys[pygame.K_d]
-            or keys[pygame.K_LSHIFT]
-            or keys[pygame.K_SPACE]
         )
-        # (no debug prints) check movement keys explicitly
         sprinting = bool(keys[pygame.K_LSHIFT])
+        jump_pressed = bool(keys[pygame.K_SPACE])
+        any_key_down = bool(moving or sprinting or jump_pressed)
         # Inform headbob controller about keyboard activity so it can manage idle sway
         hb = getattr(self.scene, "_headbob", None)
         if hb is not None:
             hb.notify_input_active(any_key_down)
 
+        if not moving and not jump_pressed:
+            return False, sprinting
+
         road_multi = float(getattr(self.scene, "road_speed_multiplier", 1.5))
         base_speed = float(getattr(self.scene, "walk_speed", BASE_SPEED))
         sprint_speed = float(getattr(self.scene, "sprint_speed", SPRINT_SPEED))
         speed = sprint_speed if sprinting else base_speed
-        if self.scene.is_on_road(self.camera.position.x, self.camera.position.z):
+        if moving and self.scene.is_on_road(self.camera.position.x, self.camera.position.z):
             speed *= road_multi
         # speed is in world units/sec; Camera.move_camera applies dt internally
 
-        jump_pressed = bool(keys[pygame.K_SPACE])
         if jump_pressed and not self.camera.is_jumping:
             ground_y = self._support_height_at_current_position()
             desired_ground_y = (
@@ -245,28 +301,14 @@ class PlayerCameraController:
                 self.camera.vertical_velocity = float(getattr(self.scene, "jump_speed", JUMP_SPEED))
 
         old_position = self.camera.position.copy()
-        self.camera.move_camera(keys, speed, dt)
+        if moving:
+            self.camera.move_camera(keys, speed, dt)
+            if self._attempt_boundary_slide(old_position):
+                pass
+            else:
+                self._attempt_wall_slide(old_position)
 
-        moving = False
-        if any_key_down:
-            # Determine if translation movement keys are pressed
-            moving = (
-                keys[pygame.K_w]
-                or keys[pygame.K_a]
-                or keys[pygame.K_s]
-                or keys[pygame.K_d]
-            )
-
-
-            if moving:
-                if self._attempt_boundary_slide(old_position):
-                    # Boundary slide handled (including revert) — nothing more to do.
-                    pass
-                else:
-                    # No boundary issue; try wall slide if needed.
-                    self._attempt_wall_slide(old_position)
-            
-            self._attempt_y_collision(old_position)
+        self._attempt_y_collision(old_position)
 
         return moving, sprinting
 

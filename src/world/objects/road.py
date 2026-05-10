@@ -410,6 +410,8 @@ class Road:
     lighting: object | None = None
     sun_direction: object | None = None
     _mesh: BatchedMesh | None = None
+    _bounds: tuple[float, float, float, float] | None = None
+    _segments: tuple[SegmentXZ, ...] = ()
 
     def __init__(
         self,
@@ -494,9 +496,12 @@ class Road:
         return _clean_centerline(points, min_segment_length=min_segment_length)
 
     def _set_centerline(self, centerline: Sequence[PointXZ]) -> None:
-        self.points = [Vector3(x, 0.0, z) for x, z in centerline]
+        points = tuple((float(x), float(z)) for x, z in centerline)
+        self.points = [Vector3(x, 0.0, z) for x, z in points]
         self.start = self.points[0]
         self.end = self.points[-1]
+        self._segments = tuple(zip(points, points[1:]))
+        self._bounds = self._compute_bounding_box()
 
     def _mesh_builder(self) -> RoadMeshBuilder:
         return RoadMeshBuilder(
@@ -572,7 +577,6 @@ class Road:
     def draw(self) -> None:
         if self._mesh is None:
             return
-        _ensure_texture_repeat(self.texture)
         self._mesh.draw()
 
     def contains_point(self, x: float, z: float, *, margin: float = 0.0) -> bool:
@@ -581,13 +585,17 @@ class Road:
         half_width_sq = half_width * half_width
 
         query = (float(x), float(z))
-        centerline = [(point.x, point.z) for point in self.points]
+        segments = self._segments
+        if not segments:
+            points = tuple((point.x, point.z) for point in self.points)
+            segments = tuple(zip(points, points[1:]))
+            self._segments = segments
         return any(
             _point_segment_distance_sq(query, segment) <= half_width_sq
-            for segment in zip(centerline, centerline[1:])
+            for segment in segments
         )
 
-    def get_bounding_box(self) -> tuple[float, float, float, float]:
+    def _compute_bounding_box(self) -> tuple[float, float, float, float]:
         """Return conservative XZ extents as (min_x, max_x, min_z, max_z)."""
         pad = self.width * 0.5 * _MITER_LIMIT
         min_x = min(point.x for point in self.points) - pad
@@ -596,5 +604,75 @@ class Road:
         max_z = max(point.z for point in self.points) + pad
         return (min_x, max_x, min_z, max_z)
 
+    def get_bounding_box(self) -> tuple[float, float, float, float]:
+        if self._bounds is None:
+            self._bounds = self._compute_bounding_box()
+        return self._bounds
+
     def get_bounds(self) -> tuple[float, float, float, float]:
         return self.get_bounding_box()
+
+
+class RoadRenderBatch:
+    """Combined render mesh for static road strips."""
+
+    def __init__(self, roads) -> None:
+        self.roads = tuple(road for road in roads or () if road is not None)
+        self._meshes: list[BatchedMesh] = []
+        self._build()
+
+    def dispose(self) -> None:
+        for mesh in self._meshes:
+            try:
+                mesh.dispose()
+            except Exception:
+                pass
+        self._meshes = []
+
+    def _build(self) -> None:
+        groups = {}
+        for road in self.roads:
+            mesh = getattr(road, "_mesh", None)
+            vertex_data = getattr(mesh, "_base_vertex_data", None)
+            if mesh is None or vertex_data is None or vertex_data.size == 0:
+                continue
+            texture = int(getattr(mesh, "texture", 0) or 0)
+            columns = int(getattr(mesh, "vertex_width", 0) or vertex_data.shape[1])
+            baseline = float(getattr(mesh, "exposure_baseline", 1.0))
+            environment_lighting = bool(getattr(mesh, "environment_lighting", True))
+            key = (texture, columns, baseline, environment_lighting)
+            groups.setdefault(key, []).append(vertex_data)
+
+        for (texture, _columns, baseline, environment_lighting), chunks in groups.items():
+            vertex_data = np.ascontiguousarray(
+                np.concatenate(chunks, axis=0),
+                dtype=np.float32,
+            )
+            self._meshes.append(
+                BatchedMesh.from_vertex_data(
+                    vertex_data,
+                    texture=texture if texture else None,
+                    exposure_baseline=baseline,
+                    environment_lighting=environment_lighting,
+                )
+            )
+
+    def set_exposure(self, exposure: float) -> None:
+        for mesh in self._meshes:
+            mesh.set_exposure(exposure)
+
+    def draw(self) -> None:  # pragma: no cover - visual
+        for mesh in self._meshes:
+            mesh.draw()
+
+
+def build_road_render_batch(roads) -> RoadRenderBatch | None:
+    road_list = [road for road in roads or () if road is not None]
+    if not road_list:
+        return None
+    batch = RoadRenderBatch(road_list)
+    if not batch._meshes:
+        return None
+    for road in road_list:
+        road.render_batched = True
+    return batch
