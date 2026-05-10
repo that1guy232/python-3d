@@ -195,21 +195,15 @@ class PlayerCameraController:
         return slid
 
     def _attempt_y_collision(self, old_position: Vector3) -> bool:
-        pos_y_buff = 15
         neg_y_buff = self._eye_to_foot_offset()
         ground_height = self._support_height_at_current_position()
 
         min_y = ground_height + neg_y_buff
-        max_y = ground_height + pos_y_buff +(500)
-        collided = False
         if self.camera.position.y < min_y:
             self.camera.position.y = min_y
-            collided = True
-        elif self.camera.position.y > max_y:
-            self.camera.position.y = max_y
-            collided = True
+            return True
 
-        return collided
+        return False
 
     def on_mouse_delta(self, dx: float, dy: float, dt: float | None = None) -> None:
         """Accept raw mouse delta and update rotation targets.

@@ -41,7 +41,7 @@ class WorldScene(Scene):
         grid_tile_size: int = 25,
         grid_gap: int = 0,
         tree_count: int = 1000,
-        grass_count: int = 750,
+        grass_count: int = 2000,
         rock_count: int = 750,
         defer_setup: bool = False,
     ) -> None:
@@ -147,6 +147,7 @@ class WorldScene(Scene):
 
         self.log_timing("Creating world objects", start_time, time.perf_counter())
         self._initialized = True
+        world_runtime.initialize_player_spawn_height(self)
         self._last_static_lighting_brightness = float(
             getattr(self.camera, "brightness_default", 1.0)
         )

@@ -346,6 +346,7 @@ def apply_brightness_modifiers(
     modifiers: Sequence[object] | None,
     default_brightness: float,
     receiver_mask: np.ndarray | Sequence[bool] | None = None,
+    receiver_factors: np.ndarray | Sequence[float] | None = None,
     surface_floor_mask: np.ndarray | Sequence[bool] | None = None,
 ) -> None:
     """Apply the scene brightness-area contract to RGB vertex columns."""
@@ -376,6 +377,20 @@ def apply_brightness_modifiers(
                 floor_flags = None
         except (TypeError, ValueError):
             floor_flags = None
+    receiver_factor_values = None
+    if receiver_factors is not None:
+        try:
+            receiver_factor_values = np.asarray(receiver_factors, dtype=np.float32)
+            if len(receiver_factor_values) != len(vertex_data):
+                receiver_factor_values = None
+        except (TypeError, ValueError):
+            receiver_factor_values = None
+    if receiver_factor_values is None and vertex_data.shape[1] >= 6:
+        receiver_factor_values = np.clip(
+            np.max(vertex_data[:, 3:6], axis=1),
+            0.0,
+            1.0,
+        ).astype(np.float32, copy=False)
 
     for modifier in modifiers:
         try:
@@ -426,6 +441,10 @@ def apply_brightness_modifiers(
 
         norm = np.clip(distances[within] / radius, 0.0, 1.0)
         attenuation = (1.0 - norm) ** falloff
+        if indoor_only and receiver_factor_values is not None:
+            attenuation *= _indoor_light_contribution_weights(
+                receiver_factor_values[within],
+            )
         targets = np.full(len(norm), target, dtype=np.float32)
         if floor_flags is not None and floor_scale < 1.0:
             on_floor = floor_flags[within]
@@ -528,6 +547,38 @@ def apply_covered_regions(
 def _smooth01(value: float) -> float:
     value = max(0.0, min(1.0, float(value)))
     return value * value * (3.0 - 2.0 * value)
+
+
+def indoor_light_contribution_weight(
+    receiver_factor: float,
+    *,
+    indoor_factor: float = INDOOR_LIGHT_FACTOR,
+) -> float:
+    """Fade indoor-only local lights out on surfaces already lit by openings."""
+
+    receiver = max(0.0, min(1.0, float(receiver_factor)))
+    indoor = max(0.0, min(0.999, float(indoor_factor)))
+    if receiver <= indoor:
+        return 1.0
+    if receiver >= 1.0:
+        return 0.0
+    return 1.0 - _smooth01((receiver - indoor) / (1.0 - indoor))
+
+
+def _indoor_light_contribution_weights(
+    receiver_factors: np.ndarray,
+    *,
+    indoor_factor: float = INDOOR_LIGHT_FACTOR,
+) -> np.ndarray:
+    receivers = np.clip(np.asarray(receiver_factors, dtype=np.float32), 0.0, 1.0)
+    indoor = max(0.0, min(0.999, float(indoor_factor)))
+    weights = np.ones(len(receivers), dtype=np.float32)
+    fading = receivers > indoor
+    if np.any(fading):
+        t = np.clip((receivers[fading] - indoor) / (1.0 - indoor), 0.0, 1.0)
+        weights[fading] = 1.0 - (t * t * (3.0 - 2.0 * t))
+    weights[receivers >= 1.0] = 0.0
+    return weights
 
 
 def region_light_openings(region) -> list[dict[str, Any]]:

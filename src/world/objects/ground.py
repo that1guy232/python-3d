@@ -436,8 +436,14 @@ class TexturedGroundGridBuilder:
             )
         else:
             if split_covered_regions:
-                indoor_receivers = np.max(vertex_data[:, 3:6], axis=1) < 0.995
+                receiver_factors = np.clip(
+                    np.max(vertex_data[:, 3:6], axis=1),
+                    0.0,
+                    1.0,
+                )
+                indoor_receivers = receiver_factors < 0.995
             else:
+                receiver_factors = None
                 indoor_receivers = covered_region_mask(
                     vertex_data,
                     covered_regions=self.covered_regions,
@@ -453,11 +459,17 @@ class TexturedGroundGridBuilder:
                     vertex_data,
                     covered_regions=self.covered_regions,
                 )
+                receiver_factors = np.clip(
+                    np.max(vertex_data[:, 3:6], axis=1),
+                    0.0,
+                    1.0,
+                )
             apply_brightness_modifiers(
                 vertex_data,
                 modifiers=self.brightness_modifiers,
                 default_brightness=self.default_brightness,
                 receiver_mask=indoor_receivers,
+                receiver_factors=receiver_factors,
                 surface_floor_mask=np.ones(len(vertex_data), dtype=bool),
             )
         

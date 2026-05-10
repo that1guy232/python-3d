@@ -99,6 +99,19 @@ float smooth01(float value)
     return value * value * (3.0 - 2.0 * value);
 }
 
+float indoor_light_contribution_weight(float receiver_factor)
+{
+    float indoor_factor = 0.34;
+    float receiver = clamp(receiver_factor, 0.0, 1.0);
+    if (receiver <= indoor_factor) {
+        return 1.0;
+    }
+    if (receiver >= 1.0) {
+        return 0.0;
+    }
+    return 1.0 - smooth01((receiver - indoor_factor) / (1.0 - indoor_factor));
+}
+
 float opening_region_factor(
     vec4 opening,
     vec4 params,
@@ -211,9 +224,7 @@ float brightness_at(vec3 world_pos, float receiver_factor, vec3 surface_normal)
         if (i >= u_brightness_area_count) {
             break;
         }
-        if (u_brightness_indoor_only[i] > 0.5 && receiver_factor > 0.995) {
-            continue;
-        }
+        float indoor_only = u_brightness_indoor_only[i];
         vec4 area = u_brightness_areas[i];
         vec4 bounds = u_brightness_bounds[i];
         if (bounds.x <= bounds.y) {
@@ -231,6 +242,12 @@ float brightness_at(vec3 world_pos, float receiver_factor, vec3 surface_normal)
         if (dist <= radius) {
             float norm_dist = clamp(dist / radius, 0.0, 1.0);
             float attenuation = pow(1.0 - norm_dist, max(u_brightness_falloffs[i], 0.0));
+            if (indoor_only > 0.5) {
+                attenuation *= indoor_light_contribution_weight(receiver_factor);
+                if (attenuation <= 0.000001) {
+                    continue;
+                }
+            }
             float target = area.w;
             if (surface_normal.y > 0.55) {
                 target = mix(

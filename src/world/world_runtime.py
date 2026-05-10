@@ -394,6 +394,38 @@ def _support_height_at(scene, x: float, z: float, foot_y: float | None = None) -
     return max(float(ground_y), float(wall_y))
 
 
+def initialize_player_spawn_height(scene) -> None:
+    """Apply the configured starting Y once the terrain height is known."""
+    if getattr(scene, "_player_spawn_height_initialized", False):
+        return
+
+    camera = getattr(scene, "camera", None)
+    if camera is None or getattr(camera, "position", None) is None:
+        scene._player_spawn_height_initialized = True
+        return
+
+    foot_offset = _player_foot_offset(scene)
+    foot_y = camera.position.y - foot_offset
+    support_y = _support_height_at(
+        scene,
+        camera.position.x,
+        camera.position.z,
+        foot_y,
+    )
+    target_cam_y = support_y + foot_offset
+
+    if camera.position.y < target_cam_y:
+        camera.position.y = target_cam_y
+        camera.vertical_velocity = 0.0
+        camera.is_jumping = False
+    elif camera.position.y > target_cam_y + 0.1:
+        camera.is_jumping = True
+        if not hasattr(camera, "vertical_velocity"):
+            camera.vertical_velocity = 0.0
+
+    scene._player_spawn_height_initialized = True
+
+
 def view_space_position(
     scene, *, dist: float, nx: float, ny: float, px: float = 0.0, py: float = 0.0
 ) -> Vector3:
@@ -427,6 +459,8 @@ def update(scene, dt: float) -> None:
         if not Sounds.is_playing("ambient_birds"):
             Sounds.play("ambient_birds", volume=0.05)
 
+    with _profile(scene, "update.player_spawn_height"):
+        initialize_player_spawn_height(scene)
     with _profile(scene, "update.camera_controller"):
         moving, sprinting = scene._camera_controller.update(dt)
     with _profile(scene, "update.sway"):
