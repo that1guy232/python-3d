@@ -194,17 +194,6 @@ class PlayerCameraController:
 
         return slid
 
-    def _attempt_y_collision(self, old_position: Vector3) -> bool:
-        neg_y_buff = self._eye_to_foot_offset()
-        ground_height = self._support_height_at_current_position()
-
-        min_y = ground_height + neg_y_buff
-        if self.camera.position.y < min_y:
-            self.camera.position.y = min_y
-            return True
-
-        return False
-
     def on_mouse_delta(self, dx: float, dy: float, dt: float | None = None) -> None:
         """Accept raw mouse delta and update rotation targets.
 
@@ -286,13 +275,14 @@ class PlayerCameraController:
         # speed is in world units/sec; Camera.move_camera applies dt internally
 
         if jump_pressed and not self.camera.is_jumping:
-            ground_y = self._support_height_at_current_position()
             desired_ground_y = (
-                ground_y + self._eye_to_foot_offset()
+                self._support_height_at_current_position()
+                + self._eye_to_foot_offset()
             )
-            if self.camera.position.y <= desired_ground_y + 0.1:
-                self.camera.is_jumping = True
-                self.camera.vertical_velocity = float(getattr(self.scene, "jump_speed", JUMP_SPEED))
+            if self.camera.position.y < desired_ground_y:
+                self.camera.position.y = desired_ground_y
+            self.camera.is_jumping = True
+            self.camera.vertical_velocity = float(getattr(self.scene, "jump_speed", JUMP_SPEED))
 
         old_position = self.camera.position.copy()
         if moving:
@@ -301,8 +291,6 @@ class PlayerCameraController:
                 pass
             else:
                 self._attempt_wall_slide(old_position)
-
-        self._attempt_y_collision(old_position)
 
         return moving, sprinting
 
