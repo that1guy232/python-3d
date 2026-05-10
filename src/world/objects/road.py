@@ -574,10 +574,10 @@ class Road:
     def draw_untextured(self) -> None:
         self.draw()
 
-    def draw(self) -> None:
+    def draw(self, camera=None, *, view_distance: float | None = None) -> None:
         if self._mesh is None:
             return
-        self._mesh.draw()
+        self._mesh.draw(camera=camera, view_distance=view_distance)
 
     def contains_point(self, x: float, z: float, *, margin: float = 0.0) -> bool:
         """Return True if the XZ point lies over the road centerline strip."""
@@ -661,9 +661,9 @@ class RoadRenderBatch:
         for mesh in self._meshes:
             mesh.set_exposure(exposure)
 
-    def draw(self) -> None:  # pragma: no cover - visual
+    def draw(self, camera=None, *, view_distance: float | None = None) -> None:  # pragma: no cover - visual
         for mesh in self._meshes:
-            mesh.draw()
+            mesh.draw(camera=camera, view_distance=view_distance)
 
 
 def build_road_render_batch(roads) -> RoadRenderBatch | None:

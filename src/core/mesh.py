@@ -64,9 +64,32 @@ class BatchedMesh:
     vertex_width: int = 0
     shader_lighting: bool = False
     shine_enabled: bool = True
+    bounds_center: tuple[float, float, float] | None = None
+    bounds_radius: float = 0.0
     _base_vertex_data: Optional[np.ndarray] = None
     _current_exposure: float = 1.0
     _vbo_exposure: float = 1.0
+
+    @staticmethod
+    def _bounds_from_vertex_data(
+        vertex_data: np.ndarray,
+    ) -> tuple[tuple[float, float, float] | None, float]:
+        if vertex_data.ndim != 2 or vertex_data.shape[0] == 0 or vertex_data.shape[1] < 3:
+            return None, 0.0
+
+        positions = np.asarray(vertex_data[:, 0:3], dtype=np.float32)
+        if positions.size == 0:
+            return None, 0.0
+
+        finite = np.isfinite(positions).all(axis=1)
+        if not np.any(finite):
+            return None, 0.0
+        positions = positions[finite]
+        mins = positions.min(axis=0)
+        maxs = positions.max(axis=0)
+        center = (mins + maxs) * 0.5
+        radius = float(np.linalg.norm((maxs - mins) * 0.5))
+        return (float(center[0]), float(center[1]), float(center[2])), radius
 
     @classmethod
     def from_vertex_data(
@@ -100,6 +123,7 @@ class BatchedMesh:
         glBindBuffer(GL_ARRAY_BUFFER, vbo_id)
         glBufferData(GL_ARRAY_BUFFER, upload_data.nbytes, upload_data, GL_STATIC_DRAW)
         baseline = float(exposure_baseline)
+        bounds_center, bounds_radius = cls._bounds_from_vertex_data(upload_data)
         return cls(
             vbo_vertices=vbo_id,
             vertex_count=int(upload_data.shape[0]),
@@ -111,6 +135,8 @@ class BatchedMesh:
             vertex_width=int(upload_data.shape[1]) if upload_data.ndim == 2 else 0,
             shader_lighting=shader_lighting,
             shine_enabled=bool(shine_enabled),
+            bounds_center=bounds_center,
+            bounds_radius=bounds_radius,
             _base_vertex_data=upload_data.copy() if keep_vertex_data else None,
             _current_exposure=baseline,
             _vbo_exposure=baseline,
@@ -181,6 +207,30 @@ class BatchedMesh:
 
         self._upload_vertex_data_for_exposure(exposure_value)
 
+    def is_visible(self, camera=None, *, view_distance: float | None = None) -> bool:
+        if camera is None or self.bounds_center is None:
+            return True
+
+        tester = getattr(camera, "sphere_in_frustum", None)
+        if callable(tester):
+            return bool(
+                tester(
+                    self.bounds_center,
+                    self.bounds_radius,
+                    far_distance=view_distance,
+                )
+            )
+
+        cam_pos = getattr(camera, "position", None)
+        if cam_pos is None or view_distance is None:
+            return True
+
+        dx = self.bounds_center[0] - float(cam_pos.x)
+        dy = self.bounds_center[1] - float(cam_pos.y)
+        dz = self.bounds_center[2] - float(cam_pos.z)
+        max_dist = float(view_distance) + float(self.bounds_radius)
+        return (dx * dx + dy * dy + dz * dz) <= max_dist * max_dist
+
     def dispose(self) -> None:
         """Release the owned OpenGL vertex buffer, if it still exists."""
         vbo = int(self.vbo_vertices or 0)
@@ -188,6 +238,8 @@ class BatchedMesh:
             self.vbo_vertices = 0
             self.vertex_count = 0
             self.vertex_width = 0
+            self.bounds_center = None
+            self.bounds_radius = 0.0
             return
 
         try:
@@ -205,9 +257,13 @@ class BatchedMesh:
             self.vertex_width = 0
             self.owns_vbo = False
             self._base_vertex_data = None
+            self.bounds_center = None
+            self.bounds_radius = 0.0
 
-    def draw(self):
+    def draw(self, camera=None, *, view_distance: float | None = None):
         if self.vertex_count == 0 or not self.vbo_vertices:
+            return
+        if not self.is_visible(camera, view_distance=view_distance):
             return
 
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo_vertices)
@@ -322,13 +378,100 @@ class BatchedMesh:
         glDrawArrays(GL_TRIANGLES, 0, self.vertex_count)
 
 class GroundHeightSampler:
-    __slots__ = ("_count", "_spacing", "_w", "_heights")
+    __slots__ = ("_count", "_spacing", "_w", "_heights", "_height_adjustments")
 
-    def __init__(self, count: int, spacing: float, half: float, heights: np.ndarray):
+    def __init__(
+        self,
+        count: int,
+        spacing: float,
+        half: float,
+        heights: np.ndarray,
+        height_adjustments=None,
+    ):
         self._count = count
         self._spacing = spacing
         self._w = half
         self._heights = heights
+        adjustments = []
+        for adjustment in height_adjustments or ():
+            normalized = self._normalize_height_adjustment(adjustment)
+            if normalized is not None:
+                adjustments.append(normalized)
+        self._height_adjustments = tuple(adjustments)
+
+    @staticmethod
+    def _normalize_height_adjustment(adjustment):
+        try:
+            min_x, max_x, min_z, max_z, height, blend_margin = adjustment
+            min_x = float(min_x)
+            max_x = float(max_x)
+            min_z = float(min_z)
+            max_z = float(max_z)
+            if max_x < min_x:
+                min_x, max_x = max_x, min_x
+            if max_z < min_z:
+                min_z, max_z = max_z, min_z
+            return (
+                min_x,
+                max_x,
+                min_z,
+                max_z,
+                float(height),
+                max(0.0, float(blend_margin)),
+            )
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _smooth01(value: float) -> float:
+        value = max(0.0, min(1.0, float(value)))
+        return value * value * (3.0 - 2.0 * value)
+
+    @classmethod
+    def _rect_blend_influence(
+        cls,
+        x: float,
+        z: float,
+        *,
+        min_x: float,
+        max_x: float,
+        min_z: float,
+        max_z: float,
+        blend_margin: float,
+    ) -> float:
+        if min_x <= x <= max_x and min_z <= z <= max_z:
+            return 1.0
+        if blend_margin <= 1e-6:
+            return 0.0
+
+        dx = max(min_x - x, 0.0, x - max_x)
+        dz = max(min_z - z, 0.0, z - max_z)
+        distance = math.hypot(dx, dz)
+        if distance >= blend_margin:
+            return 0.0
+        return 1.0 - cls._smooth01(distance / blend_margin)
+
+    def _apply_height_adjustments(self, x: float, z: float, height: float) -> float:
+        if not self._height_adjustments:
+            return float(height)
+
+        adjusted = float(height)
+        px = float(x)
+        pz = float(z)
+        for min_x, max_x, min_z, max_z, target_y, blend_margin in self._height_adjustments:
+            influence = self._rect_blend_influence(
+                px,
+                pz,
+                min_x=min_x,
+                max_x=max_x,
+                min_z=min_z,
+                max_z=max_z,
+                blend_margin=blend_margin,
+            )
+            if influence <= 0.0:
+                continue
+            adjusted += (target_y - adjusted) * influence
+        return adjusted
 
     @staticmethod
     def _barycentric_y(
@@ -394,26 +537,31 @@ class GroundHeightSampler:
 
         w_abc = barycentric_weights(x, z, ax, az, bx, bz, cx, cz)
         eps = -1e-6
+        base_height = None
         if w_abc is not None:
             u, v, w = w_abc
             if u >= eps and v >= eps and w >= eps:
-                return u * float(b_y) + v * float(c_y) + w * float(a_y)
+                base_height = u * float(b_y) + v * float(c_y) + w * float(a_y)
 
-        w_acd = barycentric_weights(x, z, ax, az, cx, cz, dx, dz)
-        if w_acd is not None:
-            u, v, w = w_acd
-            if u >= eps and v >= eps and w >= eps:
-                return u * float(c_y) + v * float(d_y) + w * float(a_y)
+        if base_height is None:
+            w_acd = barycentric_weights(x, z, ax, az, cx, cz, dx, dz)
+            if w_acd is not None:
+                u, v, w = w_acd
+                if u >= eps and v >= eps and w >= eps:
+                    base_height = u * float(c_y) + v * float(d_y) + w * float(a_y)
 
-        u_lin = (lx + half) / (2.0 * half)
-        v_lin = (lz + half) / (2.0 * half)
-        a = float(a_y)
-        b = float(b_y)
-        c = float(c_y)
-        d = float(d_y)
-        return (
-            (1 - u_lin) * (1 - v_lin) * a
-            + u_lin * (1 - v_lin) * b
-            + u_lin * v_lin * c
-            + (1 - u_lin) * v_lin * d
-        )
+        if base_height is None:
+            u_lin = (lx + half) / (2.0 * half)
+            v_lin = (lz + half) / (2.0 * half)
+            a = float(a_y)
+            b = float(b_y)
+            c = float(c_y)
+            d = float(d_y)
+            base_height = (
+                (1 - u_lin) * (1 - v_lin) * a
+                + u_lin * (1 - v_lin) * b
+                + u_lin * v_lin * c
+                + (1 - u_lin) * v_lin * d
+            )
+
+        return self._apply_height_adjustments(x, z, base_height)

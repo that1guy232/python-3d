@@ -1,6 +1,8 @@
 """Ground grid builder extracted from renderer.py."""
 
 from __future__ import annotations
+from dataclasses import dataclass
+import math
 import os
 import numpy as np
 import pygame
@@ -18,6 +20,27 @@ from engine.rendering.lighting import (
     region_light_openings,
     with_textured_normals,
 )
+
+
+@dataclass(frozen=True)
+class TerrainFlattenPad:
+    min_x: float
+    max_x: float
+    min_z: float
+    max_z: float
+    height: float
+    blend_margin: float
+
+    def sampler_tuple(self) -> tuple[float, float, float, float, float, float]:
+        return (
+            self.min_x,
+            self.max_x,
+            self.min_z,
+            self.max_z,
+            self.height,
+            self.blend_margin,
+        )
+
 
 class TexturedGroundGridBuilder:
     def __init__(
@@ -69,6 +92,10 @@ class TexturedGroundGridBuilder:
         
         self.heightmap_path = os.path.join(TEXTURES_PATH, "heightmap.png")
         self.heightmap_amp = 80.0
+        self.terrain_pad_min_blend = 96.0
+        self.terrain_pad_max_blend = 180.0
+        self.terrain_pad_sample_spacing = max(8.0, self.spacing)
+        self.terrain_flatten_pads: list[TerrainFlattenPad] = []
 
     def _make_tile_vertex_array(self) -> np.ndarray:
         tile_vertices_local = []
@@ -107,26 +134,151 @@ class TexturedGroundGridBuilder:
             )
             return None, 0, 0, 0.0, 0.0, 0.0, 0.0
 
-    def _sample_heights_vectorized(self, world_coords, heightmap_data):
-        """Sample heights for multiple world coordinates at once"""
-        heightmap_arr, hm_w, hm_h, world_min_x, world_max_x, world_min_z, world_max_z = heightmap_data
+    def _sample_base_heights_vectorized(self, world_coords, heightmap_data):
+        """Sample the unmodified heightmap for multiple world coordinates."""
+        coords = np.asarray(world_coords, dtype=np.float32)
+        if len(coords) == 0:
+            return np.zeros(0, dtype=np.float32)
+
+        (
+            heightmap_arr,
+            hm_w,
+            hm_h,
+            world_min_x,
+            world_max_x,
+            world_min_z,
+            world_max_z,
+        ) = heightmap_data
         if heightmap_arr is None:
-            heights = np.full(len(world_coords), self.h, dtype=np.float32)
+            heights = np.full(len(coords), self.h, dtype=np.float32)
         else:
-            wx = world_coords[:, 0]
-            wz = world_coords[:, 1]
+            wx = coords[:, 0]
+            wz = coords[:, 1]
             # Vectorized UV calculation
             ux = (wx - world_min_x) / max(1e-12, (world_max_x - world_min_x))
             uz = (wz - world_min_z) / max(1e-12, (world_max_z - world_min_z))
             ux = np.clip(ux, 0.0, 1.0)
             uz = np.clip(uz, 0.0, 1.0)
-            px = (ux * (hm_w - 1)).astype(int)
-            py = (uz * (hm_h - 1)).astype(int)
-            # Sample heights
-            rgb_values = heightmap_arr[px, py]
-            lum = rgb_values.mean(axis=1)
+
+            px = ux * max(0, hm_w - 1)
+            py = uz * max(0, hm_h - 1)
+            x0 = np.floor(px).astype(np.int32)
+            y0 = np.floor(py).astype(np.int32)
+            x1 = np.clip(x0 + 1, 0, max(0, hm_w - 1))
+            y1 = np.clip(y0 + 1, 0, max(0, hm_h - 1))
+            tx = (px - x0).astype(np.float32)
+            ty = (py - y0).astype(np.float32)
+
+            lum00 = heightmap_arr[x0, y0].mean(axis=1)
+            lum10 = heightmap_arr[x1, y0].mean(axis=1)
+            lum01 = heightmap_arr[x0, y1].mean(axis=1)
+            lum11 = heightmap_arr[x1, y1].mean(axis=1)
+            lum0 = lum00 * (1.0 - tx) + lum10 * tx
+            lum1 = lum01 * (1.0 - tx) + lum11 * tx
+            lum = lum0 * (1.0 - ty) + lum1 * ty
             heights = self.h + (lum - 0.5) * 2.0 * self.heightmap_amp
         return heights.astype(np.float32)
+
+    @staticmethod
+    def _smooth01(values):
+        values = np.clip(values, 0.0, 1.0)
+        return values * values * (3.0 - 2.0 * values)
+
+    def _apply_terrain_pads_vectorized(
+        self,
+        world_coords,
+        heights,
+        terrain_pads: list[TerrainFlattenPad] | tuple[TerrainFlattenPad, ...] | None,
+    ) -> np.ndarray:
+        if not terrain_pads:
+            return np.asarray(heights, dtype=np.float32)
+
+        coords = np.asarray(world_coords, dtype=np.float32)
+        adjusted = np.asarray(heights, dtype=np.float32).copy()
+        if len(coords) == 0:
+            return adjusted
+
+        wx = coords[:, 0]
+        wz = coords[:, 1]
+        for pad in terrain_pads:
+            inside = (
+                (wx >= pad.min_x)
+                & (wx <= pad.max_x)
+                & (wz >= pad.min_z)
+                & (wz <= pad.max_z)
+            )
+            influence = np.zeros(len(coords), dtype=np.float32)
+            influence[inside] = 1.0
+
+            margin = max(0.0, float(pad.blend_margin))
+            if margin > 1e-6:
+                dx = np.maximum(np.maximum(pad.min_x - wx, 0.0), wx - pad.max_x)
+                dz = np.maximum(np.maximum(pad.min_z - wz, 0.0), wz - pad.max_z)
+                distance = np.sqrt(dx * dx + dz * dz)
+                near = (~inside) & (distance < margin)
+                if np.any(near):
+                    influence[near] = 1.0 - self._smooth01(distance[near] / margin)
+
+            affected = influence > 0.0
+            if not np.any(affected):
+                continue
+            adjusted[affected] += (
+                (float(pad.height) - adjusted[affected]) * influence[affected]
+            )
+
+        return adjusted.astype(np.float32)
+
+    def _sample_heights_vectorized(
+        self,
+        world_coords,
+        heightmap_data,
+        terrain_pads: list[TerrainFlattenPad] | tuple[TerrainFlattenPad, ...] | None = None,
+    ):
+        """Sample terrain heights after building-pad flattening."""
+        heights = self._sample_base_heights_vectorized(world_coords, heightmap_data)
+        return self._apply_terrain_pads_vectorized(
+            world_coords,
+            heights,
+            terrain_pads,
+        )
+
+    def _sample_smooth_normals_vectorized(
+        self,
+        world_coords,
+        heightmap_data,
+        terrain_pads: list[TerrainFlattenPad] | tuple[TerrainFlattenPad, ...] | None,
+    ) -> np.ndarray:
+        coords = np.asarray(world_coords, dtype=np.float32)
+        if len(coords) == 0:
+            return np.zeros((0, 3), dtype=np.float32)
+
+        step = max(1.0, min(float(self.spacing) * 0.25, 6.0))
+        left = coords.copy()
+        right = coords.copy()
+        near = coords.copy()
+        far = coords.copy()
+        left[:, 0] -= step
+        right[:, 0] += step
+        near[:, 1] -= step
+        far[:, 1] += step
+
+        h_left = self._sample_heights_vectorized(left, heightmap_data, terrain_pads)
+        h_right = self._sample_heights_vectorized(right, heightmap_data, terrain_pads)
+        h_near = self._sample_heights_vectorized(near, heightmap_data, terrain_pads)
+        h_far = self._sample_heights_vectorized(far, heightmap_data, terrain_pads)
+
+        normals = np.column_stack(
+            (
+                h_left - h_right,
+                np.full(len(coords), 2.0 * step, dtype=np.float32),
+                h_near - h_far,
+            )
+        ).astype(np.float32)
+        lengths = np.linalg.norm(normals, axis=1)
+        valid = lengths > 1e-8
+        normals[valid] /= lengths[valid, np.newaxis]
+        normals[~valid] = np.array((0.0, 1.0, 0.0), dtype=np.float32)
+        return normals
 
     @staticmethod
     def _region_values(region) -> tuple[float, float, float, float] | None:
@@ -149,6 +301,82 @@ class TexturedGroundGridBuilder:
         if max_z < min_z:
             min_z, max_z = max_z, min_z
         return min_x, max_x, min_z, max_z
+
+    def _terrain_pad_blend_margin(self, width: float, depth: float) -> float:
+        footprint_scale = max(1.0, min(float(width), float(depth)) * 0.55)
+        return max(
+            self.spacing * 3.0,
+            min(
+                float(self.terrain_pad_max_blend),
+                max(float(self.terrain_pad_min_blend), footprint_scale),
+            ),
+        )
+
+    def _sample_region_average_base_height(
+        self,
+        *,
+        min_x: float,
+        max_x: float,
+        min_z: float,
+        max_z: float,
+        heightmap_data,
+    ) -> float:
+        width = max(0.0, float(max_x) - float(min_x))
+        depth = max(0.0, float(max_z) - float(min_z))
+        if width <= 0.0 or depth <= 0.0:
+            coords = np.array(
+                [[(min_x + max_x) * 0.5, (min_z + max_z) * 0.5]],
+                dtype=np.float32,
+            )
+            return float(self._sample_base_heights_vectorized(coords, heightmap_data)[0])
+
+        spacing = max(4.0, float(self.terrain_pad_sample_spacing))
+        x_count = max(2, int(math.ceil(width / spacing)) + 1)
+        z_count = max(2, int(math.ceil(depth / spacing)) + 1)
+        xs = np.linspace(min_x, max_x, x_count, dtype=np.float32)
+        zs = np.linspace(min_z, max_z, z_count, dtype=np.float32)
+        coords = np.array(
+            [(float(x), float(z)) for z in zs for x in xs],
+            dtype=np.float32,
+        )
+        heights = self._sample_base_heights_vectorized(coords, heightmap_data)
+        if len(heights) == 0:
+            return float(self.h)
+        return float(np.mean(heights))
+
+    def _build_terrain_flatten_pads(self, heightmap_data) -> list[TerrainFlattenPad]:
+        if not heightmap_data or heightmap_data[0] is None:
+            return []
+
+        pads: list[TerrainFlattenPad] = []
+        for region in self.covered_regions:
+            values = self._region_values(region)
+            if values is None:
+                continue
+            min_x, max_x, min_z, max_z = values
+            width = max_x - min_x
+            depth = max_z - min_z
+            if width <= 1e-6 or depth <= 1e-6:
+                continue
+
+            avg_y = self._sample_region_average_base_height(
+                min_x=min_x,
+                max_x=max_x,
+                min_z=min_z,
+                max_z=max_z,
+                heightmap_data=heightmap_data,
+            )
+            pads.append(
+                TerrainFlattenPad(
+                    min_x=min_x,
+                    max_x=max_x,
+                    min_z=min_z,
+                    max_z=max_z,
+                    height=avg_y,
+                    blend_margin=self._terrain_pad_blend_margin(width, depth),
+                )
+            )
+        return pads
 
     def _covered_regions_for_tile(
         self,
@@ -182,6 +410,101 @@ class TexturedGroundGridBuilder:
     ) -> None:
         if low + 1e-6 < value < high - 1e-6:
             values.append(float(value))
+
+    def _append_terrain_pad_breakpoints(
+        self,
+        x_breaks: list[float],
+        z_breaks: list[float],
+        pad: TerrainFlattenPad,
+        *,
+        min_x: float,
+        max_x: float,
+        min_z: float,
+        max_z: float,
+    ) -> None:
+        margin = max(0.0, float(pad.blend_margin))
+        for fraction in (1.0, 0.875, 0.75, 0.625, 0.5, 0.375, 0.25, 0.125, 0.0):
+            offset = margin * fraction
+            self._append_breakpoint(x_breaks, pad.min_x - offset, min_x, max_x)
+            self._append_breakpoint(x_breaks, pad.max_x + offset, min_x, max_x)
+            self._append_breakpoint(z_breaks, pad.min_z - offset, min_z, max_z)
+            self._append_breakpoint(z_breaks, pad.max_z + offset, min_z, max_z)
+
+    def _append_covered_region_breakpoints(
+        self,
+        x_breaks: list[float],
+        z_breaks: list[float],
+        region,
+        *,
+        min_x: float,
+        max_x: float,
+        min_z: float,
+        max_z: float,
+    ) -> None:
+        values = self._region_values(region)
+        if values is None:
+            return
+
+        region_min_x, region_max_x, region_min_z, region_max_z = values
+        self._append_breakpoint(x_breaks, region_min_x, min_x, max_x)
+        self._append_breakpoint(x_breaks, region_max_x, min_x, max_x)
+        self._append_breakpoint(z_breaks, region_min_z, min_z, max_z)
+        self._append_breakpoint(z_breaks, region_max_z, min_z, max_z)
+
+        for opening in region_light_openings(region):
+            try:
+                side = str(opening.get("side", "")).lower()
+                width = float(opening.get("width", 48.0))
+                depth = float(opening.get("depth", 64.0))
+                side_fade = float(opening.get("side_fade", width * 0.25))
+                center_x = float(
+                    opening.get(
+                        "center_x",
+                        (region_min_x + region_max_x) * 0.5,
+                    )
+                )
+                center_z = float(
+                    opening.get(
+                        "center_z",
+                        (region_min_z + region_max_z) * 0.5,
+                    )
+                )
+            except (TypeError, ValueError):
+                continue
+
+            half = width * 0.5
+            if side in {"north", "south"}:
+                for value in (
+                    center_x - half - side_fade,
+                    center_x - half,
+                    center_x + half,
+                    center_x + half + side_fade,
+                ):
+                    self._append_breakpoint(x_breaks, value, min_x, max_x)
+                edge_z = region_max_z if side == "north" else region_min_z
+                step = -depth if side == "north" else depth
+                for value in (
+                    edge_z + step * 0.35,
+                    edge_z + step * 0.7,
+                    edge_z + step,
+                ):
+                    self._append_breakpoint(z_breaks, value, min_z, max_z)
+            elif side in {"east", "west"}:
+                for value in (
+                    center_z - half - side_fade,
+                    center_z - half,
+                    center_z + half,
+                    center_z + half + side_fade,
+                ):
+                    self._append_breakpoint(z_breaks, value, min_z, max_z)
+                edge_x = region_max_x if side == "east" else region_min_x
+                step = -depth if side == "east" else depth
+                for value in (
+                    edge_x + step * 0.35,
+                    edge_x + step * 0.7,
+                    edge_x + step,
+                ):
+                    self._append_breakpoint(x_breaks, value, min_x, max_x)
 
     def _append_ground_quad(
         self,
@@ -235,6 +558,9 @@ class TexturedGroundGridBuilder:
 
     def _build_ground_vertex_rows(
         self,
+        *,
+        terrain_pads: list[TerrainFlattenPad] | tuple[TerrainFlattenPad, ...] = (),
+        apply_region_colors: bool = True,
     ) -> tuple[np.ndarray, list[tuple[int, int, int, float, float]]]:
         rows: list[tuple[float, ...]] = []
         corner_coords_list: list[tuple[int, int, int, float, float]] = []
@@ -256,13 +582,43 @@ class TexturedGroundGridBuilder:
                     ]
                 )
 
-                tile_regions = self._covered_regions_for_tile(
-                    min_x,
-                    max_x,
-                    min_z,
-                    max_z,
+                tile_regions = (
+                    self._covered_regions_for_tile(
+                        min_x,
+                        max_x,
+                        min_z,
+                        max_z,
+                    )
+                    if apply_region_colors
+                    else []
                 )
-                if not tile_regions:
+                x_breaks = [min_x, max_x]
+                z_breaks = [min_z, max_z]
+
+                for pad in terrain_pads:
+                    self._append_terrain_pad_breakpoints(
+                        x_breaks,
+                        z_breaks,
+                        pad,
+                        min_x=min_x,
+                        max_x=max_x,
+                        min_z=min_z,
+                        max_z=max_z,
+                    )
+
+                if apply_region_colors:
+                    for region in self.covered_regions:
+                        self._append_covered_region_breakpoints(
+                            x_breaks,
+                            z_breaks,
+                            region,
+                            min_x=min_x,
+                            max_x=max_x,
+                            min_z=min_z,
+                            max_z=max_z,
+                        )
+
+                if not tile_regions and len(x_breaks) == 2 and len(z_breaks) == 2:
                     self._append_ground_quad(
                         rows,
                         x0=min_x,
@@ -274,93 +630,6 @@ class TexturedGroundGridBuilder:
                         color_factor=1.0,
                     )
                     continue
-
-                x_breaks = [min_x, max_x]
-                z_breaks = [min_z, max_z]
-                doorway_breaks_x: list[float] = []
-                doorway_breaks_z: list[float] = []
-                for (
-                    region_min_x,
-                    region_max_x,
-                    region_min_z,
-                    region_max_z,
-                ) in tile_regions:
-                    self._append_breakpoint(x_breaks, region_min_x, min_x, max_x)
-                    self._append_breakpoint(x_breaks, region_max_x, min_x, max_x)
-                    self._append_breakpoint(z_breaks, region_min_z, min_z, max_z)
-                    self._append_breakpoint(z_breaks, region_max_z, min_z, max_z)
-
-                for region in self.covered_regions:
-                    values = self._region_values(region)
-                    if values is None:
-                        continue
-                    region_min_x, region_max_x, region_min_z, region_max_z = values
-                    if (
-                        region_max_x <= min_x
-                        or region_min_x >= max_x
-                        or region_max_z <= min_z
-                        or region_min_z >= max_z
-                    ):
-                        continue
-                    for opening in region_light_openings(region):
-                        try:
-                            side = str(opening.get("side", "")).lower()
-                            width = float(opening.get("width", 48.0))
-                            depth = float(opening.get("depth", 64.0))
-                            side_fade = float(opening.get("side_fade", width * 0.25))
-                            center_x = float(opening.get(
-                                "center_x",
-                                (region_min_x + region_max_x) * 0.5,
-                            ))
-                            center_z = float(opening.get(
-                                "center_z",
-                                (region_min_z + region_max_z) * 0.5,
-                            ))
-                        except (TypeError, ValueError):
-                            continue
-
-                        half = width * 0.5
-                        if side in {"north", "south"}:
-                            doorway_breaks_x.extend(
-                                (
-                                    center_x - half - side_fade,
-                                    center_x - half,
-                                    center_x + half,
-                                    center_x + half + side_fade,
-                                )
-                            )
-                            edge_z = region_max_z if side == "north" else region_min_z
-                            step = -depth if side == "north" else depth
-                            doorway_breaks_z.extend(
-                                (
-                                    edge_z + step * 0.35,
-                                    edge_z + step * 0.7,
-                                    edge_z + step,
-                                )
-                            )
-                        elif side in {"east", "west"}:
-                            doorway_breaks_z.extend(
-                                (
-                                    center_z - half - side_fade,
-                                    center_z - half,
-                                    center_z + half,
-                                    center_z + half + side_fade,
-                                )
-                            )
-                            edge_x = region_max_x if side == "east" else region_min_x
-                            step = -depth if side == "east" else depth
-                            doorway_breaks_x.extend(
-                                (
-                                    edge_x + step * 0.35,
-                                    edge_x + step * 0.7,
-                                    edge_x + step,
-                                )
-                            )
-
-                for value in doorway_breaks_x:
-                    self._append_breakpoint(x_breaks, value, min_x, max_x)
-                for value in doorway_breaks_z:
-                    self._append_breakpoint(z_breaks, value, min_z, max_z)
 
                 x_breaks = sorted(set(round(value, 6) for value in x_breaks))
                 z_breaks = sorted(set(round(value, 6) for value in z_breaks))
@@ -378,6 +647,7 @@ class TexturedGroundGridBuilder:
                             z1=z1,
                             tile_min_x=min_x,
                             tile_min_z=min_z,
+                            color_factor=1.0 if not apply_region_colors else None,
                         )
 
         if not rows:
@@ -387,6 +657,8 @@ class TexturedGroundGridBuilder:
     def build(self) -> BatchedMesh:
         tile_vertex_array = self._make_tile_vertex_array()
         heightmap_data = self._load_heightmap()
+        terrain_pads = self._build_terrain_flatten_pads(heightmap_data)
+        self.terrain_flatten_pads = terrain_pads
         
         # Pre-allocate final vertex array
         vertices_per_tile = len(tile_vertex_array)
@@ -404,8 +676,12 @@ class TexturedGroundGridBuilder:
             )
         
         split_covered_regions = bool(self.covered_regions) and not shader_lighting
-        if split_covered_regions:
-            vertex_data, corner_coords_list = self._build_ground_vertex_rows()
+        split_terrain_pads = bool(terrain_pads)
+        if split_covered_regions or split_terrain_pads:
+            vertex_data, corner_coords_list = self._build_ground_vertex_rows(
+                terrain_pads=terrain_pads,
+                apply_region_colors=not shader_lighting,
+            )
         else:
             vertex_idx = 0
             corner_coords_list = []
@@ -426,12 +702,26 @@ class TexturedGroundGridBuilder:
         
         # Batch process all vertex heights
         vertex_world_coords = vertex_data[:, [0, 2]]  # Extract x, z coordinates
-        vertex_heights = self._sample_heights_vectorized(vertex_world_coords, heightmap_data)
+        vertex_heights = self._sample_heights_vectorized(
+            vertex_world_coords,
+            heightmap_data,
+            terrain_pads,
+        )
         vertex_data[:, 1] = vertex_heights  # Update y coordinates
+        terrain_normals = (
+            self._sample_smooth_normals_vectorized(
+                vertex_world_coords,
+                heightmap_data,
+                terrain_pads,
+            )
+            if terrain_pads
+            else None
+        )
         
         if shader_lighting:
             vertex_data = with_textured_normals(
                 vertex_data,
+                normals=terrain_normals,
                 prefer_upward_normals=True,
             )
         else:
@@ -452,6 +742,7 @@ class TexturedGroundGridBuilder:
                 vertex_data,
                 lighting=self.lighting,
                 sun_direction=self.sun_direction,
+                normals=terrain_normals,
                 prefer_upward_normals=True,
             )
             if not split_covered_regions:
@@ -475,7 +766,10 @@ class TexturedGroundGridBuilder:
         
         # Batch process all corner heights (unchanged)
         corner_world_coords = np.array([[coord[3], coord[4]] for coord in corner_coords_list])
-        corner_heights_flat = self._sample_heights_vectorized(corner_world_coords, heightmap_data)
+        corner_heights_flat = self._sample_base_heights_vectorized(
+            corner_world_coords,
+            heightmap_data,
+        )
         # Assign corner heights to the corner_heights array
         for i, (gx, gz, corner_idx, _, _) in enumerate(corner_coords_list):
             corner_heights[gx, gz, corner_idx] = corner_heights_flat[i]
@@ -489,7 +783,8 @@ class TexturedGroundGridBuilder:
             count=self.count,
             spacing=self.spacing,
             half=self.w,
-            heights=corner_heights
+            heights=corner_heights,
+            height_adjustments=[pad.sampler_tuple() for pad in terrain_pads],
         )
         # Store the template tile vertex array and grid params so the mesh can
         # be updated at runtime when heights change.
@@ -497,4 +792,5 @@ class TexturedGroundGridBuilder:
         mesh._count = int(self.count)
         mesh._spacing = float(self.spacing)
         mesh._half = float(self.w)
+        mesh._terrain_flatten_pads = [pad.sampler_tuple() for pad in terrain_pads]
         return mesh

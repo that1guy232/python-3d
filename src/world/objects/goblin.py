@@ -550,8 +550,9 @@ def draw_goblin_shadows_batched(
 ) -> None:  # pragma: no cover - visual
     groups: dict[int, list[Goblin]] = {}
     cam_pos = getattr(camera, "position", None)
+    frustum_test = getattr(camera, "sphere_in_frustum", None)
     view_distance_sq = None
-    if cam_pos is not None and view_distance is not None:
+    if cam_pos is not None and view_distance is not None and not callable(frustum_test):
         view_distance_sq = float(view_distance) * float(view_distance)
 
     for goblin in goblins or ():
@@ -567,6 +568,13 @@ def draw_goblin_shadows_batched(
         position = getattr(goblin, "position", None)
         if position is None:
             continue
+        if callable(frustum_test):
+            width, depth = getattr(goblin, "shadow_size", GOBLIN_SHADOW_SIZE)
+            radius = max(float(width), float(depth)) * 0.75
+            ground_y = float(getattr(goblin, "_ground_y", position.y))
+            center = (float(position.x), ground_y + GOBLIN_SHADOW_ELEVATION, float(position.z))
+            if not frustum_test(center, radius, far_distance=view_distance):
+                continue
         if view_distance_sq is not None:
             dx = float(position.x) - float(cam_pos.x)
             dy = float(position.y) - float(cam_pos.y)

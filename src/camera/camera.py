@@ -26,10 +26,14 @@ class Camera:
         self._yaw_sin = 0.0
         self._pitch_cos = 1.0
         self._pitch_sin = 0.0
+        self._right = Vector3(1.0, 0.0, 0.0)
+        self._up = Vector3(0.0, 1.0, 0.0)
+        self._forward = Vector3(0.0, 0.0, -1.0)
 
 
         
-        # NumPy rotation matrix (world -> camera)
+        # NumPy view-basis rows used by render-time culling:
+        # right, up, and positive forward depth.
         self._R = np.eye(3, dtype=np.float64)
 
         # Manual height offset (adjustable by user for screenshots, added on top of
@@ -346,21 +350,95 @@ class Camera:
             self._pitch_sin,
             -self._pitch_cos * self._yaw_cos,
         )
+        up = self._right.cross(self._forward)
+        self._up = up.normalize() if up.length_squared() > 1e-12 else Vector3(0, 1, 0)
         # Ground forward (horizontal component only — keep same formula you used)
         self._ground_forward = -Vector3(-self._yaw_sin, 0, -self._yaw_cos)
 
-        # Build rotation matrices with the same yaw-then-pitch order as your original transform:
-        # yaw (around Y) then pitch (around X). Apply yaw first, then pitch.
-        Ry = np.array(
-            [[cy, 0.0, -sy], [0.0, 1.0, 0.0], [sy, 0.0, cy]], dtype=np.float64
+        self._R = np.array(
+            [
+                [self._right.x, self._right.y, self._right.z],
+                [self._up.x, self._up.y, self._up.z],
+                [self._forward.x, self._forward.y, self._forward.z],
+            ],
+            dtype=np.float64,
         )
 
-        Rx = np.array(
-            [[1.0, 0.0, 0.0], [0.0, cp, -sp], [0.0, sp, cp]], dtype=np.float64
-        )
+    @staticmethod
+    def _coerce_point3(point) -> tuple[float, float, float]:
+        if hasattr(point, "x") and hasattr(point, "y") and hasattr(point, "z"):
+            return float(point.x), float(point.y), float(point.z)
+        return float(point[0]), float(point[1]), float(point[2])
 
-        # world -> camera matrix: pitch * yaw (so application is R @ vector)
-        self._R = Rx @ Ry
+    def world_delta_to_view(
+        self,
+        dx: float,
+        dy: float,
+        dz: float,
+    ) -> tuple[float, float, float]:
+        """Return camera-space right/up/depth for a world-space delta."""
+        right = self._right
+        up = self._up
+        forward = self._forward
+        x_cam = dx * right.x + dy * right.y + dz * right.z
+        y_cam = dx * up.x + dy * up.y + dz * up.z
+        depth = dx * forward.x + dy * forward.y + dz * forward.z
+        return x_cam, y_cam, depth
+
+    def world_point_to_view(self, point) -> tuple[float, float, float]:
+        """Return camera-space right/up/depth for a world-space point."""
+        px, py, pz = self._coerce_point3(point)
+        dx = px - float(self.position.x)
+        dy = py - float(self.position.y)
+        dz = pz - float(self.position.z)
+        return self.world_delta_to_view(dx, dy, dz)
+
+    def tan_half_fov(self, viewport_height: float = HEIGHT) -> float:
+        fov_scale = max(1e-6, float(getattr(self, "_fov_scale", HEIGHT * 0.5)))
+        return (float(viewport_height) * 0.5) / fov_scale
+
+    def sphere_in_frustum(
+        self,
+        center,
+        radius: float = 0.0,
+        *,
+        far_distance: float | None = None,
+        near_distance: float = 0.0,
+        viewport_width: float = WIDTH,
+        viewport_height: float = HEIGHT,
+        extra_margin: float = 0.0,
+    ) -> bool:
+        """Conservative camera-frustum test for a world-space bounding sphere."""
+        if center is None:
+            return True
+
+        try:
+            x_cam, y_cam, depth = self.world_point_to_view(center)
+        except Exception:
+            return True
+
+        radius = max(0.0, float(radius) + max(0.0, float(extra_margin)))
+        near = float(near_distance)
+        if depth < near - radius:
+            return False
+
+        if far_distance is not None:
+            far = max(near, float(far_distance))
+            if depth > far + radius:
+                return False
+
+        tan_half = self.tan_half_fov(viewport_height)
+        aspect = float(viewport_width) / max(1e-6, float(viewport_height))
+        depth_for_extent = max(0.0, depth)
+        half_v = depth_for_extent * tan_half
+        half_h = half_v * aspect
+        tan_half_h = tan_half * aspect
+        horizontal_margin = radius * math.sqrt(1.0 + tan_half_h * tan_half_h)
+        vertical_margin = radius * math.sqrt(1.0 + tan_half * tan_half)
+        return (
+            abs(x_cam) <= half_h + horizontal_margin
+            and abs(y_cam) <= half_v + vertical_margin
+        )
 
 
 

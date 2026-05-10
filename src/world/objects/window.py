@@ -385,7 +385,12 @@ class Window(TexturedSlabMixin, Entity):
             return np.zeros((0, columns), dtype=np.float32)
         return np.array(rows, dtype=np.float32)
 
-    def _draw_cached_corner_backing(self) -> None:
+    def _draw_cached_corner_backing(
+        self,
+        camera=None,
+        *,
+        view_distance: float | None = None,
+    ) -> None:
         mesh = getattr(self, "_corner_backing_mesh", None)
         light_key = self._slab_light_cache_key()
         dirty = light_key != getattr(self, "_corner_backing_light_key", None)
@@ -416,7 +421,7 @@ class Window(TexturedSlabMixin, Entity):
             self._corner_backing_light_key = light_key
             mesh = self._corner_backing_mesh
 
-        mesh.draw()
+        mesh.draw(camera=camera, view_distance=view_distance)
 
     def draw(self, camera=None) -> None:  # pragma: no cover - visual
         if not self.visible or not self.texture:
@@ -426,8 +431,8 @@ class Window(TexturedSlabMixin, Entity):
         if not verts:
             return
 
-        self._draw_cached_corner_backing()
-        self._draw_cached_textured_slab_faces(verts)
+        self._draw_cached_corner_backing(camera=camera)
+        self._draw_cached_textured_slab_faces(verts, camera=camera)
 
 
 class WindowRenderBatch:
@@ -522,16 +527,16 @@ class WindowRenderBatch:
         self._backing_meshes = self._make_meshes(backing_groups, alpha_test=False)
         self._slab_meshes = self._make_meshes(slab_groups, alpha_test=True)
 
-    def draw(self) -> None:  # pragma: no cover - visual
+    def draw(self, camera=None, *, view_distance: float | None = None) -> None:  # pragma: no cover - visual
         cache_key = self._current_cache_key()
         if cache_key != self._cache_key:
             self._rebuild()
             self._cache_key = cache_key
 
         for mesh in self._backing_meshes:
-            mesh.draw()
+            mesh.draw(camera=camera, view_distance=view_distance)
         for mesh in self._slab_meshes:
-            mesh.draw()
+            mesh.draw(camera=camera, view_distance=view_distance)
 
 
 def build_window_render_batch(windows) -> WindowRenderBatch | None:

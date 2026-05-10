@@ -418,7 +418,7 @@ class Door(TexturedSlabMixin, Entity):
         if abs(self.open_amount - target) > 1e-4:
             self._draw_textured_slab_faces(verts)
         else:
-            self._draw_cached_textured_slab_faces(verts)
+            self._draw_cached_textured_slab_faces(verts, camera=camera)
 
     def _collision_center(self) -> Vector3:
         return self.closed_center
@@ -496,14 +496,14 @@ class DoorRenderBatch:
                 )
             )
 
-    def draw(self) -> None:  # pragma: no cover - visual
+    def draw(self, camera=None, *, view_distance: float | None = None) -> None:  # pragma: no cover - visual
         cache_key = self._current_cache_key()
         if cache_key != self._cache_key:
             self._rebuild()
             self._cache_key = cache_key
 
         for mesh in self._meshes:
-            mesh.draw()
+            mesh.draw(camera=camera, view_distance=view_distance)
 
 
 def build_door_render_batch(doors) -> DoorRenderBatch | None:

@@ -303,51 +303,6 @@ class WorldScene(Scene):
         return self.renderer.draw(enable_timing=enable_timing)
 
     def draw_world_objects(self, enable_timing: bool = False):  # pragma: no cover - visual
-        start_draw_decal_batches_time = time.perf_counter()
-        with self._profile("objects.decal_batches"):
-            for batch in self.decal_batches:
-                batch.draw(camera=self.camera)
-        end_draw_decal_batches_time = time.perf_counter()
-        if enable_timing:
-            print(
-                "Drawing decal batches took "
-                f"{end_draw_decal_batches_time - start_draw_decal_batches_time:.6f} seconds"
-            )
-
-        start_draw_wall_tiles_time = time.perf_counter()
-        with self._profile("objects.wall_tiles"):
-            if self.wall_tile_batches:
-                for batch in self.wall_tile_batches:
-                    batch.draw()
-            else:
-                entity_ids = {id(entity) for entity in self.entities}
-                for wall in self.wall_tiles:
-                    if id(wall) in entity_ids:
-                        continue
-                    wall.draw(camera=self.camera)
-        end_draw_wall_tiles_time = time.perf_counter()
-        if enable_timing:
-            print(
-                "Drawing wall tiles took "
-                f"{end_draw_wall_tiles_time - start_draw_wall_tiles_time:.6f} seconds"
-            )
-
-        start_draw_polygons_time = time.perf_counter()
-        with self._profile("objects.polygon_batches"):
-            for batch in getattr(self, "polygon_batches", ()) or ():
-                batch.draw(camera=self.camera)
-        with self._profile("objects.polygons"):
-            for polygon in self.polygons:
-                if getattr(polygon, "render_batched", False):
-                    continue
-                polygon.draw(camera=self.camera)
-        end_draw_polygons_time = time.perf_counter()
-        if enable_timing:
-            print(
-                "Drawing polygons took "
-                f"{end_draw_polygons_time - start_draw_polygons_time:.6f} seconds"
-            )
-
         def _approx_pos(obj):
             position = getattr(obj, "position", None)
             if position is not None:
@@ -368,32 +323,6 @@ class WorldScene(Scene):
                         float(getattr(center, "y", 0.0)),
                         float(center.z),
                     )
-                except Exception:
-                    pass
-
-            if hasattr(obj, "get_bounding_box"):
-                try:
-                    bbox = obj.get_bounding_box()
-                    if bbox:
-                        min_x, max_x, min_z, max_z = bbox
-                        cam_x = (
-                            float(getattr(self.camera.position, "x", 0.0))
-                            if self.camera
-                            else 0.0
-                        )
-                        cam_z = (
-                            float(getattr(self.camera.position, "z", 0.0))
-                            if self.camera
-                            else 0.0
-                        )
-                        px = max(min_x, min(max_x, cam_x))
-                        pz = max(min_z, min(max_z, cam_z))
-                        cy = (
-                            float(getattr(self.camera.position, "y", 0.0))
-                            if self.camera
-                            else 0.0
-                        )
-                        return (px, cy, pz)
                 except Exception:
                     pass
 
@@ -418,28 +347,174 @@ class WorldScene(Scene):
 
             return None
 
+        def _sphere_for_vertices(vertices):
+            if not vertices:
+                return None
+            min_x = min(float(v.x) for v in vertices)
+            max_x = max(float(v.x) for v in vertices)
+            min_y = min(float(v.y) for v in vertices)
+            max_y = max(float(v.y) for v in vertices)
+            min_z = min(float(v.z) for v in vertices)
+            max_z = max(float(v.z) for v in vertices)
+            center = (
+                (min_x + max_x) * 0.5,
+                (min_y + max_y) * 0.5,
+                (min_z + max_z) * 0.5,
+            )
+            radius = (
+                ((max_x - min_x) * 0.5) ** 2
+                + ((max_y - min_y) * 0.5) ** 2
+                + ((max_z - min_z) * 0.5) ** 2
+            ) ** 0.5
+            return center, radius
+
+        def _object_render_sphere(obj):
+            center = getattr(obj, "bounds_center", None)
+            if center is not None:
+                return center, float(getattr(obj, "bounds_radius", 0.0))
+
+            for method_name in ("get_render_bounding_sphere", "get_bounding_sphere"):
+                method = getattr(obj, method_name, None)
+                if callable(method):
+                    try:
+                        sphere = method()
+                    except Exception:
+                        sphere = None
+                    if sphere:
+                        return sphere
+
+            visual_vertices = getattr(obj, "_visual_vertices", None)
+            if callable(visual_vertices):
+                try:
+                    sphere = _sphere_for_vertices(visual_vertices())
+                except Exception:
+                    sphere = None
+                if sphere:
+                    return sphere
+
+            get_vertices = getattr(obj, "get_world_vertices", None)
+            if callable(get_vertices):
+                try:
+                    sphere = _sphere_for_vertices(get_vertices())
+                except Exception:
+                    sphere = None
+                if sphere:
+                    return sphere
+
+            get_bounds = getattr(obj, "get_bounding_box", None)
+            if callable(get_bounds):
+                try:
+                    bbox = get_bounds()
+                    if bbox:
+                        min_x, max_x, min_z, max_z = (float(v) for v in bbox)
+                        pos = _approx_pos(obj)
+                        cy = pos[1] if pos is not None else (
+                            float(getattr(self.camera.position, "y", 0.0))
+                            if self.camera
+                            else 0.0
+                        )
+                        center = (
+                            (min_x + max_x) * 0.5,
+                            cy,
+                            (min_z + max_z) * 0.5,
+                        )
+                        radius = (
+                            ((max_x - min_x) * 0.5) ** 2
+                            + ((max_z - min_z) * 0.5) ** 2
+                        ) ** 0.5
+                        return center, radius
+                except Exception:
+                    pass
+
+            pos = _approx_pos(obj)
+            if pos is None:
+                return None
+            radius = max(
+                0.0,
+                float(
+                    getattr(
+                        obj,
+                        "render_radius",
+                        getattr(obj, "collision_radius", 0.0),
+                    )
+                    or 0.0
+                ),
+            )
+            return pos, radius
+
+        def _object_visible(obj) -> bool:
+            camera = self.camera
+            if camera is None:
+                return True
+            tester = getattr(camera, "sphere_in_frustum", None)
+            if not callable(tester):
+                return True
+            sphere = _object_render_sphere(obj)
+            if sphere is None:
+                return True
+            center, radius = sphere
+            return bool(tester(center, radius, far_distance=VIEWDISTANCE))
+
+        start_draw_decal_batches_time = time.perf_counter()
+        with self._profile("objects.decal_batches"):
+            for batch in self.decal_batches:
+                batch.draw(camera=self.camera)
+        end_draw_decal_batches_time = time.perf_counter()
+        if enable_timing:
+            print(
+                "Drawing decal batches took "
+                f"{end_draw_decal_batches_time - start_draw_decal_batches_time:.6f} seconds"
+            )
+
+        start_draw_wall_tiles_time = time.perf_counter()
+        with self._profile("objects.wall_tiles"):
+            if self.wall_tile_batches:
+                for batch in self.wall_tile_batches:
+                    batch.draw(camera=self.camera, view_distance=VIEWDISTANCE)
+            else:
+                entity_ids = {id(entity) for entity in self.entities}
+                for wall in self.wall_tiles:
+                    if id(wall) in entity_ids:
+                        continue
+                    if not _object_visible(wall):
+                        continue
+                    wall.draw(camera=self.camera)
+        end_draw_wall_tiles_time = time.perf_counter()
+        if enable_timing:
+            print(
+                "Drawing wall tiles took "
+                f"{end_draw_wall_tiles_time - start_draw_wall_tiles_time:.6f} seconds"
+            )
+
+        start_draw_polygons_time = time.perf_counter()
+        with self._profile("objects.polygon_batches"):
+            for batch in getattr(self, "polygon_batches", ()) or ():
+                batch.draw(camera=self.camera, view_distance=VIEWDISTANCE)
+        with self._profile("objects.polygons"):
+            for polygon in self.polygons:
+                if getattr(polygon, "render_batched", False):
+                    continue
+                if not _object_visible(polygon):
+                    continue
+                polygon.draw(camera=self.camera)
+        end_draw_polygons_time = time.perf_counter()
+        if enable_timing:
+            print(
+                "Drawing polygons took "
+                f"{end_draw_polygons_time - start_draw_polygons_time:.6f} seconds"
+            )
+
         starting_draw_other_time = time.perf_counter()
-        cam_pos = self.camera.position if self.camera is not None else None
-        view_distance_sq = VIEWDISTANCE * VIEWDISTANCE
         with self._profile("objects.road_batches"):
             for batch in getattr(self, "road_batches", ()) or ():
-                batch.draw()
+                batch.draw(camera=self.camera, view_distance=VIEWDISTANCE)
 
         with self._profile("objects.others"):
             for obj in self.others:
                 if getattr(obj, "render_batched", False):
                     continue
-                if cam_pos is not None:
-                    pos = _approx_pos(obj)
-                    if pos is not None:
-                        try:
-                            dx = pos[0] - cam_pos.x
-                            dy = pos[1] - cam_pos.y
-                            dz = pos[2] - cam_pos.z
-                            if (dx * dx + dy * dy + dz * dz) > view_distance_sq:
-                                continue
-                        except Exception:
-                            pass
+                if not _object_visible(obj):
+                    continue
 
                 obj.draw()
         end_draw_other_time = time.perf_counter()
@@ -450,15 +525,14 @@ class WorldScene(Scene):
             )
 
         start_draw_entities_time = time.perf_counter()
-        cam_pos = self.camera.position if self.camera is not None else None
 
         with self._profile("objects.door_batches"):
             for batch in getattr(self, "door_batches", ()) or ():
-                batch.draw()
+                batch.draw(camera=self.camera, view_distance=VIEWDISTANCE)
 
         with self._profile("objects.window_batches"):
             for batch in getattr(self, "window_batches", ()) or ():
-                batch.draw()
+                batch.draw(camera=self.camera, view_distance=VIEWDISTANCE)
 
         with self._profile("objects.goblin_shadows"):
             goblins = getattr(self, "goblins", None) or self.entities
@@ -477,17 +551,8 @@ class WorldScene(Scene):
                 ):
                     continue
 
-                if cam_pos is not None:
-                    pos = _approx_pos(entity)
-                    if pos is not None:
-                        try:
-                            dx = pos[0] - cam_pos.x
-                            dy = pos[1] - cam_pos.y
-                            dz = pos[2] - cam_pos.z
-                            if (dx * dx + dy * dy + dz * dz) > view_distance_sq:
-                                continue
-                        except Exception:
-                            pass
+                if not _object_visible(entity):
+                    continue
 
                 draw_entity = getattr(entity, "draw", None)
                 if callable(draw_entity):

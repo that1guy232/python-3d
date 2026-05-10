@@ -12,6 +12,8 @@ class Object3D:
         self._world_vertices_cache = None
         self._world_vertices_cache_key = None
         self._bounds_cache = None
+        self._bounds3_cache = None
+        self._bounds_sphere_cache = None
 
     def _update_rotation_matrix(self):
         """Cache sin/cos values and the rotation matrix for the current rotation."""
@@ -71,6 +73,8 @@ class Object3D:
         self._world_vertices_cache_key = cache_key
         self._world_vertices_cache = world_vertices
         self._bounds_cache = None
+        self._bounds3_cache = None
+        self._bounds_sphere_cache = None
         return world_vertices
 
     def _transform_cache_key(self):
@@ -103,3 +107,50 @@ class Object3D:
         max_z = max(v.z for v in verts)
         self._bounds_cache = (min_x, max_x, min_z, max_z)
         return self._bounds_cache
+
+    def get_bounding_box3d(self):
+        """Return cached XYZ bounds as (min_x, max_x, min_y, max_y, min_z, max_z)."""
+        if (
+            self._bounds3_cache is not None
+            and self._world_vertices_cache_key == self._transform_cache_key()
+        ):
+            return self._bounds3_cache
+
+        verts = self.get_world_vertices()
+        if not verts:
+            return None
+
+        min_x = min(v.x for v in verts)
+        max_x = max(v.x for v in verts)
+        min_y = min(v.y for v in verts)
+        max_y = max(v.y for v in verts)
+        min_z = min(v.z for v in verts)
+        max_z = max(v.z for v in verts)
+        self._bounds3_cache = (min_x, max_x, min_y, max_y, min_z, max_z)
+        return self._bounds3_cache
+
+    def get_bounding_sphere(self):
+        """Return conservative render bounds as ((cx, cy, cz), radius)."""
+        if (
+            self._bounds_sphere_cache is not None
+            and self._world_vertices_cache_key == self._transform_cache_key()
+        ):
+            return self._bounds_sphere_cache
+
+        bounds = self.get_bounding_box3d()
+        if bounds is None:
+            return None
+
+        min_x, max_x, min_y, max_y, min_z, max_z = bounds
+        center = (
+            (min_x + max_x) * 0.5,
+            (min_y + max_y) * 0.5,
+            (min_z + max_z) * 0.5,
+        )
+        radius = math.sqrt(
+            ((max_x - min_x) * 0.5) ** 2
+            + ((max_y - min_y) * 0.5) ** 2
+            + ((max_z - min_z) * 0.5) ** 2
+        )
+        self._bounds_sphere_cache = (center, radius)
+        return self._bounds_sphere_cache

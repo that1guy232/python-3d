@@ -136,6 +136,30 @@ def xz_bounds_for_vertices(
     return (min_x, max_x, min_z, max_z)
 
 
+def sphere_for_vertices(
+    vertices: Sequence[Vector3],
+) -> tuple[tuple[float, float, float], float] | None:
+    if not vertices:
+        return None
+    min_x = min(v.x for v in vertices)
+    max_x = max(v.x for v in vertices)
+    min_y = min(v.y for v in vertices)
+    max_y = max(v.y for v in vertices)
+    min_z = min(v.z for v in vertices)
+    max_z = max(v.z for v in vertices)
+    center = (
+        (min_x + max_x) * 0.5,
+        (min_y + max_y) * 0.5,
+        (min_z + max_z) * 0.5,
+    )
+    radius = (
+        ((max_x - min_x) * 0.5) ** 2
+        + ((max_y - min_y) * 0.5) ** 2
+        + ((max_z - min_z) * 0.5) ** 2
+    ) ** 0.5
+    return center, radius
+
+
 class TexturedSlabMixin:
     """Shared behavior for entity slabs with textured box visuals."""
 
@@ -212,6 +236,9 @@ class TexturedSlabMixin:
             height=self.height,
             thickness=self.thickness,
         )
+
+    def get_render_bounding_sphere(self):
+        return sphere_for_vertices(self._visual_vertices())
 
     @staticmethod
     def _box_vertices(
@@ -321,7 +348,13 @@ class TexturedSlabMixin:
             return np.zeros((0, 8), dtype=np.float32)
         return np.array(rows, dtype=np.float32)
 
-    def _draw_cached_textured_slab_faces(self, verts: Sequence[Vector3]) -> None:
+    def _draw_cached_textured_slab_faces(
+        self,
+        verts: Sequence[Vector3],
+        camera=None,
+        *,
+        view_distance: float | None = None,
+    ) -> None:
         if not self.texture:
             return
 
@@ -347,4 +380,4 @@ class TexturedSlabMixin:
             self._slab_mesh_light_key = light_key
             mesh = self._slab_mesh
 
-        mesh.draw()
+        mesh.draw(camera=camera, view_distance=view_distance)

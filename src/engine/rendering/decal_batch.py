@@ -125,6 +125,10 @@ class DecalBatch:
             return True
 
         radius = self.mesh_radii.get(key, 0.0)
+        tester = getattr(camera, "sphere_in_frustum", None)
+        if callable(tester):
+            return bool(tester(center, radius, far_distance=VIEWDISTANCE))
+
         dx = center[0] - cam_pos.x
         dy = center[1] - cam_pos.y
         dz = center[2] - cam_pos.z
@@ -140,16 +144,24 @@ class DecalBatch:
         if depth < -radius or depth > VIEWDISTANCE + radius:
             return False
 
-        matrix = getattr(camera, "_R", None)
-        try:
-            x_cam = dx * float(matrix[0][0]) + dy * float(matrix[0][1]) + dz * float(matrix[0][2])
-            y_cam = dx * float(matrix[1][0]) + dy * float(matrix[1][1]) + dz * float(matrix[1][2])
-        except Exception:
-            right = getattr(camera, "_right", None)
-            if right is None:
-                return True
-            x_cam = dx * right.x + dy * right.y + dz * right.z
-            y_cam = dy
+        converter = getattr(camera, "world_delta_to_view", None)
+        if callable(converter):
+            x_cam, y_cam, _ = converter(dx, dy, dz)
+        else:
+            matrix = getattr(camera, "_R", None)
+            try:
+                x_cam = dx * float(matrix[0][0]) + dy * float(matrix[0][1]) + dz * float(matrix[0][2])
+                y_cam = dx * float(matrix[1][0]) + dy * float(matrix[1][1]) + dz * float(matrix[1][2])
+            except Exception:
+                right = getattr(camera, "_right", None)
+                up = getattr(camera, "_up", None)
+                if right is None:
+                    return True
+                x_cam = dx * right.x + dy * right.y + dz * right.z
+                if up is not None:
+                    y_cam = dx * up.x + dy * up.y + dz * up.z
+                else:
+                    y_cam = dy
 
         fov_scale = getattr(camera, "_fov_scale", HEIGHT * 0.5)
         tan_half_fov = (HEIGHT * 0.5) / max(1e-6, float(fov_scale))

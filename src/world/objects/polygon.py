@@ -677,14 +677,19 @@ class PolygonRenderBatch:
                 )
             )
 
-    def draw(self, camera=None) -> None:  # pragma: no cover - visual
+    def draw(
+        self,
+        camera=None,
+        *,
+        view_distance: float | None = None,
+    ) -> None:  # pragma: no cover - visual
         cache_key = self._current_cache_key(camera)
         if cache_key != self._cache_key:
             self._rebuild(camera)
             self._cache_key = cache_key
 
         for mesh in self._meshes:
-            mesh.draw()
+            mesh.draw(camera=camera, view_distance=view_distance)
 
 
 def build_polygon_render_batch(polygons) -> PolygonRenderBatch | None:

@@ -511,7 +511,11 @@ def draw_sprites_batched(
     # Prepare cull fallback axes if numpy-transform not used
     if not use_numpy_transform:
         right_cull = camera._right.normalize()
-        up_cull = right_cull.cross(forward).normalize()
+        up_source = getattr(camera, "_up", None)
+        if up_source is None:
+            up_cull = right_cull.cross(forward).normalize()
+        else:
+            up_cull = up_source.normalize()
         if _length_sq(right_cull) == 0 or _length_sq(up_cull) == 0:
             return
         rcx, rcy, rcz = right_cull.x, right_cull.y, right_cull.z
@@ -557,13 +561,15 @@ def draw_sprites_batched(
         np.multiply(rel_z, fz, out=x_cam)
         np.add(depths, x_cam, out=depths)
 
-        np.multiply(widths, 0.75, out=back_extra)
+        np.maximum(widths, heights, out=back_extra)
+        np.multiply(back_extra, 0.75, out=back_extra)
         np.maximum(back_extra, sprite_back_cull_extra, out=back_extra)
         np.negative(back_extra, out=limit)
         np.not_equal(textures, 0, out=visible_mask)
         np.greater(depths, limit, out=mask_tmp)
         visible_mask &= mask_tmp
-        np.less_equal(depths, view_distance, out=mask_tmp)
+        np.add(view_distance, back_extra, out=limit)
+        np.less_equal(depths, limit, out=mask_tmp)
         visible_mask &= mask_tmp
 
         if use_numpy_transform:
@@ -591,7 +597,8 @@ def draw_sprites_batched(
             np.multiply(rel_z, ucz, out=limit)
             np.add(y_cam, limit, out=y_cam)
 
-        np.multiply(depths, tan_h, out=half_v)
+        np.maximum(depths, 0.0, out=half_v)
+        np.multiply(half_v, tan_h, out=half_v)
         np.multiply(half_v, asp, out=half_h)
 
         np.multiply(widths, 0.9, out=side_extra)
