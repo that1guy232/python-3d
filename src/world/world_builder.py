@@ -10,6 +10,8 @@ from typing import Iterator
 from pygame.math import Vector3
 
 from config import (
+    GOBLIN_CHASE_GIVE_UP_RADIUS,
+    GOBLIN_CHASE_RADIUS,
     GOBLIN_COUNT,
     GOBLIN_MIN_SEPARATION,
     GOBLIN_SPAWN_ATTEMPTS,
@@ -1615,6 +1617,24 @@ def _random_goblin_spawn_near_tree(scene, rng: random.Random):
     )
 
 
+def _player_in_building_detector(scene):
+    def player_in_building() -> bool:
+        camera = getattr(scene, "camera", None)
+        position = getattr(camera, "position", None)
+        if position is None:
+            return False
+
+        x = float(position.x)
+        z = float(position.z)
+        for building in getattr(scene, "buildings", ()) or ():
+            contains_point = getattr(building, "contains_point", None)
+            if callable(contains_point) and contains_point(x, z, margin=0.0):
+                return True
+        return False
+
+    return player_in_building
+
+
 def _build_goblins(scene) -> None:
     for goblin in getattr(scene, "goblins", ()) or ():
         try:
@@ -1653,6 +1673,11 @@ def _build_goblins(scene) -> None:
     min_separation_sq = max(0.0, float(GOBLIN_MIN_SEPARATION)) ** 2
     max_attempts = max(1, int(GOBLIN_SPAWN_ATTEMPTS))
     add_entity = getattr(scene, "add_entity", None)
+    player_in_building = _player_in_building_detector(scene)
+    chase_radius = float(getattr(scene, "goblin_chase_radius", GOBLIN_CHASE_RADIUS))
+    chase_give_up_radius = float(
+        getattr(scene, "goblin_chase_give_up_radius", GOBLIN_CHASE_GIVE_UP_RADIUS)
+    )
 
     for _ in range(count):
         spawn = None
@@ -1684,6 +1709,9 @@ def _build_goblins(scene) -> None:
                 camera=scene.camera,
                 ground_height_at=scene.ground_height_at,
                 position_blocked=blocked,
+                player_in_building=player_in_building,
+                chase_radius=chase_radius,
+                chase_give_up_radius=chase_give_up_radius,
                 shadow_texture=shadow_texture,
                 rng=random.Random(rng.randrange(1 << 30)),
             )

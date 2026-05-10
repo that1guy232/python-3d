@@ -61,6 +61,9 @@ GOBLIN_ANIMATION_FRAME_DURATION = 1.0 / GOBLIN_ANIMATION_FPS
 GOBLIN_ROAM_RADIUS = 145.0
 GOBLIN_MOVE_SPEED = 32.0
 GOBLIN_COLLISION_RADIUS = 18.0
+GOBLIN_CHASE_RADIUS = 260.0
+GOBLIN_CHASE_GIVE_UP_RADIUS = 380.0
+GOBLIN_CHASE_STOP_DISTANCE = 34.0
 GOBLIN_TARGET_REACHED_DISTANCE = 7.0
 GOBLIN_MIN_IDLE_SECONDS = 0.35
 GOBLIN_MAX_IDLE_SECONDS = 1.45
@@ -71,6 +74,7 @@ GOBLIN_SHADOW_SIZE = (30.0, 22.0)
 GOBLIN_SHADOW_ELEVATION = 0.35
 
 PositionBlockedFn = Callable[[float, float, float], bool]
+PlayerInBuildingFn = Callable[[], bool]
 AnimationFrames = tuple[Any, ...]
 AnimationSets = dict[str, AnimationFrames]
 
@@ -126,10 +130,14 @@ class Goblin(Entity):
         camera: object,
         ground_height_at: Callable[[float, float], float],
         position_blocked: PositionBlockedFn | None = None,
+        player_in_building: PlayerInBuildingFn | None = None,
         sprite_height: float = GOBLIN_SPRITE_HEIGHT,
         roam_radius: float = GOBLIN_ROAM_RADIUS,
         move_speed: float = GOBLIN_MOVE_SPEED,
         collision_radius: float = GOBLIN_COLLISION_RADIUS,
+        chase_radius: float = GOBLIN_CHASE_RADIUS,
+        chase_give_up_radius: float = GOBLIN_CHASE_GIVE_UP_RADIUS,
+        chase_stop_distance: float = GOBLIN_CHASE_STOP_DISTANCE,
         frame_duration: float = GOBLIN_ANIMATION_FRAME_DURATION,
         shadow_texture: int | None = None,
         shadow_size: tuple[float, float] = GOBLIN_SHADOW_SIZE,
@@ -143,6 +151,7 @@ class Goblin(Entity):
         self.camera = camera
         self.ground_height_at = ground_height_at
         self.position_blocked = position_blocked
+        self.player_in_building = player_in_building
         self.rng = rng or random.Random()
         self._animations: AnimationSets = {
             "front": front_frames,
@@ -153,8 +162,15 @@ class Goblin(Entity):
         self.roam_radius = max(1.0, float(roam_radius))
         self.move_speed = max(0.0, float(move_speed))
         self.collision_radius = max(0.0, float(collision_radius))
+        self.chase_radius = max(0.0, float(chase_radius))
+        self.chase_give_up_radius = max(
+            self.chase_radius,
+            float(chase_give_up_radius),
+        )
+        self.chase_stop_distance = max(0.0, float(chase_stop_distance))
         self._sprite_height = max(1.0, float(sprite_height))
         self._target: Vector3 | None = None
+        self._chasing_player = False
         self._idle_timer = self.rng.uniform(0.0, GOBLIN_MAX_IDLE_SECONDS)
         self._facing_xz = Vector3(0.0, 0.0, 1.0)
         self._current_animation = ""
@@ -262,40 +278,117 @@ class Goblin(Entity):
         logic_dt = min(self._logic_update_elapsed, GOBLIN_LOGIC_UPDATE_INTERVAL * 2.0)
         self._logic_update_elapsed %= GOBLIN_LOGIC_UPDATE_INTERVAL
         try:
-            if self._idle_timer > 0.0:
+            chase_target = self._current_chase_target()
+            if chase_target is not None:
+                self._move_towards(
+                    chase_target,
+                    logic_dt,
+                    clamp_to_roam=False,
+                    stop_distance=self.chase_stop_distance,
+                )
+                return
+
+            returning_to_spawn = self._outside_roam_radius()
+            if self._idle_timer > 0.0 and not returning_to_spawn:
                 self._idle_timer = max(0.0, self._idle_timer - logic_dt)
                 return
 
-            if self._target is None:
+            if returning_to_spawn:
+                self._target = Vector3(
+                    self.spawn_position.x,
+                    0.0,
+                    self.spawn_position.z,
+                )
+            elif self._target is None:
                 self._target = self._pick_roam_target()
 
-            dx = self._target.x - self.position.x
-            dz = self._target.z - self.position.z
-            distance_sq = dx * dx + dz * dz
-            reached = GOBLIN_TARGET_REACHED_DISTANCE
-            if distance_sq <= reached * reached:
+            move_result = self._move_towards(
+                self._target,
+                logic_dt,
+                clamp_to_roam=not returning_to_spawn,
+                stop_distance=GOBLIN_TARGET_REACHED_DISTANCE,
+            )
+            if move_result in {"reached", "blocked"}:
                 self._pause_before_next_roam()
-                return
-
-            distance = math.sqrt(distance_sq)
-            if distance <= 1e-6:
-                self._pause_before_next_roam()
-                return
-
-            step = min(distance, self.move_speed * logic_dt)
-            next_x = self.position.x + (dx / distance) * step
-            next_z = self.position.z + (dz / distance) * step
-            next_x, next_z = self._clamp_to_roam_radius(next_x, next_z)
-
-            if not self._can_stand_at(next_x, next_z):
-                self._pause_before_next_roam()
-                return
-
-            self._set_facing(next_x - self.position.x, next_z - self.position.z)
-            self._set_xz(next_x, next_z)
         finally:
             if direction_due:
                 self._update_directional_animation()
+
+    def _current_chase_target(self) -> Vector3 | None:
+        player_position = getattr(self.camera, "position", None)
+        if player_position is None or self._player_is_in_building():
+            self._stop_chasing()
+            return None
+
+        dx = float(player_position.x) - self.position.x
+        dz = float(player_position.z) - self.position.z
+        distance_sq = dx * dx + dz * dz
+        active_radius = (
+            self.chase_give_up_radius if self._chasing_player else self.chase_radius
+        )
+        if distance_sq > active_radius * active_radius:
+            self._stop_chasing()
+            return None
+
+        if not self._chasing_player:
+            self._target = None
+        self._chasing_player = True
+        self._idle_timer = 0.0
+        return Vector3(float(player_position.x), 0.0, float(player_position.z))
+
+    def _stop_chasing(self) -> None:
+        if not self._chasing_player:
+            return
+        self._chasing_player = False
+        self._target = None
+        self._idle_timer = 0.0
+
+    def _player_is_in_building(self) -> bool:
+        if self.player_in_building is None:
+            return False
+        try:
+            return bool(self.player_in_building())
+        except Exception:
+            return False
+
+    def _outside_roam_radius(self) -> bool:
+        dx = self.position.x - self.spawn_position.x
+        dz = self.position.z - self.spawn_position.z
+        return dx * dx + dz * dz > self.roam_radius * self.roam_radius
+
+    def _move_towards(
+        self,
+        target: Vector3,
+        logic_dt: float,
+        *,
+        clamp_to_roam: bool,
+        stop_distance: float,
+    ) -> str:
+        dx = float(target.x) - self.position.x
+        dz = float(target.z) - self.position.z
+        distance_sq = dx * dx + dz * dz
+        reached = max(0.0, float(stop_distance))
+        if distance_sq <= reached * reached:
+            self._set_facing(dx, dz)
+            return "reached"
+
+        distance = math.sqrt(distance_sq)
+        if distance <= 1e-6:
+            return "reached"
+
+        step = min(distance, self.move_speed * logic_dt)
+        next_x = self.position.x + (dx / distance) * step
+        next_z = self.position.z + (dz / distance) * step
+        if clamp_to_roam:
+            next_x, next_z = self._clamp_to_roam_radius(next_x, next_z)
+
+        if not self._can_stand_at(next_x, next_z):
+            self._set_facing(dx, dz)
+            return "blocked"
+
+        self._set_facing(next_x - self.position.x, next_z - self.position.z)
+        self._set_xz(next_x, next_z)
+        return "moved"
 
     def _pause_before_next_roam(self) -> None:
         self._target = None
