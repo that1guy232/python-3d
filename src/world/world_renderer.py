@@ -86,6 +86,11 @@ class WorldRenderer:
                 ),
                 lighting=lighting,
                 fog_enabled=self._fog_enabled(),
+                clouds_enabled=getattr(scene, "clouds_enabled", True),
+                cloud_density=getattr(scene, "cloud_density", 1.0),
+                cloud_speed=getattr(scene, "cloud_speed", 1.0),
+                cloud_opacity=getattr(scene, "cloud_opacity", 1.0),
+                profiler=getattr(scene, "profiler", None),
             )
 
     def draw(self, enable_timing: bool = False) -> None:  # pragma: no cover - visual

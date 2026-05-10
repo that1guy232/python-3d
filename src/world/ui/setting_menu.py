@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import math
 
-from config import HEIGHT, WIDTH
+from config import (
+    CLOUD_DENSITY,
+    CLOUD_OPACITY,
+    CLOUD_SPEED,
+    CLOUDS_ENABLED,
+    HEIGHT,
+    WIDTH,
+)
 from core.compat_shader import set_texture_vibrance_state
 from sound.sound_utils import Sounds
 from ui.menu import ButtonMenu, MenuItem, MenuOption, SliderOption
@@ -31,6 +38,37 @@ class SettingMenu(ButtonMenu):
             MenuOption("toggle_test_light", self.test_light_label, self.toggle_test_light),
             MenuOption("toggle_debug_text", self.debug_text_label, self.toggle_debug_text),
             MenuOption("toggle_fog", self.fog_label, self.toggle_fog),
+            MenuOption("toggle_clouds", self.clouds_label, self.toggle_clouds),
+            self._scene_slider(
+                "set_cloud_density",
+                "Cloud Density",
+                "cloud_density",
+                0.0,
+                2.0,
+                CLOUD_DENSITY,
+                step=0.1,
+                formatter=lambda value: f"{value:.1f}x",
+            ),
+            self._scene_slider(
+                "set_cloud_speed",
+                "Cloud Speed",
+                "cloud_speed",
+                0.0,
+                3.0,
+                CLOUD_SPEED,
+                step=0.1,
+                formatter=lambda value: f"{value:.1f}x",
+            ),
+            self._scene_slider(
+                "set_cloud_opacity",
+                "Cloud Opacity",
+                "cloud_opacity",
+                0.0,
+                1.0,
+                CLOUD_OPACITY,
+                step=0.05,
+                formatter=lambda value: f"{value:.2f}",
+            ),
             self._scene_slider(
                 "set_fog_density",
                 "Fog Density",
@@ -520,6 +558,12 @@ class SettingMenu(ButtonMenu):
     def toggle_fog(self, scene) -> None:
         self._toggle_scene_flag(scene, "fog_enabled", True)
 
+    def clouds_label(self, scene) -> str:
+        return self._bool_label("Clouds", getattr(scene, "clouds_enabled", CLOUDS_ENABLED))
+
+    def toggle_clouds(self, scene) -> None:
+        self._toggle_scene_flag(scene, "clouds_enabled", CLOUDS_ENABLED)
+
     def fog_density_label(self, scene) -> str:
         value = getattr(scene, "fog_density", 0.0005)
         return f"Fog Density: {float(value):.4f}"
@@ -778,6 +822,10 @@ class SettingMenu(ButtonMenu):
         scene.jump_speed = 250.0
         scene.gravity = 800.0
         scene.camera_follow_smooth_hz = 5.0
+        scene.clouds_enabled = CLOUDS_ENABLED
+        scene.cloud_density = CLOUD_DENSITY
+        scene.cloud_speed = CLOUD_SPEED
+        scene.cloud_opacity = CLOUD_OPACITY
         scene.vibrance = 1.0
         set_texture_vibrance_state(1.0)
 

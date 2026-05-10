@@ -180,6 +180,10 @@ def load_assets(scene) -> None:
     scene.fov = FOV
     scene.fog_enabled = True
     scene.fog_density = FOGDENSITY
+    scene.clouds_enabled = CLOUDS_ENABLED
+    scene.cloud_density = CLOUD_DENSITY
+    scene.cloud_speed = CLOUD_SPEED
+    scene.cloud_opacity = CLOUD_OPACITY
     scene.vibrance = 1.15
     scene.hud_visible = True
     scene.compass_visible = True

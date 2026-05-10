@@ -34,6 +34,7 @@ _SHADOW_TEX_CACHE: Dict[Tuple[int, int, float, float, float, float], int] = {}
 _POLY_SHADOW_CACHE: Dict[Tuple[Tuple[float, float], ...], int] = {}
 _TREE_SHADOW_TEX_CACHE: Dict[Tuple[object, ...], int] = {}
 _FOREST_FLOOR_TEX_CACHE: Dict[Tuple[object, ...], int] = {}
+_PIXEL_CLOUD_ATLAS_CACHE: Dict[Tuple[object, ...], Tuple["TextureRegion", ...]] = {}
 
 
 @dataclass(frozen=True)
@@ -426,6 +427,129 @@ def _value_noise(x: float, y: float, salt: int) -> float:
     ab = a + (b - a) * fx
     cd = c + (d - c) * fx
     return ab + (cd - ab) * fy
+
+
+def create_pixel_cloud_atlas(
+    *,
+    variant_count: int = 8,
+    cell_width: int = 128,
+    cell_height: int = 48,
+    pixel_scale: int = 4,
+    seed: int = 4021,
+) -> list[TextureRegion]:
+    """Create a small nearest-filtered atlas of pixel-art cloud silhouettes."""
+
+    variant_count = max(1, int(variant_count))
+    cell_width = max(32, int(cell_width))
+    cell_height = max(16, int(cell_height))
+    pixel_scale = max(1, int(pixel_scale))
+    seed = int(seed)
+
+    cache_key = (variant_count, cell_width, cell_height, pixel_scale, seed)
+    cached = _PIXEL_CLOUD_ATLAS_CACHE.get(cache_key)
+    if cached is not None:
+        return list(cached)
+
+    atlas_width = cell_width * variant_count
+    atlas_height = cell_height
+    atlas = pygame.Surface((atlas_width, atlas_height), pygame.SRCALPHA)
+    atlas.fill((0, 0, 0, 0))
+
+    low_w = max(8, cell_width // pixel_scale)
+    low_h = max(4, cell_height // pixel_scale)
+    inv_w = 1.0 / max(1, low_w - 1)
+    inv_h = 1.0 / max(1, low_h - 1)
+
+    regions: list[TextureRegion] = []
+    for variant in range(variant_count):
+        rng = random.Random(seed + variant * 9173)
+        surface = pygame.Surface((low_w, low_h), pygame.SRCALPHA)
+        surface.fill((0, 0, 0, 0))
+
+        blob_count = rng.randint(5, 8)
+        blobs = []
+        for blob_index in range(blob_count):
+            t = blob_index / max(1, blob_count - 1)
+            cx = 0.14 + 0.72 * t + rng.uniform(-0.055, 0.055)
+            cy = rng.uniform(0.45, 0.68) - 0.10 * math.sin(t * math.pi)
+            rx = rng.uniform(0.13, 0.24) * (1.12 if 0.2 < t < 0.8 else 0.9)
+            ry = rng.uniform(0.18, 0.33)
+            weight = rng.uniform(0.88, 1.14)
+            blobs.append((cx, cy, rx, ry, weight))
+
+        shelf_y = rng.uniform(0.61, 0.73)
+        shelf_half_height = rng.uniform(0.18, 0.26)
+        salt = seed + variant * 37
+        for y in range(low_h):
+            ny = y * inv_h
+            for x in range(low_w):
+                nx = x * inv_w
+                value = 0.0
+                for cx, cy, rx, ry, weight in blobs:
+                    dx = (nx - cx) / max(1e-6, rx)
+                    dy = (ny - cy) / max(1e-6, ry)
+                    d = dx * dx + dy * dy
+                    if d < 1.0:
+                        value = max(value, (1.0 - d) * weight)
+
+                shelf = 1.0 - abs(ny - shelf_y) / shelf_half_height
+                if 0.08 < nx < 0.92 and shelf > 0.0:
+                    value = max(value, shelf * 0.48)
+
+                noise = _value_noise(nx * 8.0 + variant, ny * 5.0, salt)
+                edge = value + (noise - 0.5) * 0.16
+                if edge <= 0.15:
+                    continue
+
+                alpha = 255 if edge > 0.32 else int(255 * _smooth01((edge - 0.15) / 0.17))
+                bottom_mix = _smooth01((ny - 0.45) / 0.38)
+                top_mix = 1.0 - _smooth01((ny - 0.18) / 0.36)
+                r = int(218 + 31 * top_mix - 16 * bottom_mix)
+                g = int(232 + 20 * top_mix - 21 * bottom_mix)
+                b = int(246 + 8 * top_mix - 34 * bottom_mix)
+
+                if noise > 0.72 and alpha > 220:
+                    r = min(255, r + 10)
+                    g = min(255, g + 10)
+                    b = min(255, b + 8)
+
+                surface.set_at(
+                    (x, y),
+                    (
+                        max(0, min(255, r)),
+                        max(0, min(255, g)),
+                        max(0, min(255, b)),
+                        max(0, min(255, alpha)),
+                    ),
+                )
+
+        scaled = pygame.transform.scale(surface, (cell_width, cell_height))
+        px = variant * cell_width
+        atlas.blit(scaled, (px, 0))
+
+        u0 = (px + 0.5) / atlas_width
+        u1 = (px + cell_width - 0.5) / atlas_width
+        v0 = 1.0 - ((cell_height - 0.5) / atlas_height)
+        v1 = 1.0 - (0.5 / atlas_height)
+        regions.append(
+            TextureRegion(
+                texture=0,
+                uv_rect=(u0, v0, u1, v1),
+                size=(cell_width, cell_height),
+            )
+        )
+
+    atlas_tex = _upload_texture_surface(atlas, nearest=True, repeat=False)
+    regions = [
+        TextureRegion(
+            texture=atlas_tex,
+            uv_rect=region.uv_rect,
+            size=region.size,
+        )
+        for region in regions
+    ]
+    _PIXEL_CLOUD_ATLAS_CACHE[cache_key] = tuple(regions)
+    return list(regions)
 
 
 def _segment_shadow_alpha(

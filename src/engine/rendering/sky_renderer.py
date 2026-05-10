@@ -6,6 +6,7 @@ OpenGL context exists before instantiating this class.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import Optional
 import math
 
@@ -34,6 +35,7 @@ from OpenGL.GL import (
 from camera import Camera
 from textures.resource_path import MOON_TEXTURE_PATH, STAR_TEXTURE_PATH
 from textures.texture_utils import load_texture
+from engine.rendering.cloud_renderer import PixelCloudRenderer
 from engine.rendering.lighting import SceneLighting, sky_sun_y
 
 
@@ -43,6 +45,7 @@ class SkyRenderer:
     def __init__(self) -> None:
         self._sun_tex = load_texture(STAR_TEXTURE_PATH)
         self._moon_tex = load_texture(MOON_TEXTURE_PATH)
+        self._clouds = PixelCloudRenderer()
         self.moon_offset_deg = 134.0
         self.sun_half_size = 6000.0
         self.moon_half_size = 2200.0
@@ -77,6 +80,11 @@ class SkyRenderer:
         *,
         lighting: SceneLighting | None = None,
         fog_enabled: bool = True,
+        clouds_enabled: bool = True,
+        cloud_density: float = 1.0,
+        cloud_speed: float = 1.0,
+        cloud_opacity: float = 1.0,
+        profiler=None,
     ) -> None:  # pragma: no cover - visual
         """Draw the sky with minimal GL state churn."""
 
@@ -117,6 +125,21 @@ class SkyRenderer:
             color=(brightness * sr, brightness * sg, brightness * sb, 1.0),
         )
         glPopMatrix()
+
+        if clouds_enabled:
+            cloud_context = (
+                profiler.section("render.clouds")
+                if profiler is not None and getattr(profiler, "enabled", False)
+                else nullcontext()
+            )
+            with cloud_context:
+                self._clouds.draw(
+                    brightness=brightness,
+                    density=cloud_density,
+                    speed=cloud_speed,
+                    opacity=cloud_opacity,
+                    lighting=lighting,
+                )
 
         # glBindTexture(GL_TEXTURE_2D, self._moon_tex)
         # glPushMatrix()
