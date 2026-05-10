@@ -51,9 +51,9 @@ from OpenGL.GL import (
     glVertexPointer,
     glVertex3f,
 )
-from config import WIDTH, HEIGHT, VIEWDISTANCE
-from core.consts import FORWARD, RIGHT, WORLD_UP
-from core.compat_shader import get_texture_color_exposure_shader, use_fixed_pipeline
+from engine.config import WIDTH, HEIGHT, VIEWDISTANCE
+from engine.core.consts import FORWARD, RIGHT, WORLD_UP
+from engine.core.compat_shader import get_texture_color_exposure_shader, use_fixed_pipeline
 from engine.rendering.lighting import sprite_light_factor
 
 

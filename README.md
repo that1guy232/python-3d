@@ -1,5 +1,12 @@
 # python-3d
-3D Python project from local workspace (src/ contains engine and assets)
+3D Python project from local workspace.
+
+Runtime code is split by ownership:
+
+- `src/engine/` contains reusable loop, scene, camera, rendering, collision, UI,
+  texture, sound, and engine config code.
+- `src/game/` contains the world game, game config, authored content, and asset
+  resource catalogs.
 
 ## Performance logging
 
@@ -19,4 +26,22 @@ Useful knobs:
 $env:PY3D_PERF_INTERVAL="3.0"  # seconds between reports
 $env:PY3D_PERF_TOP="14"        # number of slowest sections to print
 $env:PY3D_SETUP_TIMING="1"     # print world-loading setup timings
+```
+
+## Declaring world content
+
+Game code can now declare content before the build pipeline turns it into
+meshes, collision, lighting, and runtime entities:
+
+```python
+from game.world import WorldContent, WorldScene, building
+
+scene = WorldScene(
+    world_content=WorldContent.with_buildings(
+        [
+            building((1200, 0, 900), width=240, depth=180, doorway_side="south"),
+        ]
+    ),
+    defer_setup=True,
+)
 ```

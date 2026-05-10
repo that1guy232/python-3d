@@ -31,9 +31,9 @@ from OpenGL.GL import (
     GL_TEXTURE_COORD_ARRAY,
 )
 
-from core.mesh import BatchedMesh
+from engine.core.mesh import BatchedMesh
 from engine.rendering.decal import Decal
-from config import HEIGHT, VIEWDISTANCE, WIDTH
+from engine.config import HEIGHT, VIEWDISTANCE, WIDTH
 
 
 @dataclass

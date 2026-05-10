@@ -32,9 +32,8 @@ from OpenGL.GL import (
     GL_TEXTURE_2D,
 )
 
-from camera import Camera
-from textures.resource_path import MOON_TEXTURE_PATH, STAR_TEXTURE_PATH
-from textures.texture_utils import load_texture
+from engine.camera import Camera
+from engine.textures.texture_utils import load_texture
 from engine.rendering.cloud_renderer import PixelCloudRenderer
 from engine.rendering.lighting import SceneLighting, sky_sun_y
 
@@ -42,9 +41,14 @@ from engine.rendering.lighting import SceneLighting, sky_sun_y
 class SkyRenderer:
     """Draws sky elements billboarded to the camera."""
 
-    def __init__(self) -> None:
-        self._sun_tex = load_texture(STAR_TEXTURE_PATH)
-        self._moon_tex = load_texture(MOON_TEXTURE_PATH)
+    def __init__(
+        self,
+        *,
+        sun_texture_path: str | None = None,
+        moon_texture_path: str | None = None,
+    ) -> None:
+        self._sun_tex = load_texture(sun_texture_path) if sun_texture_path else 0
+        self._moon_tex = load_texture(moon_texture_path) if moon_texture_path else 0
         self._clouds = PixelCloudRenderer()
         self.moon_offset_deg = 134.0
         self.sun_half_size = 6000.0

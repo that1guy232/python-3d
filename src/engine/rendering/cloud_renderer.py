@@ -41,7 +41,7 @@ from OpenGL.GL import (
     glVertexPointer,
 )
 
-from textures.texture_utils import create_pixel_cloud_atlas
+from engine.textures.texture_utils import create_pixel_cloud_atlas
 
 
 @dataclass(frozen=True)
