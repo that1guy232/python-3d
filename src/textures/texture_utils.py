@@ -33,6 +33,7 @@ _TEXTURE_SIZES: Dict[int, Tuple[int, int]] = {}
 _SHADOW_TEX_CACHE: Dict[Tuple[int, int, float, float, float, float], int] = {}
 _POLY_SHADOW_CACHE: Dict[Tuple[Tuple[float, float], ...], int] = {}
 _TREE_SHADOW_TEX_CACHE: Dict[Tuple[object, ...], int] = {}
+_FOREST_FLOOR_TEX_CACHE: Dict[Tuple[object, ...], int] = {}
 
 
 @dataclass(frozen=True)
@@ -456,6 +457,264 @@ def _segment_shadow_alpha(
     edge = 1.0 - distance / max(1e-6, radius)
     end_taper = _smooth01(t / 0.12) * _smooth01((1.0 - t) / 0.18)
     return strength * (edge ** 1.35) * end_taper
+
+
+def _blend_rgba(
+    base_rgb: tuple[float, float, float],
+    base_alpha: float,
+    top_rgb: tuple[float, float, float],
+    top_alpha: float,
+) -> tuple[tuple[float, float, float], float]:
+    top_alpha = max(0.0, min(1.0, float(top_alpha)))
+    if top_alpha <= 0.0:
+        return base_rgb, base_alpha
+
+    out_alpha = top_alpha + base_alpha * (1.0 - top_alpha)
+    if out_alpha <= 1e-6:
+        return base_rgb, 0.0
+
+    br, bg, bb = base_rgb
+    tr, tg, tb = top_rgb
+    keep = base_alpha * (1.0 - top_alpha)
+    out_rgb = (
+        (tr * top_alpha + br * keep) / out_alpha,
+        (tg * top_alpha + bg * keep) / out_alpha,
+        (tb * top_alpha + bb * keep) / out_alpha,
+    )
+    return out_rgb, out_alpha
+
+
+def create_forest_floor_texture(
+    *,
+    width_px: int = 192,
+    height_px: int = 192,
+    variant_seed: int = 0,
+    alpha_scale: float = 0.9,
+    pixelated: bool = False,
+    pixel_scale: int = 1,
+) -> int:
+    """Create a muted leaf-litter and moss decal for tree bases."""
+    width_px = max(8, int(width_px))
+    height_px = max(8, int(height_px))
+    variant_seed = int(variant_seed)
+    alpha_scale = float(max(0.0, min(1.0, alpha_scale)))
+    pixelated = bool(pixelated)
+    pixel_scale = max(1, int(pixel_scale))
+
+    cache_key = (
+        width_px,
+        height_px,
+        variant_seed,
+        alpha_scale,
+        pixelated,
+        pixel_scale,
+    )
+    cached = _FOREST_FLOOR_TEX_CACHE.get(cache_key)
+    if cached:
+        return cached
+
+    if pixelated and pixel_scale > 1:
+        render_w = max(8, width_px // pixel_scale)
+        render_h = max(8, height_px // pixel_scale)
+    else:
+        render_w = width_px
+        render_h = height_px
+
+    rng = random.Random(variant_seed)
+    surface = pygame.Surface((render_w, render_h), pygame.SRCALPHA)
+    inv_w = 1.0 / max(1, render_w - 1)
+    inv_h = 1.0 / max(1, render_h - 1)
+    salt = variant_seed * 31 + 9
+    phase_a = rng.uniform(0.0, 100.0)
+    phase_b = rng.uniform(0.0, 100.0)
+
+    leaf_colors = (
+        (0.42, 0.29, 0.12),
+        (0.52, 0.39, 0.18),
+        (0.33, 0.25, 0.12),
+        (0.27, 0.38, 0.18),
+        (0.46, 0.45, 0.24),
+    )
+    twig_colors = (
+        (0.25, 0.17, 0.08),
+        (0.34, 0.23, 0.10),
+        (0.18, 0.14, 0.08),
+    )
+
+    leaves: list[
+        tuple[
+            float,
+            float,
+            float,
+            float,
+            float,
+            float,
+            tuple[float, float, float],
+            float,
+        ]
+    ] = []
+    for _ in range(44):
+        radius = math.sqrt(rng.random()) * rng.uniform(0.08, 0.44)
+        angle = rng.uniform(0.0, math.tau)
+        cx = math.cos(angle) * radius
+        cy = math.sin(angle) * radius * 0.82
+        length = rng.uniform(0.018, 0.055)
+        width = length * rng.uniform(0.24, 0.46)
+        rot = rng.uniform(0.0, math.tau)
+        color = rng.choice(leaf_colors)
+        alpha = rng.uniform(0.12, 0.30) * alpha_scale
+        leaves.append(
+            (cx, cy, length, width, math.cos(rot), math.sin(rot), color, alpha)
+        )
+
+    twigs: list[
+        tuple[float, float, float, float, float, float, tuple[float, float, float]]
+    ] = []
+    for _ in range(12):
+        radius = math.sqrt(rng.random()) * rng.uniform(0.06, 0.38)
+        angle = rng.uniform(0.0, math.tau)
+        cx = math.cos(angle) * radius
+        cy = math.sin(angle) * radius * 0.82
+        length = rng.uniform(0.05, 0.16)
+        rot = rng.uniform(0.0, math.tau)
+        half_len = length * 0.5
+        x0 = cx - math.cos(rot) * half_len
+        y0 = cy - math.sin(rot) * half_len
+        x1 = cx + math.cos(rot) * half_len
+        y1 = cy + math.sin(rot) * half_len
+        twigs.append(
+            (
+                x0,
+                y0,
+                x1,
+                y1,
+                rng.uniform(0.006, 0.011),
+                rng.uniform(0.10, 0.22) * alpha_scale,
+                rng.choice(twig_colors),
+            )
+        )
+
+    for py in range(render_h):
+        y = py * inv_h - 0.5
+        for px in range(render_w):
+            x = px * inv_w - 0.5
+
+            ellipse = (x / 0.48) * (x / 0.48) + (y / 0.42) * (y / 0.42)
+            if ellipse >= 1.0:
+                surface.set_at((px, py), (66, 51, 31, 0))
+                continue
+
+            edge_fade = _smooth01((1.0 - ellipse) / 0.32)
+            coarse = _value_noise(
+                x * 5.5 + phase_a,
+                y * 5.0 + phase_b,
+                salt,
+            )
+            fine = _value_noise(
+                x * 18.0 + phase_b,
+                y * 16.0 + phase_a,
+                salt + 7,
+            )
+            moss = _value_noise(
+                x * 8.0 + phase_a * 0.3,
+                y * 8.0 + phase_b * 0.3,
+                salt + 13,
+            )
+
+            soil_rgb = (0.26, 0.20, 0.12)
+            leaf_rgb = (0.42 + 0.12 * coarse, 0.32 + 0.07 * coarse, 0.16)
+            moss_rgb = (0.25, 0.36 + 0.10 * moss, 0.17)
+            moss_mix = max(0.0, min(0.36, (moss - 0.50) * 0.7))
+            leaf_mix = max(0.0, min(0.52, 0.20 + fine * 0.34))
+
+            rgb = (
+                soil_rgb[0] * (1.0 - leaf_mix) + leaf_rgb[0] * leaf_mix,
+                soil_rgb[1] * (1.0 - leaf_mix) + leaf_rgb[1] * leaf_mix,
+                soil_rgb[2] * (1.0 - leaf_mix) + leaf_rgb[2] * leaf_mix,
+            )
+            rgb = (
+                rgb[0] * (1.0 - moss_mix) + moss_rgb[0] * moss_mix,
+                rgb[1] * (1.0 - moss_mix) + moss_rgb[1] * moss_mix,
+                rgb[2] * (1.0 - moss_mix) + moss_rgb[2] * moss_mix,
+            )
+            alpha = alpha_scale * edge_fade * (0.035 + 0.070 * coarse)
+
+            speckle = _hash01(px, py, salt + 21)
+            if speckle > 0.985:
+                color_index = int(_hash01(px, py, salt + 22) * len(leaf_colors))
+                speckle_color = leaf_colors[color_index % len(leaf_colors)]
+                speckle_alpha = 0.08 + 0.14 * _hash01(px, py, salt + 23)
+                rgb, alpha = _blend_rgba(
+                    rgb,
+                    alpha,
+                    speckle_color,
+                    alpha_scale * speckle_alpha * edge_fade,
+                )
+
+            for cx, cy, rx, ry, cos_r, sin_r, color, leaf_alpha in leaves:
+                dx = x - cx
+                dy = y - cy
+                lx = dx * cos_r + dy * sin_r
+                ly = -dx * sin_r + dy * cos_r
+                d = (lx / rx) * (lx / rx) + (ly / ry) * (ly / ry)
+                if d < 1.0:
+                    rgb, alpha = _blend_rgba(
+                        rgb,
+                        alpha,
+                        color,
+                        leaf_alpha * edge_fade * (_smooth01(1.0 - d) ** 0.75),
+                    )
+
+            for x0, y0, x1, y1, radius0, twig_alpha, color in twigs:
+                amount = _segment_shadow_alpha(
+                    x,
+                    y,
+                    x0,
+                    y0,
+                    x1,
+                    y1,
+                    radius0,
+                    radius0 * 0.72,
+                    twig_alpha,
+                )
+                if amount > 0.0:
+                    rgb, alpha = _blend_rgba(rgb, alpha, color, amount * edge_fade)
+
+            alpha = max(0.0, min(0.52, alpha))
+            r = max(0, min(255, int(rgb[0] * 255)))
+            g = max(0, min(255, int(rgb[1] * 255)))
+            b = max(0, min(255, int(rgb[2] * 255)))
+            a = max(0, min(255, int(alpha * 255)))
+            surface.set_at((px, py), (r, g, b, a))
+
+    if (render_w, render_h) != (width_px, height_px):
+        surface = pygame.transform.scale(surface, (width_px, height_px))
+
+    texture_data = pygame.image.tostring(surface, "RGBA", True)
+
+    tex_id = glGenTextures(1)
+    glBindTexture(GL_TEXTURE_2D, tex_id)
+    glTexImage2D(
+        GL_TEXTURE_2D,
+        0,
+        GL_RGBA,
+        width_px,
+        height_px,
+        0,
+        GL_RGBA,
+        GL_UNSIGNED_BYTE,
+        texture_data,
+    )
+
+    filt = GL_NEAREST if pixelated else GL_LINEAR
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filt)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filt)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+
+    _TEXTURE_SIZES[int(tex_id)] = (width_px, height_px)
+    _FOREST_FLOOR_TEX_CACHE[cache_key] = int(tex_id)
+    return int(tex_id)
 
 
 def create_tree_shadow_texture(

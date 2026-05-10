@@ -158,6 +158,7 @@ class Decal:
             vertex_data,
             texture=self.texture,
             keep_vertex_data=False,
+            shine_enabled=False,
         )
         self._vertex_data = None
 

@@ -24,8 +24,8 @@ from engine.rendering.lighting import INDOOR_LIGHT_FACTOR
 from engine.rendering.sprite import WorldSprite
 from textures.resource_path import WALL1_TEXTURE_PATH
 from textures.texture_utils import (
+    create_forest_floor_texture,
     create_shadow_texture,
-    create_tree_shadow_texture,
     load_texture,
 )
 from world.objects import Door, Goblin, Road, Torch, Window
@@ -1253,7 +1253,7 @@ def create_world_objects_steps(
     _build_fences(scene)
     yield (label, True)
 
-    label = "Adding shadows"
+    label = "Adding ground details"
     yield (label, False)
     _build_shadow_decals(scene)
     yield (label, True)
@@ -1791,15 +1791,27 @@ def _build_fences(scene) -> None:
 
 
 def _build_shadow_decals(scene) -> None:
-    tree_shadow_subdiv = 12
+    tree_detail_subdiv = 4
     start_time = time.perf_counter()
-    tree_shadow_texture = create_tree_shadow_texture(
-        width_px=256,
-        height_px=256,
-        max_alpha=0.48,
-        variant_seed=0,
+    tree_shadow_texture = create_shadow_texture(
+        width_px=160,
+        height_px=128,
+        max_alpha=0.46,
+        inner_ratio=0.16,
+        outer_ratio=0.96,
+        falloff_exp=1.55,
         pixelated=False,
     )
+    tree_detail_textures = [
+        create_forest_floor_texture(
+            width_px=192,
+            height_px=192,
+            variant_seed=seed,
+            alpha_scale=0.86,
+            pixelated=False,
+        )
+        for seed in range(4)
+    ]
     contact_shadow_texture = create_shadow_texture(
         width_px=128,
         height_px=128,
@@ -1809,8 +1821,12 @@ def _build_shadow_decals(scene) -> None:
         falloff_exp=1.55,
         pixelated=False,
     )
-    print("Created shadow textures.")
-    scene.log_timing("Create shadow textures", start_time, time.perf_counter())
+    print("Created ground detail and contact shadow textures.")
+    scene.log_timing(
+        "Create ground detail textures",
+        start_time,
+        time.perf_counter(),
+    )
 
     decals: list[Decal] = []
     rng = random.Random()
@@ -1818,41 +1834,16 @@ def _build_shadow_decals(scene) -> None:
         _building_shadow_clip_bounds(scene)
     )
 
-    def make_tree_decal_for_sprite(sprite: WorldSprite) -> Decal:
+    def make_tree_detail_decal_for_sprite(sprite: WorldSprite) -> Decal:
         w, h = sprite.size
-        size_w = w * rng.uniform(0.45, 0.75)
-        size_h = h * rng.uniform(0.45, 0.75)
-
-        lighting = getattr(scene, "lighting", None)
-        sun = getattr(lighting, "sun_direction", getattr(scene, "sun_direction", None))
-        final_w, final_h = size_w, size_h
-        offset_x, offset_z = 0.0, 0.0
-        rot = 0.0
-
-        if sun is not None:
-            proj_x = float(sun.x)
-            proj_z = float(sun.z)
-            proj_len = math.hypot(proj_x, proj_z)
-
-            if proj_len >= 1e-6:
-                vert = abs(float(sun.y))
-                elong = 1.0 / max(0.05, vert)
-                elong = max(1.0, min(elong, 12.0))
-
-                seed = max(size_w, size_h)
-                major = max(14.0, min(400.0, seed * (0.9 + elong * 0.6)))
-                minor = max(8.0, min(200.0, min(size_w, size_h) * 0.9))
-                final_w, final_h = major, minor
-
-                dir_x = -proj_x / proj_len
-                dir_z = -proj_z / proj_len
-
-                offset_x = -dir_x * (major * 0.45)
-                offset_z = -dir_z * (major * 0.5)
-
-                angle_rad = math.atan2(-proj_x, -proj_z)
-                angle_deg = math.degrees(angle_rad)
-                rot = (angle_deg + 90.0) % 360.0
+        footprint = max(12.0, max(w * 0.58, h * 0.28))
+        final_w = max(18.0, min(72.0, footprint * rng.uniform(0.82, 1.28)))
+        final_h = max(14.0, min(58.0, footprint * rng.uniform(0.62, 1.04)))
+        rot = rng.uniform(0.0, 360.0)
+        offset_radius = min(final_w, final_h) * rng.uniform(0.0, 0.14)
+        offset_angle = rng.uniform(0.0, math.tau)
+        offset_x = math.cos(offset_angle) * offset_radius
+        offset_z = math.sin(offset_angle) * offset_radius
 
         center_y = scene.ground_height_at(
             sprite.position.x + offset_x,
@@ -1866,16 +1857,37 @@ def _build_shadow_decals(scene) -> None:
                 sprite.position.z + offset_z,
             ),
             size=(final_w, final_h),
-            texture=tree_shadow_texture,
+            texture=rng.choice(tree_detail_textures),
             rotation_deg=rot,
-            subdiv_u=tree_shadow_subdiv,
-            subdiv_v=tree_shadow_subdiv,
+            subdiv_u=tree_detail_subdiv,
+            subdiv_v=tree_detail_subdiv,
             height_fn=scene.ground_height_at,
-            elevation=1,
+            elevation=0.82,
             uv_repeat=(1.0, 1.0),
             color=(1.0, 1.0, 1.0),
             receiver_fn=shadow_receiver,
-            # DecalBatch owns the final VBO; avoid building throwaway per-shadow VBOs.
+            # DecalBatch owns the final VBO; avoid building throwaway per-decal VBOs.
+            build_vbo=False,
+        )
+
+    def make_tree_shadow_decal_for_sprite(sprite: WorldSprite) -> Decal:
+        w, h = sprite.size
+        base_width = max(20.0, min(78.0, w * rng.uniform(0.55, 0.82)))
+        base_depth = max(14.0, min(54.0, h * rng.uniform(0.18, 0.32)))
+        center_y = scene.ground_height_at(sprite.position.x, sprite.position.z)
+
+        return Decal(
+            center=Vector3(sprite.position.x, center_y, sprite.position.z),
+            size=(base_width, base_depth),
+            texture=tree_shadow_texture,
+            rotation_deg=rng.uniform(0.0, 360.0),
+            subdiv_u=3,
+            subdiv_v=3,
+            height_fn=scene.ground_height_at,
+            elevation=0.68,
+            uv_repeat=(1.0, 1.0),
+            color=(1.0, 1.0, 1.0),
+            receiver_fn=shadow_receiver,
             build_vbo=False,
         )
 
@@ -1912,7 +1924,8 @@ def _build_shadow_decals(scene) -> None:
 
     start_time = time.perf_counter()
     for sprite in scene.trees:
-        decals.append(make_tree_decal_for_sprite(sprite))
+        decals.append(make_tree_shadow_decal_for_sprite(sprite))
+        decals.append(make_tree_detail_decal_for_sprite(sprite))
     for sprite in getattr(scene, "grasses", ()):
         decals.append(
             make_contact_decal_for_sprite(
@@ -1935,7 +1948,7 @@ def _build_shadow_decals(scene) -> None:
         )
 
     print(
-        f"Created {len(scene.trees)} tree, "
+        f"Created {len(scene.trees)} tree shadow/detail pairs, "
         f"{len(getattr(scene, 'grasses', ()))} grass, "
         f"and {len(getattr(scene, 'rocks', ()))} rock shadow decals."
     )

@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 
 from config import HEIGHT, WIDTH
+from core.compat_shader import set_texture_vibrance_state
 from sound.sound_utils import Sounds
 from ui.menu import ButtonMenu, MenuItem, MenuOption, SliderOption
 
@@ -62,6 +63,17 @@ class SettingMenu(ButtonMenu):
                 step=0.05,
                 formatter=lambda value: self._format_float(value, 2),
                 on_change=self._set_brightness,
+            ),
+            self._scene_slider(
+                "set_vibrance",
+                "Vibrance",
+                "vibrance",
+                0.0,
+                2.0,
+                1.0,
+                step=0.05,
+                formatter=lambda value: f"{value:.2f}x",
+                on_change=self._set_vibrance,
             ),
             self._scene_slider(
                 "set_mouse_sensitivity",
@@ -459,6 +471,11 @@ class SettingMenu(ButtonMenu):
         if callable(setter):
             setter(value)
 
+    @staticmethod
+    def _set_vibrance(scene, value: float) -> None:
+        scene.vibrance = float(value)
+        set_texture_vibrance_state(float(value))
+
     def audio_label(self, scene) -> str:
         muted = Sounds.is_muted() if hasattr(Sounds, "is_muted") else False
         return f"Audio: {'Muted' if muted else 'On'}"
@@ -761,6 +778,8 @@ class SettingMenu(ButtonMenu):
         scene.jump_speed = 250.0
         scene.gravity = 800.0
         scene.camera_follow_smooth_hz = 5.0
+        scene.vibrance = 1.0
+        set_texture_vibrance_state(1.0)
 
     def back(self, scene) -> None:
         scene.showing_settings_menu = False

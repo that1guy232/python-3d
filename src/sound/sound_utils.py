@@ -194,6 +194,22 @@ class Sounds:
             snd.set_volume(max(0.0, min(1.0, float(volume))))
 
     @classmethod
+    def set_playing_volume(cls, key: str, volume: float) -> bool:
+        """Set the channel volume for every active playback of a sound."""
+        snd = cls._sounds.get(key)
+        if snd is None or not cls.is_available():
+            return False
+
+        changed = False
+        v = max(0.0, min(1.0, float(volume)))
+        for ch_idx in range(pygame.mixer.get_num_channels()):
+            ch = pygame.mixer.Channel(ch_idx)
+            if ch.get_sound() == snd and ch.get_busy():
+                ch.set_volume(v)
+                changed = True
+        return changed
+
+    @classmethod
     def is_loaded(cls, key: str) -> bool:
         return key in cls._sounds
 

@@ -40,9 +40,14 @@ MAX_ENVIRONMENT_OPENINGS = 64
 
 _TEXTURE_COLOR_EXPOSURE_VERTEX = """#version 120
 
+uniform vec3 u_light_dir;
+
 varying vec4 v_color;
 varying vec2 v_uv;
 varying vec3 v_normal;
+varying vec3 v_eye_normal;
+varying vec3 v_eye_light_dir;
+varying vec3 v_eye_pos;
 varying vec3 v_world_pos;
 varying float v_fog_distance;
 
@@ -52,8 +57,15 @@ void main()
     v_color = gl_Color;
     v_uv = gl_MultiTexCoord0.xy;
     v_normal = gl_Normal;
+    vec3 light_dir = u_light_dir;
+    if (length(light_dir) <= 0.00001) {
+        light_dir = vec3(0.0, 1.0, 0.0);
+    }
+    v_eye_normal = gl_NormalMatrix * gl_Normal;
+    v_eye_light_dir = gl_NormalMatrix * normalize(light_dir);
     v_world_pos = gl_Vertex.xyz;
     vec4 eye_pos = gl_ModelViewMatrix * gl_Vertex;
+    v_eye_pos = eye_pos.xyz;
     v_fog_distance = length(eye_pos.xyz);
 }
 """
@@ -86,10 +98,19 @@ uniform vec4 u_environment_opening_params[64];
 uniform int u_fog_enabled;
 uniform float u_fog_density;
 uniform vec4 u_fog_color;
+uniform float u_vibrance;
+uniform int u_shine_enabled;
+uniform float u_shine_strength;
+uniform float u_shine_power;
+uniform float u_shine_fresnel;
+uniform vec3 u_shine_tint;
 
 varying vec4 v_color;
 varying vec2 v_uv;
 varying vec3 v_normal;
+varying vec3 v_eye_normal;
+varying vec3 v_eye_light_dir;
+varying vec3 v_eye_pos;
 varying vec3 v_world_pos;
 varying float v_fog_distance;
 
@@ -277,6 +298,56 @@ float sunlight_factor()
     );
 }
 
+vec3 safe_normalize(vec3 value, vec3 fallback)
+{
+    float len = length(value);
+    if (len <= 0.00001) {
+        return fallback;
+    }
+    return value / len;
+}
+
+float shine_factor(
+    vec3 tex_rgb,
+    float receiver_factor,
+    float environment_factor,
+    vec3 surface_normal
+)
+{
+    if (u_shine_enabled == 0 || u_shine_strength <= 0.0) {
+        return 0.0;
+    }
+
+    vec3 normal = safe_normalize(v_eye_normal, vec3(0.0, 0.0, 1.0));
+    vec3 light_dir = safe_normalize(v_eye_light_dir, vec3(0.0, 0.0, 1.0));
+    vec3 view_dir = safe_normalize(-v_eye_pos, vec3(0.0, 0.0, 1.0));
+    vec3 half_dir = safe_normalize(light_dir + view_dir, view_dir);
+    float direct = max(0.0, dot(normal, light_dir));
+    float facing = max(0.0, dot(normal, view_dir));
+    float specular = pow(
+        max(0.0, dot(normal, half_dir)),
+        max(u_shine_power, 1.0)
+    );
+    float fresnel = pow(1.0 - facing, 3.0) * clamp(u_shine_fresnel, 0.0, 1.0);
+    float luma = dot(tex_rgb, vec3(0.299, 0.587, 0.114));
+    float material = mix(0.55, 1.20, clamp(luma, 0.0, 1.0));
+    float covered_visibility = 1.0;
+    if (u_environment_enabled != 0) {
+        covered_visibility = smooth01((environment_factor - 0.62) / 0.38);
+    }
+    float receiver_visibility = smooth01((receiver_factor - 0.24) / 0.76);
+    return clamp(
+        (specular + fresnel * 0.55)
+            * u_shine_strength
+            * material
+            * (0.35 + 0.65 * direct)
+            * covered_visibility
+            * receiver_visibility,
+        0.0,
+        0.75
+    );
+}
+
 vec3 apply_fog(vec3 rgb)
 {
     if (u_fog_enabled == 0) {
@@ -286,6 +357,24 @@ vec3 apply_fog(vec3 rgb)
     float fog_factor = exp(-pow(density * v_fog_distance, 2.0));
     fog_factor = clamp(fog_factor, 0.0, 1.0);
     return mix(u_fog_color.rgb, rgb, fog_factor);
+}
+
+vec3 apply_vibrance(vec3 rgb)
+{
+    float vibrance = clamp(u_vibrance, 0.0, 2.0);
+    if (abs(vibrance - 1.0) <= 0.0001) {
+        return rgb;
+    }
+
+    float luma = dot(rgb, vec3(0.299, 0.587, 0.114));
+    vec3 gray = vec3(luma);
+    float max_channel = max(max(rgb.r, rgb.g), rgb.b);
+    float min_channel = min(min(rgb.r, rgb.g), rgb.b);
+    float saturation = clamp(max_channel - min_channel, 0.0, 1.0);
+    float mix_factor = vibrance < 1.0
+        ? vibrance
+        : 1.0 + (vibrance - 1.0) * (1.0 - saturation * 0.75);
+    return clamp(mix(gray, rgb, mix_factor), 0.0, 1.0);
 }
 
 void main()
@@ -303,6 +392,14 @@ void main()
         ? u_exposure
         : brightness_at(v_world_pos, receiver_factor, surface_normal) * u_exposure;
     vec3 rgb = texel.rgb * receiver_rgb * brightness * sunlight_factor();
+    float shine = shine_factor(
+        texel.rgb,
+        receiver_factor,
+        environment_factor,
+        surface_normal
+    ) * texel.a;
+    rgb = min(rgb + u_shine_tint * shine, vec3(1.0));
+    rgb = apply_vibrance(rgb);
     rgb = apply_fog(rgb);
     gl_FragColor = vec4(rgb, texel.a * v_color.a);
 }
@@ -341,6 +438,12 @@ class TextureColorExposureShader:
     fog_enabled_location: int
     fog_density_location: int
     fog_color_location: int
+    vibrance_location: int
+    shine_enabled_location: int
+    shine_strength_location: int
+    shine_power_location: int
+    shine_fresnel_location: int
+    shine_tint_location: int
 
     def bind(
         self,
@@ -348,6 +451,7 @@ class TextureColorExposureShader:
         scene_lighting_enabled: bool = False,
         directional_enabled: bool = False,
         environment_enabled: bool = False,
+        shine_enabled: bool = True,
     ) -> None:
         glUseProgram(self.program)
         glActiveTexture(GL_TEXTURE0)
@@ -370,6 +474,8 @@ class TextureColorExposureShader:
                 1 if environment_enabled else 0,
             )
         self.apply_fog_state(_texture_fog_state)
+        self.apply_vibrance_state(_texture_vibrance_state)
+        self.apply_shine_state(_texture_shine_state, enabled=shine_enabled)
 
     def set_exposure_scale(self, exposure_scale: float) -> None:
         if self.exposure_location >= 0:
@@ -521,6 +627,30 @@ class TextureColorExposureShader:
         if self.fog_color_location >= 0:
             glUniform4f(self.fog_color_location, *state.color)
 
+    def apply_vibrance_state(self, state: "TextureVibranceState") -> None:
+        if self.vibrance_location >= 0:
+            glUniform1f(self.vibrance_location, max(0.0, min(2.0, state.vibrance)))
+
+    def apply_shine_state(
+        self,
+        state: "TextureShineState",
+        *,
+        enabled: bool = True,
+    ) -> None:
+        if self.shine_enabled_location >= 0:
+            glUniform1i(
+                self.shine_enabled_location,
+                1 if enabled and state.enabled else 0,
+            )
+        if self.shine_strength_location >= 0:
+            glUniform1f(self.shine_strength_location, max(0.0, state.strength))
+        if self.shine_power_location >= 0:
+            glUniform1f(self.shine_power_location, max(1.0, state.power))
+        if self.shine_fresnel_location >= 0:
+            glUniform1f(self.shine_fresnel_location, max(0.0, state.fresnel))
+        if self.shine_tint_location >= 0:
+            glUniform3f(self.shine_tint_location, *state.tint)
+
 
 @dataclass(frozen=True)
 class TextureLightingState:
@@ -551,11 +681,27 @@ class TextureFogState:
     color: tuple[float, float, float, float] = (0.7, 0.8, 1.0, 1.0)
 
 
+@dataclass(frozen=True)
+class TextureVibranceState:
+    vibrance: float = 1.0
+
+
+@dataclass(frozen=True)
+class TextureShineState:
+    enabled: bool = True
+    strength: float = 0.38
+    power: float = 28.0
+    fresnel: float = 0.18
+    tint: tuple[float, float, float] = (1.0, 0.96, 0.86)
+
+
 _texture_color_exposure_shader: TextureColorExposureShader | None = None
 _texture_color_exposure_failed = False
 _texture_color_exposure_scale = 1.0
 _texture_lighting_state = TextureLightingState()
 _texture_fog_state = TextureFogState()
+_texture_vibrance_state = TextureVibranceState()
+_texture_shine_state = TextureShineState()
 
 
 def _decode_log(log) -> str:
@@ -740,9 +886,21 @@ def get_texture_color_exposure_shader() -> TextureColorExposureShader | None:
             fog_enabled_location=int(glGetUniformLocation(program, "u_fog_enabled")),
             fog_density_location=int(glGetUniformLocation(program, "u_fog_density")),
             fog_color_location=int(glGetUniformLocation(program, "u_fog_color")),
+            vibrance_location=int(glGetUniformLocation(program, "u_vibrance")),
+            shine_enabled_location=int(glGetUniformLocation(program, "u_shine_enabled")),
+            shine_strength_location=int(
+                glGetUniformLocation(program, "u_shine_strength")
+            ),
+            shine_power_location=int(glGetUniformLocation(program, "u_shine_power")),
+            shine_fresnel_location=int(
+                glGetUniformLocation(program, "u_shine_fresnel")
+            ),
+            shine_tint_location=int(glGetUniformLocation(program, "u_shine_tint")),
         )
         set_texture_lighting_state(compile_shader=False)
         set_texture_fog_state(compile_shader=False)
+        set_texture_vibrance_state(compile_shader=False)
+        set_texture_shine_state(compile_shader=False)
         return _texture_color_exposure_shader
     except Exception as exc:
         _texture_color_exposure_failed = True
@@ -1181,6 +1339,90 @@ def set_texture_fog_state(
 
 def get_texture_fog_state() -> TextureFogState:
     return _texture_fog_state
+
+
+def set_texture_vibrance_state(
+    vibrance: float | None = None,
+    *,
+    compile_shader: bool = True,
+) -> bool:
+    """Update shared vibrance uniforms for textured compatibility draws."""
+
+    global _texture_vibrance_state
+
+    current = _texture_vibrance_state
+    value = current.vibrance if vibrance is None else float(vibrance)
+    _texture_vibrance_state = TextureVibranceState(
+        vibrance=max(0.0, min(2.0, value)),
+    )
+
+    shader = (
+        get_texture_color_exposure_shader()
+        if compile_shader
+        else _texture_color_exposure_shader
+    )
+    if shader is None:
+        return False
+
+    current_program = _current_program_id()
+    try:
+        glUseProgram(shader.program)
+        shader.apply_vibrance_state(_texture_vibrance_state)
+    finally:
+        glUseProgram(current_program)
+    return True
+
+
+def get_texture_vibrance_state() -> TextureVibranceState:
+    return _texture_vibrance_state
+
+
+def set_texture_shine_state(
+    *,
+    enabled: bool | None = None,
+    strength: float | None = None,
+    power: float | None = None,
+    fresnel: float | None = None,
+    tint=None,
+    compile_shader: bool = True,
+) -> bool:
+    """Update shared glossy highlight uniforms for textured compatibility draws."""
+
+    global _texture_shine_state
+
+    current = _texture_shine_state
+    tint_value = current.tint
+    if tint is not None:
+        rgba = _rgba_tuple(tint, (*current.tint, 1.0))
+        tint_value = (rgba[0], rgba[1], rgba[2])
+
+    _texture_shine_state = TextureShineState(
+        enabled=bool(enabled) if enabled is not None else current.enabled,
+        strength=max(0.0, float(strength)) if strength is not None else current.strength,
+        power=max(1.0, float(power)) if power is not None else current.power,
+        fresnel=max(0.0, float(fresnel)) if fresnel is not None else current.fresnel,
+        tint=tint_value,
+    )
+
+    shader = (
+        get_texture_color_exposure_shader()
+        if compile_shader
+        else _texture_color_exposure_shader
+    )
+    if shader is None:
+        return False
+
+    current_program = _current_program_id()
+    try:
+        glUseProgram(shader.program)
+        shader.apply_shine_state(_texture_shine_state)
+    finally:
+        glUseProgram(current_program)
+    return True
+
+
+def get_texture_shine_state() -> TextureShineState:
+    return _texture_shine_state
 
 
 def use_fixed_pipeline() -> None:

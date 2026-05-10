@@ -94,6 +94,7 @@ class DecalBatch:
                 vertex_data,
                 texture=key[0],
                 keep_vertex_data=False,
+                shine_enabled=False,
             )
             mins = vertex_data[:, 0:3].min(axis=0)
             maxs = vertex_data[:, 0:3].max(axis=0)

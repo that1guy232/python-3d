@@ -14,6 +14,7 @@ from pygame.math import Vector3
 
 from config import *
 from engine.entity import Entity
+from engine.rendering.lighting import INDOOR_LIGHT_FACTOR, covered_region_factor_at
 from sound.sound_utils import Sounds
 from world.world_collision import (
     player_support_height_at,
@@ -24,6 +25,9 @@ from world.world_collision import (
 _BASE_ENTITY_UPDATE = Entity.update
 _COLLISION_CELL_SIZE = 128.0
 _COLLISION_FALLBACK_CELL_LIMIT = 256
+_AMBIENT_BIRDS_KEY = "ambient_birds"
+_AMBIENT_BIRDS_OUTDOOR_VOLUME = 0.05
+_AMBIENT_BIRDS_INDOOR_VOLUME = 0.012
 
 
 def _profile(scene, name: str):
@@ -47,6 +51,38 @@ def is_on_road(scene, x: float, z: float, *, margin: float = 0.0) -> bool:
         road = getattr(scene, "road", None)
         roads = [road] if road is not None else []
     return any(r.contains_point(x, z, margin=margin) for r in roads if r is not None)
+
+
+def _ambient_birds_volume(scene) -> float:
+    camera = getattr(scene, "camera", None)
+    if camera is None:
+        return _AMBIENT_BIRDS_OUTDOOR_VOLUME
+
+    try:
+        region_factor = covered_region_factor_at(
+            camera.position.x,
+            camera.position.z,
+            covered_regions=getattr(scene, "covered_regions", ()),
+        )
+    except (TypeError, ValueError, AttributeError):
+        region_factor = 1.0
+
+    indoor_factor = max(0.0, min(0.999, float(INDOOR_LIGHT_FACTOR)))
+    outside_mix = (max(0.0, min(1.0, region_factor)) - indoor_factor) / (
+        1.0 - indoor_factor
+    )
+    outside_mix = max(0.0, min(1.0, outside_mix))
+    return _AMBIENT_BIRDS_INDOOR_VOLUME + (
+        _AMBIENT_BIRDS_OUTDOOR_VOLUME - _AMBIENT_BIRDS_INDOOR_VOLUME
+    ) * outside_mix
+
+
+def _update_ambient_birds(scene) -> None:
+    volume = _ambient_birds_volume(scene)
+    if Sounds.is_playing(_AMBIENT_BIRDS_KEY):
+        Sounds.set_playing_volume(_AMBIENT_BIRDS_KEY, volume)
+    else:
+        Sounds.play(_AMBIENT_BIRDS_KEY, volume=volume, loops=-1, fade_ms=250)
 
 
 def _iter_collision_sources(scene):
@@ -456,8 +492,7 @@ def update(scene, dt: float) -> None:
         return
 
     with _profile(scene, "update.audio"):
-        if not Sounds.is_playing("ambient_birds"):
-            Sounds.play("ambient_birds", volume=0.05)
+        _update_ambient_birds(scene)
 
     with _profile(scene, "update.player_spawn_height"):
         initialize_player_spawn_height(scene)

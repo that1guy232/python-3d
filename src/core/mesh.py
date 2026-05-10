@@ -62,6 +62,8 @@ class BatchedMesh:
     owns_vbo: bool = True
     exposure_baseline: float = 1.0
     vertex_width: int = 0
+    shader_lighting: bool = False
+    shine_enabled: bool = True
     _base_vertex_data: Optional[np.ndarray] = None
     _current_exposure: float = 1.0
     _vbo_exposure: float = 1.0
@@ -77,8 +79,22 @@ class BatchedMesh:
         exposure_baseline: float = 1.0,
         keep_vertex_data: bool = True,
         environment_lighting: bool = True,
+        shine_enabled: bool = True,
     ) -> "BatchedMesh":
         upload_data = np.ascontiguousarray(vertex_data, dtype=np.float32)
+        source_width = int(upload_data.shape[1]) if upload_data.ndim == 2 else 0
+        shader_lighting = bool(texture is not None and source_width >= 11)
+        if texture is not None and shine_enabled and 8 <= source_width < 11:
+            try:
+                if get_texture_color_exposure_shader() is not None:
+                    from engine.rendering.lighting import with_textured_normals
+
+                    upload_data = with_textured_normals(
+                        upload_data,
+                        prefer_upward_normals=True,
+                    )
+            except Exception:
+                upload_data = np.ascontiguousarray(vertex_data, dtype=np.float32)
         vbo = glGenBuffers(1)
         vbo_id = int(np.asarray(vbo).reshape(-1)[0])
         glBindBuffer(GL_ARRAY_BUFFER, vbo_id)
@@ -93,6 +109,8 @@ class BatchedMesh:
             environment_lighting=bool(environment_lighting),
             exposure_baseline=baseline,
             vertex_width=int(upload_data.shape[1]) if upload_data.ndim == 2 else 0,
+            shader_lighting=shader_lighting,
+            shine_enabled=bool(shine_enabled),
             _base_vertex_data=upload_data.copy() if keep_vertex_data else None,
             _current_exposure=baseline,
             _vbo_exposure=baseline,
@@ -206,6 +224,7 @@ class BatchedMesh:
             # [x, y, z, r, g, b, nx, ny, nz, u, v]
             vertex_width = self.vertex_width or 8
             has_normals = vertex_width >= 11
+            shader_lighting_enabled = has_normals and self.shader_lighting
             stride = vertex_width * 4
             
             # Enable vertex arrays
@@ -236,9 +255,12 @@ class BatchedMesh:
             # Draw the mesh
             if shader is not None:
                 shader.bind(
-                    scene_lighting_enabled=has_normals,
-                    directional_enabled=has_normals,
-                    environment_enabled=has_normals and self.environment_lighting,
+                    scene_lighting_enabled=shader_lighting_enabled,
+                    directional_enabled=shader_lighting_enabled,
+                    environment_enabled=(
+                        shader_lighting_enabled and self.environment_lighting
+                    ),
+                    shine_enabled=has_normals and self.shine_enabled,
                 )
             try:
                 glDrawArrays(GL_TRIANGLES, 0, self.vertex_count)
