@@ -751,7 +751,7 @@ def _build_roads_and_spawn_sprites_steps(
     yield (label, True)
 
 
-def _goblin_position_blocker(scene):
+def _goblin_position_blocker(scene, *, block_roads: bool = True):
     min_x, max_x, min_z, max_z = scene.ground_bounds
     buildings = list(getattr(scene, "buildings", ()) or ())
 
@@ -765,7 +765,7 @@ def _goblin_position_blocker(scene):
         ):
             return True
 
-        if scene.is_on_road(x, z, margin=clearance):
+        if block_roads and scene.is_on_road(x, z, margin=clearance):
             return True
 
         for building in buildings:
@@ -846,7 +846,8 @@ def _build_goblins(scene) -> None:
         pixelated=False,
     )
     rng = random.Random()
-    blocked = _goblin_position_blocker(scene)
+    spawn_blocked = _goblin_position_blocker(scene, block_roads=True)
+    movement_blocked = _goblin_position_blocker(scene, block_roads=False)
     clearance = max(
         float(GOBLIN_SPAWN_CLEARANCE),
         float(getattr(Goblin, "DEFAULT_HEIGHT", 0.0)) * 0.3,
@@ -864,7 +865,7 @@ def _build_goblins(scene) -> None:
         spawn = None
         for _attempt in range(max_attempts):
             x, z = _random_goblin_spawn_near_tree(scene, rng)
-            if blocked(x, z, clearance):
+            if spawn_blocked(x, z, clearance):
                 continue
 
             too_close = False
@@ -889,7 +890,7 @@ def _build_goblins(scene) -> None:
                 texture=goblin_tex,
                 camera=scene.camera,
                 ground_height_at=scene.ground_height_at,
-                position_blocked=blocked,
+                position_blocked=movement_blocked,
                 player_in_building=player_in_building,
                 chase_radius=chase_radius,
                 chase_give_up_radius=chase_give_up_radius,
