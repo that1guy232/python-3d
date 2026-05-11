@@ -92,6 +92,7 @@ collision data while the GL context still exists.
 | File | Quick docs |
 | --- | --- |
 | `src/main.py` | Minimal launch file. Builds the first scene and starts `Engine.run()`. |
+| `src/game/__init__.py` | Game package marker for project-specific world code and resources. |
 | `src/game/main_menu.py` | Boot menu scene with a visible cursor and Start Game button that transitions into the loading/world flow. |
 | `src/engine/config.py` | Engine display, view, audio mute, and performance defaults. Reads `PY3D_*` environment flags. |
 | `src/game/config.py` | Game movement, sky, player, and goblin tuning. Re-exports engine defaults for game modules. |
