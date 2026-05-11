@@ -18,16 +18,18 @@ The package boundary is intentional:
 
 1. `src/main.py` is the entry point. `main()` creates an `Engine` with
    `make_initial_scene()` as the first-scene factory.
-2. `make_initial_scene()` creates
-   `game.world.worldscene.WorldScene(defer_setup=True)` and wraps it in
+2. `make_initial_scene()` creates `game.main_menu.MainMenuScene`, which is the
+   first active scene at boot.
+3. The main menu keeps the mouse cursor visible and starts the game by creating
+   `game.world.worldscene.WorldScene(defer_setup=True)` wrapped in
    `engine.core.loading_scene.LoadingScene`.
-3. `engine.core.engine.Engine` initializes Pygame/OpenGL, attaches the performance
+4. `engine.core.engine.Engine` initializes Pygame/OpenGL, attaches the performance
    logger, forwards input to the active scene, calls scene update/render hooks,
    and swaps from the loading scene to the world scene when loading completes.
-4. `engine.core.loading_scene.LoadingScene` advances
+5. `engine.core.loading_scene.LoadingScene` advances
    `WorldScene.initialize_steps()` over multiple frames so world construction can
    show progress instead of blocking on a blank screen.
-5. `game.world.worldscene.WorldScene` owns the world state, but delegates most work:
+6. `game.world.worldscene.WorldScene` owns the world state, but delegates most work:
    setup to `world_setup.py`, object construction to `world_builder.py`,
    runtime behavior to `world_runtime.py`, road planning to
    `world_road_planner.py`, and drawing to `world_renderer.py`.
@@ -89,7 +91,8 @@ collision data while the GL context still exists.
 
 | File | Quick docs |
 | --- | --- |
-| `src/main.py` | Minimal launch file. Builds a deferred `WorldScene`, wraps it in `LoadingScene`, and starts `Engine.run()`. |
+| `src/main.py` | Minimal launch file. Builds the first scene and starts `Engine.run()`. |
+| `src/game/main_menu.py` | Boot menu scene with a visible cursor and Start Game button that transitions into the loading/world flow. |
 | `src/engine/config.py` | Engine display, view, audio mute, and performance defaults. Reads `PY3D_*` environment flags. |
 | `src/game/config.py` | Game movement, sky, player, and goblin tuning. Re-exports engine defaults for game modules. |
 

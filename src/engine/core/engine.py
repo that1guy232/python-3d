@@ -75,8 +75,7 @@ class Engine:
         # Active scene (owns camera & input)
         self.scene = initial_scene
         self._attach_profiler(self.scene)
-        pygame.mouse.set_visible(False)
-        pygame.event.set_grab(True)
+        self._apply_scene_mouse_state(self.scene)
 
     @staticmethod
     def _dispose_scene(scene) -> None:
@@ -92,6 +91,15 @@ class Engine:
         target_scene = getattr(scene, "target_scene", None)
         if target_scene is not None:
             setattr(target_scene, "profiler", self.profiler)
+
+    @staticmethod
+    def _apply_scene_mouse_state(scene) -> None:
+        visible = bool(getattr(scene, "mouse_visible", False))
+        grabbed = getattr(scene, "mouse_grabbed", None)
+        if grabbed is None:
+            grabbed = not visible
+        pygame.mouse.set_visible(visible)
+        pygame.event.set_grab(bool(grabbed))
 
     # ------------------------------------------------------------------
     def handle_events(self, dt: float) -> bool:
@@ -129,8 +137,7 @@ class Engine:
             self.scene = next_scene
             self._attach_profiler(self.scene)
             self._dispose_scene(old_scene)
-            pygame.mouse.set_visible(False)
-            pygame.event.set_grab(True)
+            self._apply_scene_mouse_state(self.scene)
             pygame.mouse.get_rel()
 
     # ------------------------------------------------------------------

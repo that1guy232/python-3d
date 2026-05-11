@@ -7,22 +7,16 @@ inflating this file again. The previous monolithic loop now lives in
 """
 
 from engine.core.engine import Engine  # noqa: E402 (local import order)
-from engine.core.loading_scene import LoadingScene  # noqa: E402 (local import order)
-from game.world.worldscene import WorldScene  # noqa: E402 (local import order)
+from game.main_menu import MainMenuScene  # noqa: E402 (local import order)
 
 
-def make_initial_scene() -> LoadingScene:
-    """Build the loading wrapper around a deferred world scene."""
-    world = WorldScene(defer_setup=True)
-    return LoadingScene(
-        world,
-        title="Loading World",
-        initial_status="Preparing world",
-    )
+def make_initial_scene() -> MainMenuScene:
+    """Build the first scene shown at launch."""
+    return MainMenuScene()
 
 
 def main():  # small wrapper for clarity / debuggers
-    """Start the engine with the loading scene as the first active scene."""
+    """Start the engine with the main menu as the first active scene."""
     Engine(initial_scene_factory=make_initial_scene).run()
 
 

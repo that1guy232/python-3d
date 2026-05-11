@@ -11,6 +11,10 @@ class Scene:
     # Camera is optional so non-3D scenes (e.g., main menu) don't need one
     # Use a generic object type to avoid importing `camera` at module import time.
     camera: Optional[object] = None
+    # Scenes can request menu-style cursor behavior. When mouse_grabbed is None,
+    # the engine grabs only if the cursor is hidden.
+    mouse_visible: bool = False
+    mouse_grabbed: Optional[bool] = None
     updaters: List[UpdateFn]
     # Optional screen-space night shade overlay; owned by base Scene so all
     # scenes can use it without duplicating initialization.
