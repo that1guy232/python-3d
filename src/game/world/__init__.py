@@ -20,6 +20,7 @@ _EXPORTS = {
     "Road": (".objects", "Road"),
     "Torch": (".objects", "Torch"),
     "Door": (".objects", "Door"),
+    "Chest": (".objects", "Chest"),
     "BuildingSpec": (".world_content", "BuildingSpec"),
     "WorldContent": (".world_content", "WorldContent"),
     "building": (".world_content", "building"),

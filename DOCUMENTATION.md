@@ -167,6 +167,7 @@ collision data while the GL context still exists.
 | `src/game/world/objects/road.py` | Road mesh builder, road object, point containment, lighting refresh, and road render batching. |
 | `src/game/world/objects/fence.py` | Textured fence-ring mesh generation around the playable ground bounds. |
 | `src/game/world/objects/door.py` | Interactive door entity with slab rendering, collision, doorway-light binding, and batching. |
+| `src/game/world/objects/chest.py` | Interactive opening chest entity with textured box rendering and collision. |
 | `src/game/world/objects/window.py` | Fixed window entity with slab rendering, wall backing, and batching. |
 | `src/game/world/objects/torch.py` | Building-mounted torch sprite plus helpers that derive torch light locations and brightness modifiers. |
 | `src/game/world/objects/goblin.py` | Runtime roaming/chasing sprite entity with directional animation frames and batched shadows. |

@@ -27,7 +27,7 @@ from engine.textures.texture_utils import (
     create_shadow_texture,
     load_texture,
 )
-from game.world.objects import Door, Goblin, Road, Torch, Window
+from game.world.objects import Chest, Door, Goblin, Road, Torch, Window
 from game.world.objects.building import Building
 from game.world.objects.door import build_door_render_batch
 from game.world.objects.fence import build_textured_fence_ring
@@ -526,8 +526,10 @@ def _build_showcase_polygons(scene) -> None:
         except Exception:
             pass
     scene.polygon_batches = []
+    _remove_showcase_chests(scene)
 
-    wall_tex = scene.wall_tex
+    wall_tex = scene.wall_tex or load_texture(WALL1_TEXTURE_PATH)
+    scene.wall_tex = wall_tex
     tri_thickness = 5
     scene.showcase_polygons: list[Polygon] = []
     off_ground = 40
@@ -635,6 +637,50 @@ def _build_showcase_polygons(scene) -> None:
     scene.polygons.extend(scene.showcase_polygons)
     polygon_batch = build_polygon_render_batch(scene.showcase_polygons)
     scene.polygon_batches = [polygon_batch] if polygon_batch is not None else []
+    _build_showcase_chest(scene, wall_tex)
+
+
+def _remove_showcase_chests(scene) -> None:
+    for chest in getattr(scene, "showcase_chests", ()) or ():
+        _dispose_value(chest)
+        for attr_name in ("entities", "immediate_entities", "wall_tiles", "chests"):
+            values = getattr(scene, attr_name, None)
+            if not isinstance(values, list):
+                continue
+            while chest in values:
+                values.remove(chest)
+    scene.showcase_chests = []
+
+
+def _build_showcase_chest(scene, texture) -> None:
+    lighting = getattr(scene, "lighting", None)
+    sun_direction = getattr(
+        lighting,
+        "sun_direction",
+        getattr(scene, "sun_direction", None),
+    )
+    x = float(scene.world_center.x)
+    z = float(scene.world_center.z + 120.0)
+    chest = Chest(
+        Vector3(x, scene.ground_height_at(x, z), z),
+        texture=Chest.texture_or_load(texture),
+        lighting=lighting,
+        sun_direction=sun_direction,
+        side="south",
+    )
+    scene.showcase_chests = [chest]
+    if not isinstance(getattr(scene, "chests", None), list):
+        scene.chests = []
+    scene.chests.append(chest)
+
+    add_entity = getattr(scene, "add_entity", None)
+    if callable(add_entity):
+        add_entity(chest)
+        return
+
+    scene.entities.append(chest)
+    scene.immediate_entities.append(chest)
+    scene.wall_tiles.extend(chest.get_collision_meshes())
 
 
 def _build_roads_and_spawn_sprites(
@@ -895,6 +941,7 @@ def _build_goblins(scene) -> None:
                 chase_radius=chase_radius,
                 chase_give_up_radius=chase_give_up_radius,
                 shadow_texture=shadow_texture,
+                sound_keys=getattr(scene, "goblin_sound_keys", None),
                 rng=random.Random(rng.randrange(1 << 30)),
             )
         except (TypeError, ValueError, AttributeError):

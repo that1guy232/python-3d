@@ -73,6 +73,9 @@ GOBLIN_BACK_TEXTURE_DIR_PATH: str = _asset("textures", "goblin", "back")
 BIRDS_SOUND_PATH: str = _asset("sounds", "birds.ogg")
 LEAVES02_SOUND_PATH: str = _asset("sounds", "leaves02.ogg")
 STEP1_SOUND_PATH: str = _asset("sounds", "step.ogg")
+GOBLIN_SOUND_PATHS: tuple[str, ...] = tuple(
+    _asset("sounds", "goblin", f"goblin-{i}.wav") for i in range(1, 4)
+)
 
 # Items
 SWORD_TEXTURE_PATH: str = _asset("textures", "items", "sword.png")

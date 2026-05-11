@@ -26,7 +26,7 @@ from engine.rendering.decal import Decal
 from engine.rendering.decal_batch import DecalBatch
 from engine.rendering.sprite import WorldSprite, draw_sprites_batched
 from game.world import world_builder, world_runtime, world_setup
-from game.world.objects import WallTile
+from game.world.objects import Chest, WallTile
 from game.world.objects.goblin import draw_goblin_shadows_batched
 from game.world.objects.wall_tile import build_wall_tile_batches
 from game.world.objects.polygon import Polygon
@@ -63,6 +63,8 @@ class WorldScene(Scene):
         self.window_batches: list[object] = []
         self.polygons: list[Polygon] = []
         self.polygon_batches: list[object] = []
+        self.chests: list[Chest] = []
+        self.showcase_chests: list[Chest] = []
         self.others: list[object] = []
         self._texture_lighting_sync_key = None
         self._texture_lighting_sync_result = False
@@ -1166,6 +1168,8 @@ class WorldScene(Scene):
             "door_batches",
             "window_batches",
             "polygon_batches",
+            "showcase_chests",
+            "chests",
             "others",
             "entities",
         ):
@@ -1186,6 +1190,8 @@ class WorldScene(Scene):
         self.door_batches = []
         self.window_batches = []
         self.polygon_batches = []
+        self.showcase_chests = []
+        self.chests = []
         self._collision_spatial_index = None
         self.others = []
         self.entities = []

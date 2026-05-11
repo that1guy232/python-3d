@@ -170,6 +170,11 @@ def load_assets(scene) -> None:
     Sounds.load_optional("footstep", LEAVES02_SOUND_PATH)
     Sounds.load_optional("ambient_birds", BIRDS_SOUND_PATH)
     Sounds.load_optional("step", STEP1_SOUND_PATH)
+    scene.goblin_sound_keys = []
+    for index, sound_path in enumerate(GOBLIN_SOUND_PATHS, start=1):
+        key = f"goblin_{index}"
+        if Sounds.load_optional(key, sound_path) is not None:
+            scene.goblin_sound_keys.append(key)
     print("Asset loading complete.")
 
     start_time = time.perf_counter()

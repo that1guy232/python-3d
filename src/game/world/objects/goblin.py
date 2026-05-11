@@ -47,6 +47,7 @@ from OpenGL.GL import (
 
 from engine.entity import Entity
 from engine.rendering.sprite import AnimatedWorldSprite
+from engine.sound.sound_utils import Sounds
 from game.resources.paths import (
     GOBLIN_BACK_TEXTURE_DIR_PATH,
     GOBLIN_FRONT_TEXTURE_DIR_PATH,
@@ -76,6 +77,12 @@ GOBLIN_PATH_SAMPLE_SPACING = 12.0
 GOBLIN_NAV_MIN_STEP = 0.15
 GOBLIN_NAV_STEP_SCALES = (1.0, 0.55, 0.25)
 GOBLIN_NAV_STEER_DEGREES = (30.0, 60.0, 90.0, 135.0)
+GOBLIN_SOUND_KEYS = tuple(f"goblin_{i}" for i in range(1, 4))
+GOBLIN_SOUND_MIN_INTERVAL = 4.0
+GOBLIN_SOUND_MAX_INTERVAL = 11.0
+GOBLIN_SOUND_AUDIBLE_RADIUS = 520.0
+GOBLIN_SOUND_FULL_VOLUME_RADIUS = 70.0
+GOBLIN_SOUND_MAX_VOLUME = 0.65
 
 PositionBlockedFn = Callable[[float, float, float], bool]
 PlayerInBuildingFn = Callable[[], bool]
@@ -145,6 +152,7 @@ class Goblin(Entity):
         frame_duration: float = GOBLIN_ANIMATION_FRAME_DURATION,
         shadow_texture: int | None = None,
         shadow_size: tuple[float, float] = GOBLIN_SHADOW_SIZE,
+        sound_keys: Iterable[str] | None = None,
         rng: random.Random | None = None,
     ) -> None:
         animations = self.animation_sets(texture)
@@ -157,6 +165,11 @@ class Goblin(Entity):
         self.position_blocked = position_blocked
         self.player_in_building = player_in_building
         self.rng = rng or random.Random()
+        keys = GOBLIN_SOUND_KEYS if sound_keys is None else tuple(sound_keys)
+        self.sound_keys = tuple(str(key) for key in keys if key)
+        self._sound_channel = None
+        self._sound_key: str | None = None
+        self._sound_timer = self._next_sound_delay(initial=True)
         self._animations: AnimationSets = {
             "front": front_frames,
             "right": animations.get("right", ()) or front_frames,
@@ -269,6 +282,8 @@ class Goblin(Entity):
         if dt <= 0.0:
             return
 
+        self._update_sound(dt)
+
         self._direction_update_elapsed += dt
         direction_due = self._direction_update_elapsed >= GOBLIN_DIRECTION_UPDATE_INTERVAL
         if direction_due:
@@ -318,6 +333,117 @@ class Goblin(Entity):
         finally:
             if direction_due:
                 self._update_directional_animation()
+
+    def _next_sound_delay(self, *, initial: bool = False) -> float:
+        minimum = max(0.1, float(GOBLIN_SOUND_MIN_INTERVAL))
+        maximum = max(minimum, float(GOBLIN_SOUND_MAX_INTERVAL))
+        if initial:
+            return self.rng.uniform(0.5, maximum)
+        return self.rng.uniform(minimum, maximum)
+
+    def _update_sound(self, dt: float) -> None:
+        self._update_active_sound_volume()
+        self._sound_timer -= dt
+        if self._sound_timer > 0.0:
+            return
+
+        self._sound_timer = self._next_sound_delay()
+        if self._sound_is_active():
+            return
+
+        volume = self._sound_volume_for_camera()
+        if volume <= 0.0:
+            return
+
+        keys = self._available_sound_keys()
+        if not keys:
+            return
+
+        key = self.rng.choice(keys)
+        channel = Sounds.play(key, volume=volume)
+        if channel is None:
+            self._sound_channel = None
+            self._sound_key = None
+            return
+        self._sound_channel = channel
+        self._sound_key = key
+
+    def _available_sound_keys(self) -> tuple[str, ...]:
+        return tuple(key for key in self.sound_keys if Sounds.is_loaded(key))
+
+    def _sound_is_active(self) -> bool:
+        channel = self._sound_channel
+        key = self._sound_key
+        if channel is None or key is None:
+            return False
+
+        try:
+            if not channel.get_busy():
+                self._sound_channel = None
+                self._sound_key = None
+                return False
+
+            sound = Sounds.get(key)
+            if sound is not None and channel.get_sound() != sound:
+                self._sound_channel = None
+                self._sound_key = None
+                return False
+        except Exception:
+            self._sound_channel = None
+            self._sound_key = None
+            return False
+
+        return True
+
+    def _update_active_sound_volume(self) -> None:
+        if not self._sound_is_active():
+            return
+
+        volume = self._sound_volume_for_camera()
+        channel = self._sound_channel
+        if channel is None:
+            return
+
+        try:
+            if volume <= 0.0:
+                channel.stop()
+                self._sound_channel = None
+                self._sound_key = None
+            else:
+                channel.set_volume(volume)
+        except Exception:
+            self._sound_channel = None
+            self._sound_key = None
+
+    def _sound_volume_for_camera(self) -> float:
+        camera_position = getattr(self.camera, "position", None)
+        if camera_position is None:
+            return 0.0
+
+        dx = self.position.x - float(camera_position.x)
+        dy = self.position.y - float(getattr(camera_position, "y", 0.0))
+        dz = self.position.z - float(camera_position.z)
+        distance_sq = dx * dx + dy * dy + dz * dz
+        audible_radius = max(0.0, float(GOBLIN_SOUND_AUDIBLE_RADIUS))
+        if audible_radius <= 0.0 or distance_sq >= audible_radius * audible_radius:
+            return 0.0
+
+        distance = math.sqrt(distance_sq)
+        full_radius = max(
+            0.0,
+            min(audible_radius, float(GOBLIN_SOUND_FULL_VOLUME_RADIUS)),
+        )
+        if distance <= full_radius:
+            attenuation = 1.0
+        else:
+            fade_distance = max(1.0, audible_radius - full_radius)
+            t = min(1.0, max(0.0, (distance - full_radius) / fade_distance))
+            attenuation = (1.0 - t) * (1.0 - t)
+
+        volume = float(GOBLIN_SOUND_MAX_VOLUME) * attenuation
+        if volume < 0.01:
+            return 0.0
+        return max(0.0, min(1.0, volume))
 
     def _current_chase_target(self) -> Vector3 | None:
         player_position = getattr(self.camera, "position", None)
