@@ -57,7 +57,6 @@ def load_world_textures() -> Dict[str, object]:
         TREE5_TEXTURE_PATH,
         TREE6_TEXTURE_PATH,
         TREE7_TEXTURE_PATH,
-        TREE8_TEXTURE_PATH,
     ]
     grass_paths = [
         GRASS1_TEXTURE_PATH,

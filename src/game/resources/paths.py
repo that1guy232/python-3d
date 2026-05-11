@@ -32,7 +32,6 @@ TREE4_TEXTURE_PATH: str = _asset("textures", "trees", "tree4.png")
 TREE5_TEXTURE_PATH: str = _asset("textures", "trees", "tree5.png")
 TREE6_TEXTURE_PATH: str = _asset("textures", "trees", "tree6.png")
 TREE7_TEXTURE_PATH: str = _asset("textures", "trees", "tree7.png")
-TREE8_TEXTURE_PATH: str = _asset("textures", "trees", "tree8.png")
 
 # Grasses
 GRASS1_TEXTURE_PATH: str = _asset("textures", "grasses", "grass1.png")
