@@ -72,6 +72,10 @@ GOBLIN_LOGIC_UPDATE_INTERVAL = 1.0 / 30.0
 GOBLIN_DIRECTION_UPDATE_INTERVAL = 1.0 / 20.0
 GOBLIN_SHADOW_SIZE = (30.0, 22.0)
 GOBLIN_SHADOW_ELEVATION = 0.35
+GOBLIN_PATH_SAMPLE_SPACING = 12.0
+GOBLIN_NAV_MIN_STEP = 0.15
+GOBLIN_NAV_STEP_SCALES = (1.0, 0.55, 0.25)
+GOBLIN_NAV_STEER_DEGREES = (30.0, 60.0, 90.0, 135.0)
 
 PositionBlockedFn = Callable[[float, float, float], bool]
 PlayerInBuildingFn = Callable[[], bool]
@@ -173,6 +177,7 @@ class Goblin(Entity):
         self._chasing_player = False
         self._idle_timer = self.rng.uniform(0.0, GOBLIN_MAX_IDLE_SECONDS)
         self._facing_xz = Vector3(0.0, 0.0, 1.0)
+        self._avoidance_turn = -1.0 if self.rng.random() < 0.5 else 1.0
         self._current_animation = ""
         self._current_flip_x = False
         self._logic_update_elapsed = self.rng.uniform(
@@ -377,18 +382,92 @@ class Goblin(Entity):
             return "reached"
 
         step = min(distance, self.move_speed * logic_dt)
-        next_x = self.position.x + (dx / distance) * step
-        next_z = self.position.z + (dz / distance) * step
-        if clamp_to_roam:
-            next_x, next_z = self._clamp_to_roam_radius(next_x, next_z)
-
-        if not self._can_stand_at(next_x, next_z):
+        candidate = self._find_walk_step(
+            dx / distance,
+            dz / distance,
+            step,
+            clamp_to_roam=clamp_to_roam,
+        )
+        if candidate is None:
             self._set_facing(dx, dz)
             return "blocked"
 
+        next_x, next_z = candidate
         self._set_facing(next_x - self.position.x, next_z - self.position.z)
         self._set_xz(next_x, next_z)
         return "moved"
+
+    def _find_walk_step(
+        self,
+        dir_x: float,
+        dir_z: float,
+        step: float,
+        *,
+        clamp_to_roam: bool,
+    ) -> tuple[float, float] | None:
+        step = max(0.0, float(step))
+        if step <= 1e-6:
+            return None
+
+        start_x = float(self.position.x)
+        start_z = float(self.position.z)
+
+        direct = self._walk_candidate(
+            dir_x,
+            dir_z,
+            step,
+            clamp_to_roam=clamp_to_roam,
+        )
+        if direct is not None:
+            self._avoidance_turn = -1.0 if self.rng.random() < 0.5 else 1.0
+            return direct
+
+        for scale in GOBLIN_NAV_STEP_SCALES:
+            stride = step * float(scale)
+            if stride < GOBLIN_NAV_MIN_STEP:
+                continue
+
+            for turn in (self._avoidance_turn, -self._avoidance_turn):
+                for degrees in GOBLIN_NAV_STEER_DEGREES:
+                    angle = math.radians(float(degrees) * float(turn))
+                    cos_a = math.cos(angle)
+                    sin_a = math.sin(angle)
+                    move_x = dir_x * cos_a - dir_z * sin_a
+                    move_z = dir_x * sin_a + dir_z * cos_a
+                    candidate = self._walk_candidate(
+                        move_x,
+                        move_z,
+                        stride,
+                        clamp_to_roam=clamp_to_roam,
+                    )
+                    if candidate is not None:
+                        self._avoidance_turn = float(turn)
+                        return candidate
+
+        return None
+
+    def _walk_candidate(
+        self,
+        move_x: float,
+        move_z: float,
+        stride: float,
+        *,
+        clamp_to_roam: bool,
+    ) -> tuple[float, float] | None:
+        start_x = float(self.position.x)
+        start_z = float(self.position.z)
+        next_x = start_x + float(move_x) * float(stride)
+        next_z = start_z + float(move_z) * float(stride)
+        if clamp_to_roam:
+            next_x, next_z = self._clamp_to_roam_radius(next_x, next_z)
+
+        actual_dx = next_x - start_x
+        actual_dz = next_z - start_z
+        if actual_dx * actual_dx + actual_dz * actual_dz < 1e-8:
+            return None
+        if not self._can_stand_at(next_x, next_z):
+            return None
+        return float(next_x), float(next_z)
 
     def _target_reached(
         self,
@@ -428,10 +507,28 @@ class Goblin(Entity):
             radius = self.roam_radius * math.sqrt(self.rng.random())
             x = self.spawn_position.x + math.cos(angle) * radius
             z = self.spawn_position.z + math.sin(angle) * radius
-            if self._can_stand_at(x, z):
+            if self._can_stand_at(x, z) and self._path_clear_to(x, z):
                 return Vector3(x, 0.0, z)
 
         return Vector3(self.spawn_position.x, 0.0, self.spawn_position.z)
+
+    def _path_clear_to(self, x: float, z: float) -> bool:
+        dx = float(x) - self.position.x
+        dz = float(z) - self.position.z
+        distance = math.hypot(dx, dz)
+        if distance <= 1e-6:
+            return True
+
+        spacing = max(2.0, min(GOBLIN_PATH_SAMPLE_SPACING, self.collision_radius))
+        samples = max(1, int(math.ceil(distance / spacing)))
+        for index in range(1, samples + 1):
+            t = index / samples
+            if not self._can_stand_at(
+                self.position.x + dx * t,
+                self.position.z + dz * t,
+            ):
+                return False
+        return True
 
     def _can_stand_at(self, x: float, z: float) -> bool:
         if self.position_blocked is None:
