@@ -14,6 +14,7 @@ from engine.rendering.lighting import (
     INDOOR_LIGHT_FACTOR,
     INDOOR_NORMAL,
 )
+from engine.sound.sound_utils import Sounds
 from .slab import (
     TexturedSlabMixin,
     normal_for_side,
@@ -39,6 +40,11 @@ DOOR_DEFAULT_WIDTH = DOOR_DEFAULT_HEIGHT * DOOR_TEXTURE_ASPECT
 DOOR_EDGE_SHADE = 0.72
 DOOR_TOP_SHADE = 0.82
 DOOR_BOTTOM_SHADE = 0.48
+DOOR_OPEN_SOUND_KEY = "door_open"
+DOOR_CLOSE_SOUND_KEY = "door_close"
+DOOR_SOUND_AUDIBLE_RADIUS = 380.0
+DOOR_SOUND_FULL_VOLUME_RADIUS = 45.0
+DOOR_SOUND_MAX_VOLUME = 0.75
 
 
 def _smooth01(value: float) -> float:
@@ -73,6 +79,7 @@ class Door(TexturedSlabMixin, Entity):
         interaction_distance: float = DOOR_INTERACTION_DISTANCE,
     ) -> None:
         super().__init__(position=position.copy())
+        self.camera = camera
         self.closed_center = position.copy()
         self.side = str(side).lower()
         self.normal = normal_for_side(self.side)
@@ -191,11 +198,15 @@ class Door(TexturedSlabMixin, Entity):
         return self.closed_center
 
     def open(self) -> None:
+        if not self.target_open:
+            self._play_motion_sound(DOOR_OPEN_SOUND_KEY)
         self.target_open = True
         self.collision_enabled = False
         self.runtime_update_enabled = self.open_amount < 1.0 - 1e-4
 
     def close(self) -> None:
+        if self.target_open:
+            self._play_motion_sound(DOOR_CLOSE_SOUND_KEY)
         self.target_open = False
         self.collision_enabled = False
         self.runtime_update_enabled = self.open_amount > 1e-4
@@ -209,6 +220,19 @@ class Door(TexturedSlabMixin, Entity):
     def interact(self, actor=None, scene=None) -> bool:
         self.toggle()
         return True
+
+    def _play_motion_sound(self, key: str) -> None:
+        if not Sounds.is_loaded(key):
+            return
+
+        Sounds.play_at(
+            key,
+            self.closed_center,
+            self.camera,
+            audible_radius=DOOR_SOUND_AUDIBLE_RADIUS,
+            full_volume_radius=DOOR_SOUND_FULL_VOLUME_RADIUS,
+            max_volume=DOOR_SOUND_MAX_VOLUME,
+        )
 
     def update(self, dt: float) -> None:
         target = 1.0 if self.target_open else 0.0

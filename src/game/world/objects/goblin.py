@@ -83,6 +83,14 @@ GOBLIN_SOUND_MAX_INTERVAL = 11.0
 GOBLIN_SOUND_AUDIBLE_RADIUS = 520.0
 GOBLIN_SOUND_FULL_VOLUME_RADIUS = 70.0
 GOBLIN_SOUND_MAX_VOLUME = 0.65
+GOBLIN_SOUND_INDOOR_MULTIPLIER = 0.22
+GOBLIN_STEP_SOUND_KEY = "step"
+GOBLIN_STEP_INTERVAL = 0.48
+GOBLIN_STEP_INTERVAL_JITTER = 0.12
+GOBLIN_STEP_AUDIBLE_RADIUS = 280.0
+GOBLIN_STEP_FULL_VOLUME_RADIUS = 35.0
+GOBLIN_STEP_MAX_VOLUME = 0.16
+GOBLIN_STEP_INDOOR_MULTIPLIER = 0.16
 
 PositionBlockedFn = Callable[[float, float, float], bool]
 PlayerInBuildingFn = Callable[[], bool]
@@ -170,6 +178,7 @@ class Goblin(Entity):
         self._sound_channel = None
         self._sound_key: str | None = None
         self._sound_timer = self._next_sound_delay(initial=True)
+        self._step_sound_timer = self.rng.uniform(0.0, GOBLIN_STEP_INTERVAL)
         self._animations: AnimationSets = {
             "front": front_frames,
             "right": animations.get("right", ()) or front_frames,
@@ -351,16 +360,22 @@ class Goblin(Entity):
         if self._sound_is_active():
             return
 
-        volume = self._sound_volume_for_camera()
-        if volume <= 0.0:
-            return
-
         keys = self._available_sound_keys()
         if not keys:
             return
 
         key = self.rng.choice(keys)
-        channel = Sounds.play(key, volume=volume)
+        channel = Sounds.play_at(
+            key,
+            self.position,
+            self.camera,
+            audible_radius=GOBLIN_SOUND_AUDIBLE_RADIUS,
+            full_volume_radius=GOBLIN_SOUND_FULL_VOLUME_RADIUS,
+            max_volume=self._indoor_scaled_volume(
+                GOBLIN_SOUND_MAX_VOLUME,
+                GOBLIN_SOUND_INDOOR_MULTIPLIER,
+            ),
+        )
         if channel is None:
             self._sound_channel = None
             self._sound_key = None
@@ -399,51 +414,59 @@ class Goblin(Entity):
         if not self._sound_is_active():
             return
 
-        volume = self._sound_volume_for_camera()
         channel = self._sound_channel
         if channel is None:
             return
 
         try:
-            if volume <= 0.0:
+            if not Sounds.set_channel_spatial(
+                channel,
+                self.position,
+                self.camera,
+                audible_radius=GOBLIN_SOUND_AUDIBLE_RADIUS,
+                full_volume_radius=GOBLIN_SOUND_FULL_VOLUME_RADIUS,
+                max_volume=self._indoor_scaled_volume(
+                    GOBLIN_SOUND_MAX_VOLUME,
+                    GOBLIN_SOUND_INDOOR_MULTIPLIER,
+                ),
+            ):
                 channel.stop()
                 self._sound_channel = None
                 self._sound_key = None
-            else:
-                channel.set_volume(volume)
         except Exception:
             self._sound_channel = None
             self._sound_key = None
 
-    def _sound_volume_for_camera(self) -> float:
-        camera_position = getattr(self.camera, "position", None)
-        if camera_position is None:
-            return 0.0
+    def _next_step_delay(self) -> float:
+        interval = max(0.1, float(GOBLIN_STEP_INTERVAL))
+        jitter = max(0.0, float(GOBLIN_STEP_INTERVAL_JITTER))
+        return max(0.08, interval + self.rng.uniform(-jitter, jitter))
 
-        dx = self.position.x - float(camera_position.x)
-        dy = self.position.y - float(getattr(camera_position, "y", 0.0))
-        dz = self.position.z - float(camera_position.z)
-        distance_sq = dx * dx + dy * dy + dz * dz
-        audible_radius = max(0.0, float(GOBLIN_SOUND_AUDIBLE_RADIUS))
-        if audible_radius <= 0.0 or distance_sq >= audible_radius * audible_radius:
-            return 0.0
+    def _update_step_sound(self, dt: float) -> None:
+        self._step_sound_timer -= max(0.0, float(dt))
+        if self._step_sound_timer > 0.0:
+            return
 
-        distance = math.sqrt(distance_sq)
-        full_radius = max(
-            0.0,
-            min(audible_radius, float(GOBLIN_SOUND_FULL_VOLUME_RADIUS)),
+        self._step_sound_timer = self._next_step_delay()
+        if not Sounds.is_loaded(GOBLIN_STEP_SOUND_KEY):
+            return
+
+        Sounds.play_at(
+            GOBLIN_STEP_SOUND_KEY,
+            self.position,
+            self.camera,
+            audible_radius=GOBLIN_STEP_AUDIBLE_RADIUS,
+            full_volume_radius=GOBLIN_STEP_FULL_VOLUME_RADIUS,
+            max_volume=self._indoor_scaled_volume(
+                GOBLIN_STEP_MAX_VOLUME,
+                GOBLIN_STEP_INDOOR_MULTIPLIER,
+            ),
         )
-        if distance <= full_radius:
-            attenuation = 1.0
-        else:
-            fade_distance = max(1.0, audible_radius - full_radius)
-            t = min(1.0, max(0.0, (distance - full_radius) / fade_distance))
-            attenuation = (1.0 - t) * (1.0 - t)
 
-        volume = float(GOBLIN_SOUND_MAX_VOLUME) * attenuation
-        if volume < 0.01:
-            return 0.0
-        return max(0.0, min(1.0, volume))
+    def _indoor_scaled_volume(self, volume: float, indoor_multiplier: float) -> float:
+        if not self._player_is_in_building():
+            return float(volume)
+        return float(volume) * max(0.0, min(1.0, float(indoor_multiplier)))
 
     def _current_chase_target(self) -> Vector3 | None:
         player_position = getattr(self.camera, "position", None)
@@ -521,6 +544,7 @@ class Goblin(Entity):
         next_x, next_z = candidate
         self._set_facing(next_x - self.position.x, next_z - self.position.z)
         self._set_xz(next_x, next_z)
+        self._update_step_sound(logic_dt)
         return "moved"
 
     def _find_walk_step(

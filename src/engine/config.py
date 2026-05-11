@@ -21,7 +21,7 @@ LIGHT_BLUE = (0.3, 0.6, 1.0, 1.0)
 FOV = 90
 FPS = 61
 VSYNC = False
-MUTE = True
+MUTE = False
 
 # Performance logging.
 # Enable in config, press F3 at runtime, or launch with:
