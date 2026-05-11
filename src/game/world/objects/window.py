@@ -333,7 +333,12 @@ class Window(TexturedSlabMixin, Entity):
             if textured:
                 glDisable(GL_TEXTURE_2D)
 
-    def _corner_backing_vertex_data(self) -> np.ndarray:
+    def _corner_backing_vertex_data(
+        self,
+        *,
+        as_quads: bool = False,
+        include_normals: bool = False,
+    ) -> np.ndarray:
         textured = bool(self.backing_texture)
         rows = []
         for face_idx, face_sign in ((0, 1.0), (1, -1.0)):
@@ -343,9 +348,10 @@ class Window(TexturedSlabMixin, Entity):
             else:
                 r, g, b = WINDOW_CORNER_BACKING_COLOR
                 color = (r * shade, g * shade, b * shade)
+            normal = self._face_normal(face_idx) if include_normals and textured else None
 
             for quad in self._corner_backing_quads(face_sign):
-                tri_vertices = (
+                vertices = quad if as_quads else (
                     quad[0],
                     quad[1],
                     quad[2],
@@ -353,21 +359,38 @@ class Window(TexturedSlabMixin, Entity):
                     quad[2],
                     quad[3],
                 )
-                for vertex in tri_vertices:
+                for vertex in vertices:
                     if textured:
                         u, v = self._wall_backing_uv(vertex)
-                        rows.append(
-                            (
-                                vertex.x,
-                                vertex.y,
-                                vertex.z,
-                                color[0],
-                                color[1],
-                                color[2],
-                                u,
-                                v,
+                        if normal is not None:
+                            rows.append(
+                                (
+                                    vertex.x,
+                                    vertex.y,
+                                    vertex.z,
+                                    color[0],
+                                    color[1],
+                                    color[2],
+                                    normal.x,
+                                    normal.y,
+                                    normal.z,
+                                    u,
+                                    v,
+                                )
                             )
-                        )
+                        else:
+                            rows.append(
+                                (
+                                    vertex.x,
+                                    vertex.y,
+                                    vertex.z,
+                                    color[0],
+                                    color[1],
+                                    color[2],
+                                    u,
+                                    v,
+                                )
+                            )
                     else:
                         rows.append(
                             (
@@ -380,7 +403,7 @@ class Window(TexturedSlabMixin, Entity):
                             )
                         )
 
-        columns = 8 if textured else 6
+        columns = 11 if textured and include_normals else 8 if textured else 6
         if not rows:
             return np.zeros((0, columns), dtype=np.float32)
         return np.array(rows, dtype=np.float32)
@@ -401,7 +424,10 @@ class Window(TexturedSlabMixin, Entity):
                     mesh.dispose()
                 except Exception:
                     pass
-            vertex_data = self._corner_backing_vertex_data()
+            vertex_data = self._corner_backing_vertex_data(
+                as_quads=True,
+                include_normals=True,
+            )
             if vertex_data.size == 0:
                 self._corner_backing_mesh = None
                 return
@@ -417,6 +443,8 @@ class Window(TexturedSlabMixin, Entity):
                 alpha_test=False,
                 exposure_baseline=1.0,
                 environment_lighting=False,
+                draw_mode=GL_QUADS,
+                shader_lighting=False,
             )
             self._corner_backing_light_key = light_key
             mesh = self._corner_backing_mesh
@@ -467,7 +495,7 @@ class WindowRenderBatch:
         )
 
     @staticmethod
-    def _make_meshes(groups, *, alpha_test: bool) -> list[BatchedMesh]:
+    def _make_meshes(groups, *, alpha_test: bool, draw_mode=GL_QUADS) -> list[BatchedMesh]:
         meshes = []
         for (texture, _columns), chunks in groups.items():
             if not chunks:
@@ -485,6 +513,8 @@ class WindowRenderBatch:
                     alpha_test=alpha_test,
                     exposure_baseline=1.0,
                     environment_lighting=False,
+                    draw_mode=draw_mode,
+                    shader_lighting=False,
                 )
             )
         return meshes
@@ -502,7 +532,10 @@ class WindowRenderBatch:
             ):
                 continue
 
-            backing_data = window._corner_backing_vertex_data()
+            backing_data = window._corner_backing_vertex_data(
+                as_quads=True,
+                include_normals=True,
+            )
             if backing_data.size:
                 texture = int(getattr(window, "backing_texture", 0) or 0)
                 if texture:
@@ -517,7 +550,11 @@ class WindowRenderBatch:
             verts = window._visual_vertices()
             if not verts:
                 continue
-            slab_data = window._slab_vertex_data(verts)
+            slab_data = window._slab_vertex_data(
+                verts,
+                as_quads=True,
+                include_normals=True,
+            )
             if slab_data.size:
                 slab_groups.setdefault(
                     (int(window.texture), int(slab_data.shape[1])),
@@ -533,10 +570,16 @@ class WindowRenderBatch:
             self._rebuild()
             self._cache_key = cache_key
 
-        for mesh in self._backing_meshes:
-            mesh.draw(camera=camera, view_distance=view_distance)
-        for mesh in self._slab_meshes:
-            mesh.draw(camera=camera, view_distance=view_distance)
+        BatchedMesh.draw_many(
+            self._backing_meshes,
+            camera=camera,
+            view_distance=view_distance,
+        )
+        BatchedMesh.draw_many(
+            self._slab_meshes,
+            camera=camera,
+            view_distance=view_distance,
+        )
 
 
 def build_window_render_batch(windows) -> WindowRenderBatch | None:

@@ -37,6 +37,7 @@ from OpenGL.GLU import gluPerspective
 
 from game.config import FOGDENSITY, FOV, HEADBOB_ENABLED, HEIGHT, LIGHT_BLUE, VIEWDISTANCE, WIDTH
 from engine.core.compat_shader import set_texture_fog_state
+from engine.core.mesh import BatchedMesh
 
 
 class WorldRenderer:
@@ -105,8 +106,11 @@ class WorldRenderer:
             scene.ground_mesh.draw(camera=scene.camera, view_distance=VIEWDISTANCE)
 
         with self._profile("draw.fences"):
-            for mesh in getattr(scene, "fence_meshes", ()):
-                mesh.draw(camera=scene.camera, view_distance=VIEWDISTANCE)
+            BatchedMesh.draw_many(
+                getattr(scene, "fence_meshes", ()),
+                camera=scene.camera,
+                view_distance=VIEWDISTANCE,
+            )
 
         with self._profile("draw.world_objects"):
             scene.draw_world_objects(enable_timing=enable_timing)

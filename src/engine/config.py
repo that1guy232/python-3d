@@ -27,7 +27,7 @@ MUTE = False
 # Enable in config, press F3 at runtime, or launch with:
 #   $env:PY3D_PERF_LOG="1"; py src/main.py
 PERFORMANCE_LOGGING = _env_bool("PY3D_PERF_LOG", False)
-PERFORMANCE_LOG_INTERVAL = float(_os.getenv("PY3D_PERF_INTERVAL", "60.0"))
-PERFORMANCE_LOG_TOP = int(_os.getenv("PY3D_PERF_TOP", "30"))
+PERFORMANCE_LOG_INTERVAL = float(_os.getenv("PY3D_PERF_INTERVAL", "15.0"))
+PERFORMANCE_LOG_TOP = int(_os.getenv("PY3D_PERF_TOP", "20"))
 PERFORMANCE_LOG_WARMUP_FRAMES = int(_os.getenv("PY3D_PERF_WARMUP", "20"))
 PERFORMANCE_SETUP_TIMING = _env_bool("PY3D_SETUP_TIMING", PERFORMANCE_LOGGING)

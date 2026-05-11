@@ -5,7 +5,7 @@ which samples interpolated heights for the ground grid.
 """
 
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 import ctypes
 import math
@@ -64,11 +64,30 @@ class BatchedMesh:
     vertex_width: int = 0
     shader_lighting: bool = False
     shine_enabled: bool = True
+    draw_mode: int = GL_TRIANGLES
     bounds_center: tuple[float, float, float] | None = None
     bounds_radius: float = 0.0
     _base_vertex_data: Optional[np.ndarray] = None
     _current_exposure: float = 1.0
     _vbo_exposure: float = 1.0
+    _vertex_stride: int = field(init=False, repr=False)
+    _has_normals: bool = field(init=False, repr=False)
+    _color_offset_ptr: ctypes.c_void_p = field(init=False, repr=False)
+    _normal_offset_ptr: ctypes.c_void_p = field(init=False, repr=False)
+    _uv_offset_ptr: ctypes.c_void_p = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._refresh_vertex_layout()
+
+    def _refresh_vertex_layout(self) -> None:
+        vertex_width = int(self.vertex_width or 8)
+        has_normals = vertex_width >= 11
+        uv_offset = 9 if has_normals else 6
+        self._vertex_stride = vertex_width * 4
+        self._has_normals = has_normals
+        self._color_offset_ptr = ctypes.c_void_p(3 * 4)
+        self._normal_offset_ptr = ctypes.c_void_p(6 * 4)
+        self._uv_offset_ptr = ctypes.c_void_p(uv_offset * 4)
 
     @staticmethod
     def _bounds_from_vertex_data(
@@ -103,10 +122,14 @@ class BatchedMesh:
         keep_vertex_data: bool = True,
         environment_lighting: bool = True,
         shine_enabled: bool = True,
+        draw_mode: int = GL_TRIANGLES,
+        shader_lighting: bool | None = None,
     ) -> "BatchedMesh":
         upload_data = np.ascontiguousarray(vertex_data, dtype=np.float32)
         source_width = int(upload_data.shape[1]) if upload_data.ndim == 2 else 0
-        shader_lighting = bool(texture is not None and source_width >= 11)
+        computed_shader_lighting = bool(texture is not None and source_width >= 11)
+        if shader_lighting is not None:
+            computed_shader_lighting = bool(shader_lighting)
         if texture is not None and shine_enabled and 8 <= source_width < 11:
             try:
                 if get_texture_color_exposure_shader() is not None:
@@ -133,8 +156,9 @@ class BatchedMesh:
             environment_lighting=bool(environment_lighting),
             exposure_baseline=baseline,
             vertex_width=int(upload_data.shape[1]) if upload_data.ndim == 2 else 0,
-            shader_lighting=shader_lighting,
+            shader_lighting=computed_shader_lighting,
             shine_enabled=bool(shine_enabled),
+            draw_mode=int(draw_mode),
             bounds_center=bounds_center,
             bounds_radius=bounds_radius,
             _base_vertex_data=upload_data.copy() if keep_vertex_data else None,
@@ -278,25 +302,23 @@ class BatchedMesh:
             # Supported textured formats:
             # [x, y, z, r, g, b, u, v]
             # [x, y, z, r, g, b, nx, ny, nz, u, v]
-            vertex_width = self.vertex_width or 8
-            has_normals = vertex_width >= 11
+            has_normals = self._has_normals
             shader_lighting_enabled = has_normals and self.shader_lighting
-            stride = vertex_width * 4
+            stride = self._vertex_stride
             
             # Enable vertex arrays
             glEnableClientState(GL_VERTEX_ARRAY)
             glVertexPointer(3, GL_FLOAT, stride, None)  # Position at offset 0
             
             glEnableClientState(GL_COLOR_ARRAY)
-            glColorPointer(3, GL_FLOAT, stride, ctypes.c_void_p(3 * 4))  # Color at offset 3 floats (12 bytes)
+            glColorPointer(3, GL_FLOAT, stride, self._color_offset_ptr)  # Color at offset 3 floats (12 bytes)
 
             if has_normals:
                 glEnableClientState(GL_NORMAL_ARRAY)
-                glNormalPointer(GL_FLOAT, stride, ctypes.c_void_p(6 * 4))
+                glNormalPointer(GL_FLOAT, stride, self._normal_offset_ptr)
             
             glEnableClientState(GL_TEXTURE_COORD_ARRAY)
-            uv_offset = 9 if has_normals else 6
-            glTexCoordPointer(2, GL_FLOAT, stride, ctypes.c_void_p(uv_offset * 4))
+            glTexCoordPointer(2, GL_FLOAT, stride, self._uv_offset_ptr)
 
             # Enable texturing and blending
             glEnable(GL_TEXTURE_2D)
@@ -319,7 +341,7 @@ class BatchedMesh:
                     shine_enabled=has_normals and self.shine_enabled,
                 )
             try:
-                glDrawArrays(GL_TRIANGLES, 0, self.vertex_count)
+                glDrawArrays(self.draw_mode, 0, self.vertex_count)
             finally:
                 if shader is not None:
                     use_fixed_pipeline()
@@ -336,18 +358,18 @@ class BatchedMesh:
             glDisableClientState(GL_VERTEX_ARRAY)
         else:
             # Handle non-textured case (if needed)
-            stride = 6 * 4  # Position (3) + Color (3) = 6 floats
+            stride = self._vertex_stride  # Position (3) + Color (3) = 6 floats
             
             glEnableClientState(GL_VERTEX_ARRAY)
             glVertexPointer(3, GL_FLOAT, stride, None)
             
             glEnableClientState(GL_COLOR_ARRAY)
-            glColorPointer(3, GL_FLOAT, stride, ctypes.c_void_p(3 * 4))
+            glColorPointer(3, GL_FLOAT, stride, self._color_offset_ptr)
             
             glEnable(GL_BLEND)
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
             
-            glDrawArrays(GL_TRIANGLES, 0, self.vertex_count)
+            glDrawArrays(self.draw_mode, 0, self.vertex_count)
             
             glDisable(GL_BLEND)
             glDisableClientState(GL_COLOR_ARRAY)
@@ -363,19 +385,137 @@ class BatchedMesh:
         if self.vertex_count == 0 or not self.vbo_vertices or self.texture is None:
             return
 
-        vertex_width = self.vertex_width or 8
-        has_normals = vertex_width >= 11
-        stride = vertex_width * 4
+        has_normals = self._has_normals
+        stride = self._vertex_stride
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo_vertices)
         glVertexPointer(3, GL_FLOAT, stride, None)
-        glColorPointer(3, GL_FLOAT, stride, ctypes.c_void_p(3 * 4))
+        glColorPointer(3, GL_FLOAT, stride, self._color_offset_ptr)
         if has_normals:
-            glNormalPointer(GL_FLOAT, stride, ctypes.c_void_p(6 * 4))
-        uv_offset = 9 if has_normals else 6
-        glTexCoordPointer(2, GL_FLOAT, stride, ctypes.c_void_p(uv_offset * 4))
+            glNormalPointer(GL_FLOAT, stride, self._normal_offset_ptr)
+        glTexCoordPointer(2, GL_FLOAT, stride, self._uv_offset_ptr)
         if bind_texture:
             glBindTexture(GL_TEXTURE_2D, self.texture)
-        glDrawArrays(GL_TRIANGLES, 0, self.vertex_count)
+        glDrawArrays(self.draw_mode, 0, self.vertex_count)
+
+    @staticmethod
+    def _prepared_draw_key(mesh: "BatchedMesh", shader) -> tuple:
+        shader_lighting_enabled = mesh._has_normals and mesh.shader_lighting
+        if shader is None:
+            return (bool(mesh.alpha_test), mesh._has_normals, False, False, False)
+        return (
+            bool(mesh.alpha_test),
+            mesh._has_normals,
+            shader_lighting_enabled,
+            bool(mesh.environment_lighting),
+            bool(mesh.shine_enabled),
+        )
+
+    @staticmethod
+    def _draw_textured_prepared_run(
+        meshes: list["BatchedMesh"],
+        key: tuple,
+        shader,
+    ) -> None:
+        if not meshes:
+            return
+
+        (
+            alpha_test,
+            has_normals,
+            shader_lighting_enabled,
+            environment_lighting,
+            shine_enabled,
+        ) = key
+        glEnableClientState(GL_VERTEX_ARRAY)
+        glEnableClientState(GL_COLOR_ARRAY)
+        glEnableClientState(GL_TEXTURE_COORD_ARRAY)
+        if has_normals:
+            glEnableClientState(GL_NORMAL_ARRAY)
+        glEnable(GL_TEXTURE_2D)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        if alpha_test:
+            glEnable(GL_ALPHA_TEST)
+            glAlphaFunc(GL_GREATER, 0.01)
+        glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE)
+
+        if shader is not None:
+            shader.bind(
+                scene_lighting_enabled=shader_lighting_enabled,
+                directional_enabled=shader_lighting_enabled,
+                environment_enabled=environment_lighting,
+                shine_enabled=has_normals and shine_enabled,
+            )
+
+        bound_texture = None
+        try:
+            for mesh in meshes:
+                if shader is not None:
+                    mesh._restore_baseline_vertex_data()
+                else:
+                    mesh._upload_vertex_data_for_exposure(mesh._current_exposure)
+
+                texture = int(mesh.texture or 0)
+                if texture != bound_texture:
+                    glBindTexture(GL_TEXTURE_2D, texture)
+                    bound_texture = texture
+                mesh.draw_textured_prepared(bind_texture=False)
+        finally:
+            if alpha_test:
+                glDisable(GL_ALPHA_TEST)
+            glDisable(GL_BLEND)
+            glDisable(GL_TEXTURE_2D)
+            if has_normals:
+                glDisableClientState(GL_NORMAL_ARRAY)
+            glDisableClientState(GL_TEXTURE_COORD_ARRAY)
+            glDisableClientState(GL_COLOR_ARRAY)
+            glDisableClientState(GL_VERTEX_ARRAY)
+
+    @staticmethod
+    def draw_many(
+        meshes,
+        *,
+        camera=None,
+        view_distance: float | None = None,
+    ) -> None:
+        """Draw a sequence of meshes while sharing GL state across adjacent VBOs."""
+        shader = get_texture_color_exposure_shader()
+        run: list[BatchedMesh] = []
+        run_key = None
+
+        def flush_run() -> None:
+            nonlocal run, run_key
+            if not run:
+                return
+            try:
+                BatchedMesh._draw_textured_prepared_run(run, run_key, shader)
+            finally:
+                if shader is not None:
+                    use_fixed_pipeline()
+                run = []
+                run_key = None
+
+        for mesh in meshes or ():
+            if mesh is None:
+                continue
+            if (
+                mesh.vertex_count == 0
+                or not mesh.vbo_vertices
+                or not mesh.is_visible(camera, view_distance=view_distance)
+            ):
+                continue
+            if mesh.texture is None:
+                flush_run()
+                mesh.draw(camera=camera, view_distance=view_distance)
+                continue
+
+            key = BatchedMesh._prepared_draw_key(mesh, shader)
+            if run and key != run_key:
+                flush_run()
+            run.append(mesh)
+            run_key = key
+
+        flush_run()
 
 class GroundHeightSampler:
     __slots__ = ("_count", "_spacing", "_w", "_heights", "_height_adjustments")

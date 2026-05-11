@@ -659,8 +659,11 @@ class RoadRenderBatch:
             mesh.set_exposure(exposure)
 
     def draw(self, camera=None, *, view_distance: float | None = None) -> None:  # pragma: no cover - visual
-        for mesh in self._meshes:
-            mesh.draw(camera=camera, view_distance=view_distance)
+        BatchedMesh.draw_many(
+            self._meshes,
+            camera=camera,
+            view_distance=view_distance,
+        )
 
 
 def build_road_render_batch(roads) -> RoadRenderBatch | None:

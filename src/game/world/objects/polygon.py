@@ -692,8 +692,11 @@ class PolygonRenderBatch:
             self._rebuild(camera)
             self._cache_key = cache_key
 
-        for mesh in self._meshes:
-            mesh.draw(camera=camera, view_distance=view_distance)
+        BatchedMesh.draw_many(
+            self._meshes,
+            camera=camera,
+            view_distance=view_distance,
+        )
 
 
 def build_polygon_render_batch(polygons) -> PolygonRenderBatch | None:

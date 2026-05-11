@@ -27,7 +27,6 @@ from OpenGL.GL import (
     GL_TEXTURE_COORD_ARRAY,
     GL_TEXTURE_ENV,
     GL_TEXTURE_ENV_MODE,
-    GL_TRIANGLES,
     GL_VERTEX_ARRAY,
     glBegin,
     glBindBuffer,
@@ -43,7 +42,6 @@ from OpenGL.GL import (
     glEnableClientState,
     glEnd,
     glDrawArrays,
-    glNormalPointer,
     glTexEnvi,
     glTexCoord2f,
     glNormal3f,
@@ -80,7 +78,7 @@ def _sprite_array_scratch(owner, sprite_count: int) -> dict:
         return scratch
 
     sprite_capacity = max(64, int(sprite_count), int(current_capacity * 1.5))
-    vertex_capacity = sprite_capacity * 6
+    vertex_capacity = sprite_capacity * 4
     scratch = {
         "sprite_capacity": sprite_capacity,
         "vertex_capacity": vertex_capacity,
@@ -440,8 +438,8 @@ def draw_sprites_batched(
     glVertexPointer_local = glVertexPointer
     glColorPointer_local = glColorPointer
     glTexCoordPointer_local = glTexCoordPointer
-    glNormalPointer_local = glNormalPointer
     glDrawArrays_local = glDrawArrays
+    glNormal3f_local = glNormal3f
 
     # hoist camera / config values
     forward = camera._forward
@@ -658,12 +656,13 @@ def draw_sprites_batched(
         glEnableClientState_local(GL_COLOR_ARRAY)
         glEnableClientState_local(GL_TEXTURE_COORD_ARRAY)
         if use_shader_lighting:
-            glEnableClientState_local(GL_NORMAL_ARRAY)
             shader.bind(
                 scene_lighting_enabled=True,
                 directional_enabled=True,
                 environment_enabled=False,
             )
+            glDisableClientState_local(GL_NORMAL_ARRAY)
+            glNormal3f_local(fn_x, fn_y, fn_z)
 
         source_positions = data_cache["positions"]
         source_sizes = data_cache["sizes"]
@@ -672,7 +671,7 @@ def draw_sprites_batched(
 
         try:
             sprite_count = visible_count
-            vertex_count = sprite_count * 6
+            vertex_count = sprite_count * 4
             _count(profiler, "sprites.vertices", vertex_count)
 
             with _profile(profiler, "sprites.build_arrays"):
@@ -684,7 +683,6 @@ def draw_sprites_batched(
                 vertices = scratch["vertices"][:vertex_count]
                 colors = scratch["colors"][:vertex_count]
                 texcoords = scratch["texcoords"][:vertex_count]
-                normals = scratch["normals"][:vertex_count] if use_shader_lighting else None
 
                 np.take(source_positions, visible_indices, axis=0, out=positions)
                 np.take(source_sizes, visible_indices, axis=0, out=sizes)
@@ -709,7 +707,7 @@ def draw_sprites_batched(
                 hw = sizes[:, 0] * 0.5
                 hh = sizes[:, 1] * 0.5
 
-                vertex_view = vertices.reshape(sprite_count, 6, 3)
+                vertex_view = vertices.reshape(sprite_count, 4, 3)
                 vertex_view[:, 0, :] = positions
                 vertex_view[:, 0, 0] += -rx_x * hw + ux_x * hh
                 vertex_view[:, 0, 1] += -rx_y * hw + ux_y * hh
@@ -725,55 +723,40 @@ def draw_sprites_batched(
                 vertex_view[:, 2, 1] += rx_y * hw - ux_y * hh
                 vertex_view[:, 2, 2] += rx_z * hw - ux_z * hh
 
-                vertex_view[:, 3, :] = vertex_view[:, 0, :]
-                vertex_view[:, 4, :] = vertex_view[:, 2, :]
+                vertex_view[:, 3, :] = positions
+                vertex_view[:, 3, 0] += -rx_x * hw - ux_x * hh
+                vertex_view[:, 3, 1] += -rx_y * hw - ux_y * hh
+                vertex_view[:, 3, 2] += -rx_z * hw - ux_z * hh
 
-                vertex_view[:, 5, :] = positions
-                vertex_view[:, 5, 0] += -rx_x * hw - ux_x * hh
-                vertex_view[:, 5, 1] += -rx_y * hw - ux_y * hh
-                vertex_view[:, 5, 2] += -rx_z * hw - ux_z * hh
-
-                texcoord_view = texcoords.reshape(sprite_count, 6, 2)
+                texcoord_view = texcoords.reshape(sprite_count, 4, 2)
                 texcoord_view[:, 0, 0] = uvs[:, 0]
                 texcoord_view[:, 0, 1] = uvs[:, 3]
                 texcoord_view[:, 1, 0] = uvs[:, 2]
                 texcoord_view[:, 1, 1] = uvs[:, 3]
                 texcoord_view[:, 2, 0] = uvs[:, 2]
                 texcoord_view[:, 2, 1] = uvs[:, 1]
-                texcoord_view[:, 3, :] = texcoord_view[:, 0, :]
-                texcoord_view[:, 4, :] = texcoord_view[:, 2, :]
-                texcoord_view[:, 5, 0] = uvs[:, 0]
-                texcoord_view[:, 5, 1] = uvs[:, 1]
+                texcoord_view[:, 3, 0] = uvs[:, 0]
+                texcoord_view[:, 3, 1] = uvs[:, 1]
 
-                color_view = colors.reshape(sprite_count, 6, 4)
+                color_view = colors.reshape(sprite_count, 4, 4)
                 color_view[:, :, 0:3] = rgb[:, np.newaxis, :]
                 color_view[:, :, 3] = 1.0
-
-                if normals is not None:
-                    normal_view = normals.reshape(sprite_count, 6, 3)
-                    normal_view[:, :, 0] = fn_x
-                    normal_view[:, :, 1] = fn_y
-                    normal_view[:, :, 2] = fn_z
 
             with _profile(profiler, "sprites.submit_arrays"):
                 glVertexPointer_local(3, GL_FLOAT, 0, vertices)
                 glColorPointer_local(4, GL_FLOAT, 0, colors)
                 glTexCoordPointer_local(2, GL_FLOAT, 0, texcoords)
-                if normals is not None:
-                    glNormalPointer_local(GL_FLOAT, 0, normals)
 
                 for tex, batch_start, batch_sprite_count in batches:
                     glBindTexture_local(GL_TEXTURE_2D, tex)
                     glDrawArrays_local(
-                        GL_TRIANGLES,
-                        batch_start * 6,
-                        batch_sprite_count * 6,
+                        GL_QUADS,
+                        batch_start * 4,
+                        batch_sprite_count * 4,
                     )
         finally:
             if shader is not None:
                 use_fixed_pipeline()
-            if use_shader_lighting:
-                glDisableClientState_local(GL_NORMAL_ARRAY)
             glDisableClientState_local(GL_TEXTURE_COORD_ARRAY)
             glDisableClientState_local(GL_COLOR_ARRAY)
             glDisableClientState_local(GL_VERTEX_ARRAY)

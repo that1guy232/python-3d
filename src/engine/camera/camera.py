@@ -417,7 +417,24 @@ class Camera:
             return True
 
         try:
-            x_cam, y_cam, depth = self.world_point_to_view(center)
+            if hasattr(center, "x") and hasattr(center, "y") and hasattr(center, "z"):
+                px = float(center.x)
+                py = float(center.y)
+                pz = float(center.z)
+            else:
+                px = float(center[0])
+                py = float(center[1])
+                pz = float(center[2])
+            position = self.position
+            dx = px - float(position.x)
+            dy = py - float(position.y)
+            dz = pz - float(position.z)
+            right = self._right
+            up = self._up
+            forward = self._forward
+            x_cam = dx * right.x + dy * right.y + dz * right.z
+            y_cam = dx * up.x + dy * up.y + dz * up.z
+            depth = dx * forward.x + dy * forward.y + dz * forward.z
         except Exception:
             return True
 
@@ -431,7 +448,8 @@ class Camera:
             if depth > far + radius:
                 return False
 
-        tan_half = self.tan_half_fov(viewport_height)
+        fov_scale = max(1e-6, float(getattr(self, "_fov_scale", HEIGHT * 0.5)))
+        tan_half = (float(viewport_height) * 0.5) / fov_scale
         aspect = float(viewport_width) / max(1e-6, float(viewport_height))
         depth_for_extent = max(0.0, depth)
         half_v = depth_for_extent * tan_half

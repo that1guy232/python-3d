@@ -315,37 +315,70 @@ class TexturedSlabMixin:
             glDisable(GL_BLEND)
             glDisable(GL_TEXTURE_2D)
 
-    def _slab_vertex_data(self, verts: Sequence[Vector3]) -> np.ndarray:
+    def _slab_vertex_data(
+        self,
+        verts: Sequence[Vector3],
+        *,
+        as_quads: bool = False,
+        include_normals: bool = False,
+    ) -> np.ndarray:
         rows = []
         for face_idx, face in enumerate(self.faces):
             if len(face) != 4:
                 continue
             shade = self._face_shade(face_idx)
             uvs = self._face_uvs(face_idx)
-            for vertex_idx, uv in (
+            normal = self._face_normal(face_idx) if include_normals else None
+            face_vertices = (
                 (face[0], uvs[0]),
                 (face[1], uvs[1]),
                 (face[2], uvs[2]),
-                (face[0], uvs[0]),
-                (face[2], uvs[2]),
                 (face[3], uvs[3]),
-            ):
-                vertex = verts[vertex_idx]
-                rows.append(
-                    (
-                        vertex.x,
-                        vertex.y,
-                        vertex.z,
-                        shade,
-                        shade,
-                        shade,
-                        uv[0],
-                        uv[1],
-                    )
+            )
+            if not as_quads:
+                face_vertices = (
+                    face_vertices[0],
+                    face_vertices[1],
+                    face_vertices[2],
+                    face_vertices[0],
+                    face_vertices[2],
+                    face_vertices[3],
                 )
+            for vertex_idx, uv in face_vertices:
+                vertex = verts[vertex_idx]
+                if normal is not None:
+                    rows.append(
+                        (
+                            vertex.x,
+                            vertex.y,
+                            vertex.z,
+                            shade,
+                            shade,
+                            shade,
+                            normal.x,
+                            normal.y,
+                            normal.z,
+                            uv[0],
+                            uv[1],
+                        )
+                    )
+                else:
+                    rows.append(
+                        (
+                            vertex.x,
+                            vertex.y,
+                            vertex.z,
+                            shade,
+                            shade,
+                            shade,
+                            uv[0],
+                            uv[1],
+                        )
+                    )
 
         if not rows:
-            return np.zeros((0, 8), dtype=np.float32)
+            columns = 11 if include_normals else 8
+            return np.zeros((0, columns), dtype=np.float32)
         return np.array(rows, dtype=np.float32)
 
     def _draw_cached_textured_slab_faces(
@@ -366,7 +399,11 @@ class TexturedSlabMixin:
 
         if mesh is None or dirty:
             self._dispose_slab_mesh()
-            vertex_data = self._slab_vertex_data(verts)
+            vertex_data = self._slab_vertex_data(
+                verts,
+                as_quads=True,
+                include_normals=True,
+            )
             if vertex_data.size == 0:
                 return
             self._slab_mesh = BatchedMesh.from_vertex_data(
@@ -375,6 +412,8 @@ class TexturedSlabMixin:
                 alpha_test=True,
                 exposure_baseline=1.0,
                 environment_lighting=False,
+                draw_mode=GL_QUADS,
+                shader_lighting=False,
             )
             self._slab_mesh_dirty = False
             self._slab_mesh_light_key = light_key

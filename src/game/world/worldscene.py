@@ -20,6 +20,7 @@ from pygame.math import Vector3
 from game.config import *
 from engine.camera import Camera
 from engine.core.compat_shader import set_texture_lighting_state
+from engine.core.mesh import BatchedMesh
 from engine.core.scene import Scene
 from engine.entity import Entity
 from engine.rendering.decal import Decal
@@ -466,8 +467,9 @@ class WorldScene(Scene):
 
         start_draw_decal_batches_time = time.perf_counter()
         with self._profile("objects.decal_batches"):
+            profiler = getattr(self, "profiler", None)
             for batch in self.decal_batches:
-                batch.draw(camera=self.camera)
+                batch.draw(camera=self.camera, profiler=profiler)
         end_draw_decal_batches_time = time.perf_counter()
         if enable_timing:
             print(
@@ -478,8 +480,11 @@ class WorldScene(Scene):
         start_draw_wall_tiles_time = time.perf_counter()
         with self._profile("objects.wall_tiles"):
             if self.wall_tile_batches:
-                for batch in self.wall_tile_batches:
-                    batch.draw(camera=self.camera, view_distance=VIEWDISTANCE)
+                BatchedMesh.draw_many(
+                    self.wall_tile_batches,
+                    camera=self.camera,
+                    view_distance=VIEWDISTANCE,
+                )
             else:
                 entity_ids = {id(entity) for entity in self.entities}
                 for wall in self.wall_tiles:

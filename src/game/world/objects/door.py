@@ -6,6 +6,7 @@ import math
 from typing import Any, Callable
 
 import numpy as np
+from OpenGL.GL import GL_QUADS
 from pygame.math import Vector3
 
 from engine.core.mesh import BatchedMesh
@@ -493,7 +494,11 @@ class DoorRenderBatch:
             verts = door._visual_vertices()
             if not verts:
                 continue
-            vertex_data = door._slab_vertex_data(verts)
+            vertex_data = door._slab_vertex_data(
+                verts,
+                as_quads=True,
+                include_normals=True,
+            )
             if vertex_data.size == 0:
                 continue
             groups.setdefault(
@@ -517,6 +522,8 @@ class DoorRenderBatch:
                     alpha_test=True,
                     exposure_baseline=1.0,
                     environment_lighting=False,
+                    draw_mode=GL_QUADS,
+                    shader_lighting=False,
                 )
             )
 
@@ -526,8 +533,11 @@ class DoorRenderBatch:
             self._rebuild()
             self._cache_key = cache_key
 
-        for mesh in self._meshes:
-            mesh.draw(camera=camera, view_distance=view_distance)
+        BatchedMesh.draw_many(
+            self._meshes,
+            camera=camera,
+            view_distance=view_distance,
+        )
 
 
 def build_door_render_batch(doors) -> DoorRenderBatch | None:

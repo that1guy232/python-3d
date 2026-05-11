@@ -23,7 +23,6 @@ from OpenGL.GL import (
     GL_TEXTURE_ENV,
     GL_TEXTURE_ENV_MODE,
     GL_MODULATE,
-    GL_TRIANGLES,
     GL_VERTEX_ARRAY,
     glBegin,
     glBindBuffer,
@@ -105,7 +104,7 @@ def _shadow_batch_scratch(owner, shadow_count: int) -> dict:
         return scratch
 
     shadow_capacity = max(64, int(shadow_count), int(current_capacity * 1.5))
-    vertex_capacity = shadow_capacity * 6
+    vertex_capacity = shadow_capacity * 4
     scratch = {
         "shadow_capacity": shadow_capacity,
         "vertices": np.empty((vertex_capacity, 3), dtype=np.float32),
@@ -876,20 +875,18 @@ def draw_goblin_shadows_batched(
     try:
         for texture, group in groups.items():
             shadow_count = len(group)
-            vertex_count = shadow_count * 6
+            vertex_count = shadow_count * 4
             scratch = _shadow_batch_scratch(scratch_owner, shadow_count)
             vertices = scratch["vertices"][:vertex_count]
             texcoords = scratch["texcoords"][:vertex_count]
 
-            texcoord_view = texcoords.reshape(shadow_count, 6, 2)
+            texcoord_view = texcoords.reshape(shadow_count, 4, 2)
             texcoord_view[:, 0, :] = (0.0, 0.0)
             texcoord_view[:, 1, :] = (1.0, 0.0)
             texcoord_view[:, 2, :] = (1.0, 1.0)
-            texcoord_view[:, 3, :] = (0.0, 0.0)
-            texcoord_view[:, 4, :] = (1.0, 1.0)
-            texcoord_view[:, 5, :] = (0.0, 1.0)
+            texcoord_view[:, 3, :] = (0.0, 1.0)
 
-            vertex_view = vertices.reshape(shadow_count, 6, 3)
+            vertex_view = vertices.reshape(shadow_count, 4, 3)
             for index, goblin in enumerate(group):
                 position = goblin.position
                 x = float(position.x)
@@ -904,14 +901,12 @@ def draw_goblin_shadows_batched(
                 vertex_view[index, 0, :] = (x - half_w, y, z - half_d)
                 vertex_view[index, 1, :] = (x + half_w, y, z - half_d)
                 vertex_view[index, 2, :] = (x + half_w, y, z + half_d)
-                vertex_view[index, 3, :] = (x - half_w, y, z - half_d)
-                vertex_view[index, 4, :] = (x + half_w, y, z + half_d)
-                vertex_view[index, 5, :] = (x - half_w, y, z + half_d)
+                vertex_view[index, 3, :] = (x - half_w, y, z + half_d)
 
             glBindTexture(GL_TEXTURE_2D, texture)
             glVertexPointer(3, GL_FLOAT, 0, vertices)
             glTexCoordPointer(2, GL_FLOAT, 0, texcoords)
-            glDrawArrays(GL_TRIANGLES, 0, vertex_count)
+            glDrawArrays(GL_QUADS, 0, vertex_count)
     finally:
         glDisableClientState(GL_TEXTURE_COORD_ARRAY)
         glDisableClientState(GL_VERTEX_ARRAY)

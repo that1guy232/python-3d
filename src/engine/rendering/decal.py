@@ -83,6 +83,7 @@ class Decal:
     # Internal
     _mesh: Optional[BatchedMesh] = None
     _vertex_data: Optional[np.ndarray] = None
+    _quad_vertex_data: Optional[np.ndarray] = None
     build_vbo: bool = True
 
     def __post_init__(self) -> None:
@@ -96,8 +97,9 @@ class Decal:
         if self.build_vbo:
             self._rebuild()
         else:
-            # Generate and keep vertex data only
-            self._vertex_data = self._generate_vertex_data()
+            # Batched decals draw terrain cells as quads to avoid duplicate
+            # triangle vertices while preserving the same tessellation grid.
+            self._quad_vertex_data = self._generate_vertex_data(as_quads=True)
 
     # --- Public API -----------------------------------------------------
     def set_center(self, center: Vector3 | Tuple[float, float, float]) -> None:
@@ -105,28 +107,32 @@ class Decal:
         if self.build_vbo:
             self._rebuild()
         else:
-            self._vertex_data = self._generate_vertex_data()
+            self._vertex_data = None
+            self._quad_vertex_data = self._generate_vertex_data(as_quads=True)
 
     def set_rotation(self, degrees: float) -> None:
         self.rotation_deg = float(degrees)
         if self.build_vbo:
             self._rebuild()
         else:
-            self._vertex_data = self._generate_vertex_data()
+            self._vertex_data = None
+            self._quad_vertex_data = self._generate_vertex_data(as_quads=True)
 
     def set_size(self, width: float, height: float) -> None:
         self.size = (float(width), float(height))
         if self.build_vbo:
             self._rebuild()
         else:
-            self._vertex_data = self._generate_vertex_data()
+            self._vertex_data = None
+            self._quad_vertex_data = self._generate_vertex_data(as_quads=True)
 
     def set_uv_repeat(self, u_rep: float, v_rep: float) -> None:
         self.uv_repeat = (float(u_rep), float(v_rep))
         if self.build_vbo:
             self._rebuild()
         else:
-            self._vertex_data = self._generate_vertex_data()
+            self._vertex_data = None
+            self._quad_vertex_data = self._generate_vertex_data(as_quads=True)
 
     def draw_untextured(self) -> None:  # parity with Drawable
         self.draw()
@@ -161,14 +167,16 @@ class Decal:
             shine_enabled=False,
         )
         self._vertex_data = None
+        self._quad_vertex_data = None
 
     def dispose(self) -> None:
         if self._mesh is not None:
             self._mesh.dispose()
             self._mesh = None
         self._vertex_data = None
+        self._quad_vertex_data = None
 
-    def _generate_vertex_data(self) -> np.ndarray:
+    def _generate_vertex_data(self, *, as_quads: bool = False) -> np.ndarray:
         w, h = self.size
         if w <= 1e-6 or h <= 1e-6 or self.subdiv_u <= 0 or self.subdiv_v <= 0:
             # Build empty mesh
@@ -243,6 +251,12 @@ class Decal:
                 v11 = verts_grid[iv + 1][iu + 1]
                 if not cell_receives(v00, v10, v11, v01):
                     continue
+                if as_quads:
+                    tris.append(v00)
+                    tris.append(v10)
+                    tris.append(v11)
+                    tris.append(v01)
+                    continue
                 # Keep diagonal consistent to avoid cracks with terrain triangulation
                 # Tri 1: (v00, v10, v11)
                 tris.append(v00)
@@ -266,3 +280,8 @@ class Decal:
         if self._vertex_data is None:
             self._vertex_data = self._generate_vertex_data()
         return self._vertex_data
+
+    def get_quad_vertex_data(self) -> np.ndarray:
+        if self._quad_vertex_data is None:
+            self._quad_vertex_data = self._generate_vertex_data(as_quads=True)
+        return self._quad_vertex_data

@@ -326,10 +326,43 @@ def _update_entities(scene, dt: float) -> None:
 
 
 def _update_sprites(scene, dt: float) -> None:
-    for sprite in getattr(scene, "sprite_items", ()) or ():
+    sprites = getattr(scene, "sprite_items", ()) or ()
+    if not sprites:
+        return
+
+    for update_sprite in _sprite_update_callables(scene, sprites):
+        update_sprite(dt)
+
+
+def _sprite_update_callables(scene, sprites) -> tuple:
+    sprite_count = len(sprites)
+    first = sprites[0] if sprite_count else None
+    last = sprites[-1] if sprite_count else None
+    cache = getattr(scene, "_sprite_update_cache", None)
+    if (
+        cache is not None
+        and cache.get("sprites") is sprites
+        and cache.get("count") == sprite_count
+        and cache.get("first") is first
+        and cache.get("last") is last
+    ):
+        return cache["updates"]
+
+    updates = []
+    for sprite in sprites:
         update_sprite = getattr(sprite, "update", None)
         if callable(update_sprite):
-            update_sprite(dt)
+            updates.append(update_sprite)
+
+    updates = tuple(updates)
+    scene._sprite_update_cache = {
+        "sprites": sprites,
+        "count": sprite_count,
+        "first": first,
+        "last": last,
+        "updates": updates,
+    }
+    return updates
 
 
 def _entity_interaction_position(entity):
