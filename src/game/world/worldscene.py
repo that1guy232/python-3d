@@ -1018,6 +1018,8 @@ class WorldScene(Scene):
             tuple(
                 self._rounded(getattr(door, "open_amount", 0.0), digits=4)
                 for door in getattr(self, "doors", ()) or ()
+                if getattr(door, "_doorway_light_region", None) is not None
+                or getattr(door, "_doorway_brightness_modifier", None) is not None
             ),
         )
 

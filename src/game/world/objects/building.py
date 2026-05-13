@@ -103,6 +103,72 @@ class Building:
 
         return walls
 
+    def create_interior_walls(
+        self,
+        partitions: list[dict] | None,
+        *,
+        wall_height: float = 3.0,
+        wall_thickness: float = 0.5,
+        texture: Optional[int] = None,
+        uv_repeat: tuple[float, float] = (1.0, 1.0),
+        base_y: Optional[float] = None,
+        max_tile_width: float = 100.0,
+    ) -> List[WallTile]:
+        """Create internal partition walls from local building-space specs."""
+        base_y_value = self._get_base_y(base_y)
+        walls: list[WallTile] = []
+
+        for partition in partitions or ():
+            if not isinstance(partition, dict):
+                continue
+            try:
+                axis = str(partition.get("axis", "")).lower()
+                coord = float(partition["coord"])
+                span_min = float(partition["span_min"])
+                span_max = float(partition["span_max"])
+            except (KeyError, TypeError, ValueError):
+                continue
+
+            if axis not in {"x", "z"}:
+                continue
+            if span_max < span_min:
+                span_min, span_max = span_max, span_min
+            if span_max <= span_min:
+                continue
+
+            side = str(
+                partition.get(
+                    "side",
+                    "east" if axis == "x" else "north",
+                )
+            ).lower()
+            nx, nz = self._normal_from_side(side)
+            openings = self._clip_span_openings(
+                list(partition.get("openings", ()) or ()),
+                span_min=span_min,
+                span_max=span_max,
+                wall_height=wall_height,
+            )
+            walls.extend(
+                self._create_interior_wall_with_openings(
+                    axis=axis,
+                    coord=coord,
+                    span_min=span_min,
+                    span_max=span_max,
+                    nx=nx,
+                    nz=nz,
+                    wall_height=wall_height,
+                    wall_thickness=wall_thickness,
+                    texture=texture,
+                    uv_repeat=uv_repeat,
+                    base_y=base_y_value,
+                    max_tile_width=max_tile_width,
+                    openings=openings,
+                )
+            )
+
+        return walls
+
     def _get_dimensions(self, width: Optional[float], depth: Optional[float]) -> tuple[float, float]:
         """Get building dimensions, using defaults if not specified."""
         return (
@@ -335,6 +401,154 @@ class Building:
                 continue
             clipped.append((left, right, y_min, y_max))
         return clipped
+
+    def _clip_span_openings(
+        self,
+        openings: list[dict],
+        *,
+        span_min: float,
+        span_max: float,
+        wall_height: float,
+    ) -> list[tuple[float, float, float, float]]:
+        clipped: list[tuple[float, float, float, float]] = []
+        min_span = float(span_min)
+        max_span = float(span_max)
+        max_y = float(wall_height)
+        for opening in openings:
+            try:
+                half_width = max(0.5, float(opening["width"]) * 0.5)
+                offset = float(opening.get("offset", 0.0))
+                left = max(min_span, offset - half_width)
+                right = min(max_span, offset + half_width)
+                y_min = max(0.0, min(max_y, float(opening["y_min"])))
+                y_max = max(0.0, min(max_y, float(opening["y_max"])))
+            except (KeyError, TypeError, ValueError):
+                continue
+
+            if right <= left + 1e-6 or y_max <= y_min + 1e-6:
+                continue
+            clipped.append((left, right, y_min, y_max))
+        return clipped
+
+    def _create_interior_wall_with_openings(
+        self,
+        *,
+        axis: str,
+        coord: float,
+        span_min: float,
+        span_max: float,
+        nx: float,
+        nz: float,
+        wall_height: float,
+        wall_thickness: float,
+        texture: Optional[int],
+        uv_repeat: tuple[float, float],
+        base_y: float,
+        max_tile_width: float,
+        openings: list[tuple[float, float, float, float]],
+    ) -> List[WallTile]:
+        span_breaks = [float(span_min), float(span_max)]
+        y_breaks = [0.0, float(wall_height)]
+        for left, right, y_min, y_max in openings:
+            span_breaks.extend((left, right))
+            y_breaks.extend((y_min, y_max))
+
+        span_breaks = sorted(set(round(value, 6) for value in span_breaks))
+        y_breaks = sorted(set(round(value, 6) for value in y_breaks))
+        walls: list[WallTile] = []
+        for span_idx in range(len(span_breaks) - 1):
+            segment_min = span_breaks[span_idx]
+            segment_max = span_breaks[span_idx + 1]
+            if segment_max <= segment_min:
+                continue
+            span_mid = (segment_min + segment_max) * 0.5
+            for y_idx in range(len(y_breaks) - 1):
+                y_min = y_breaks[y_idx]
+                y_max = y_breaks[y_idx + 1]
+                if y_max <= y_min:
+                    continue
+                y_mid = (y_min + y_max) * 0.5
+                if any(
+                    left <= span_mid <= right and bottom <= y_mid <= top
+                    for left, right, bottom, top in openings
+                ):
+                    continue
+
+                walls.extend(
+                    self._create_interior_wall_segment(
+                        axis=axis,
+                        coord=coord,
+                        span_min=segment_min,
+                        span_max=segment_max,
+                        nx=nx,
+                        nz=nz,
+                        wall_thickness=wall_thickness,
+                        texture=texture,
+                        uv_repeat=uv_repeat,
+                        base_y=base_y,
+                        max_tile_width=max_tile_width,
+                        y_min=y_min,
+                        y_max=y_max,
+                    )
+                )
+
+        return walls
+
+    def _create_interior_wall_segment(
+        self,
+        *,
+        axis: str,
+        coord: float,
+        span_min: float,
+        span_max: float,
+        nx: float,
+        nz: float,
+        wall_thickness: float,
+        texture: Optional[int],
+        uv_repeat: tuple[float, float],
+        base_y: float,
+        max_tile_width: float,
+        y_min: float,
+        y_max: float,
+    ) -> List[WallTile]:
+        if span_max <= span_min or y_max <= y_min:
+            return []
+
+        full_span = span_max - span_min
+        num_tiles = max(1, int(math.ceil(full_span / max_tile_width)))
+        tile_width = full_span / num_tiles
+        tile_half = tile_width / 2.0
+        half_width = wall_thickness / 2.0
+        segment_height = y_max - y_min
+        theta = math.atan2(nz, nx)
+        tiles = []
+
+        for i in range(num_tiles):
+            center_along = span_min + (i + 0.5) * tile_width
+            if axis == "x":
+                tx = float(self.position.x) + float(coord)
+                tz = float(self.position.z) + center_along
+            else:
+                tx = float(self.position.x) + center_along
+                tz = float(self.position.z) + float(coord)
+
+            tile = WallTile(
+                position=Vector3(tx, base_y + y_min + segment_height * 0.5, tz),
+                width=half_width,
+                height=segment_height * 0.5,
+                depth=tile_half,
+                texture=texture,
+                uv_repeat=uv_repeat,
+                thickness=wall_thickness,
+            )
+            tile.rotation = Vector3(0.0, theta, 0.0)
+            tile.indoor_face_indices = tuple(range(len(tile.faces)))
+            tile.indoor_light_factor = INDOOR_LIGHT_FACTOR
+            tile.indoor_normal_override = INDOOR_NORMAL
+            tiles.append(tile)
+
+        self.attach_shapes(tiles)
+        return tiles
 
     def _create_doorway_wall_side(
         self, nx: float, nz: float, outer_x: float, outer_z: float,

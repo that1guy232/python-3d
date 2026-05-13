@@ -35,6 +35,7 @@ from game.world.objects.ground import TexturedGroundGridBuilder
 from game.world.objects.polygon import Polygon, build_polygon_render_batch
 from game.world.objects.road import build_road_render_batch
 from game.world.objects.window import build_window_render_batch
+from game.world.interior_layout import create_building_interior_layout
 from game.world.world_content import create_world_content, resolve_world_content
 from game.world.world_lighting_plan import apply_building_lighting
 from game.world.objects.wall_tile import build_wall_tile_batches
@@ -135,6 +136,68 @@ def _build_building_torches(scene) -> None:
     scene.sprite_items.extend(scene.torches)
 
 
+def _interior_door_from_spec(
+    building_spec: dict,
+    door_spec: dict,
+    *,
+    texture,
+    camera,
+    ground_height_at,
+    lighting=None,
+    sun_direction=None,
+) -> Door:
+    center = building_spec["position"]
+    local_x = float(door_spec.get("x", 0.0))
+    local_z = float(door_spec.get("z", 0.0))
+    x = float(center.x) + local_x
+    z = float(center.z) + local_z
+    side = str(door_spec.get("side", "south")).lower()
+
+    doorway_height = max(
+        8.0,
+        float(
+            door_spec.get(
+                "height",
+                building_spec.get("doorway_height", Door.DEFAULT_HEIGHT),
+            )
+        ),
+    )
+    doorway_width = max(
+        8.0,
+        float(
+            door_spec.get(
+                "width",
+                building_spec.get(
+                    "doorway_width",
+                    doorway_height * Door.TEXTURE_ASPECT,
+                ),
+            )
+        ),
+    )
+    visual_width = max(8.0, doorway_width + 1.0)
+    visual_height = max(8.0, visual_width / Door.TEXTURE_ASPECT)
+    base_y = building_spec.get("base_y", None)
+    if base_y is None:
+        base_y = ground_height_at(float(center.x), float(center.z))
+    wall_thickness = max(4.0, float(building_spec.get("wall_thickness", 2.5)))
+
+    return Door(
+        Vector3(x, float(base_y) + visual_height * 0.5, z),
+        camera=camera,
+        texture=texture,
+        lighting=lighting,
+        sun_direction=sun_direction,
+        width=visual_width,
+        height=visual_height,
+        side=side,
+        thickness=wall_thickness,
+        collision_width=visual_width,
+        collision_height=visual_height,
+        collision_thickness=wall_thickness,
+        interior=True,
+    )
+
+
 def _build_building_doors(scene) -> None:
     for batch in getattr(scene, "door_batches", ()) or ():
         try:
@@ -170,6 +233,16 @@ def _build_building_doors(scene) -> None:
         "sun_direction",
         getattr(scene, "sun_direction", None),
     )
+
+    def add_door(door: Door) -> None:
+        scene.doors.append(door)
+        if callable(add_entity):
+            add_entity(door)
+        else:
+            scene.entities.append(door)
+            scene.sprite_items.extend(door.get_sprites())
+            scene.wall_tiles.extend(door.get_collision_meshes())
+
     for spec_index, spec in enumerate(getattr(scene, "building_specs", ()) or ()):
         try:
             door = Door.from_building_spec(
@@ -192,13 +265,26 @@ def _build_building_doors(scene) -> None:
                 covered_regions[spec_index],
                 brightness_modifier=brightness_modifier,
             )
-        scene.doors.append(door)
-        if callable(add_entity):
-            add_entity(door)
-        else:
-            scene.entities.append(door)
-            scene.sprite_items.extend(door.get_sprites())
-            scene.wall_tiles.extend(door.get_collision_meshes())
+        add_door(door)
+
+        interior = spec.get("interior", {})
+        interior_door_specs = (
+            interior.get("doors", ()) if isinstance(interior, dict) else ()
+        )
+        for interior_door_spec in interior_door_specs:
+            try:
+                interior_door = _interior_door_from_spec(
+                    spec,
+                    interior_door_spec,
+                    texture=door_tex,
+                    camera=scene.camera,
+                    ground_height_at=scene.ground_height_at,
+                    lighting=lighting,
+                    sun_direction=sun_direction,
+                )
+            except (KeyError, TypeError, ValueError, AttributeError):
+                continue
+            add_door(interior_door)
 
     door_batch = build_door_render_batch(scene.doors)
     scene.door_batches = [door_batch] if door_batch is not None else []
@@ -496,6 +582,19 @@ def _build_buildings(scene) -> None:
             terrain_height_at=scene.ground_height_at,
             terrain_embed_depth=BUILDING_WALL_TERRAIN_EMBED_DEPTH,
             terrain_sample_spacing=BUILDING_WALL_TERRAIN_SAMPLE_SPACING,
+        )
+        interior = create_building_interior_layout(spec)
+        spec["interior"] = interior
+        pieces.extend(
+            building.create_interior_walls(
+                interior.get("partitions", ()),
+                wall_height=spec["height"],
+                wall_thickness=wall_thickness,
+                texture=wall_tex,
+                uv_repeat=(1.0, 1.0),
+                base_y=base_y,
+                max_tile_width=max(spec["width"], spec["depth"]),
+            )
         )
         for piece in pieces:
             piece.sun_direction = sun_direction

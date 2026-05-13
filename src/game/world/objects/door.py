@@ -78,6 +78,7 @@ class Door(TexturedSlabMixin, Entity):
         swing_radians: float = DOOR_SWING_RADIANS,
         swing_speed: float = DOOR_SWING_SPEED,
         interaction_distance: float = DOOR_INTERACTION_DISTANCE,
+        interior: bool = False,
     ) -> None:
         super().__init__(position=position.copy())
         self.camera = camera
@@ -107,6 +108,7 @@ class Door(TexturedSlabMixin, Entity):
         self.uv_rect = texture_uv_rect(texture)
         self.lighting = lighting
         self.sun_direction = sun_direction
+        self.interior = bool(interior)
         self._doorway_light_region: dict[str, Any] | None = None
         self._doorway_light_open_factor = 1.0
         self._doorway_light_closed_factor: float | None = None
@@ -395,6 +397,17 @@ class Door(TexturedSlabMixin, Entity):
         self._last_doorway_brightness_value = value
 
     def _face_shade(self, face_idx: int) -> float:
+        if self.interior:
+            if face_idx in (0, 1):
+                base = INDOOR_LIGHT_FACTOR
+            elif face_idx == 4:
+                base = DOOR_TOP_SHADE * INDOOR_LIGHT_FACTOR
+            elif face_idx == 5:
+                base = DOOR_BOTTOM_SHADE * INDOOR_LIGHT_FACTOR
+            else:
+                base = DOOR_EDGE_SHADE * INDOOR_LIGHT_FACTOR
+            return max(0.0, min(1.0, base * self._sunlight_factor(INDOOR_NORMAL)))
+
         if face_idx == 0:
             base = 1.0
             normal = self._face_normal(face_idx)
