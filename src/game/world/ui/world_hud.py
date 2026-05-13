@@ -5,10 +5,12 @@ This isolates HUD setup, update, and draw responsibilities from WorldScene.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 import random
 from pygame.math import Vector3
 from engine.rendering.sprite import WorldSprite
 from game.world.ui.compass_overlay import CompassOverlay
+from game.world.ui.minimap_overlay import MiniMapOverlay
 from engine.textures.texture_utils import load_texture
 from game.resources.paths import (
     COMPASS_BASE_TEXTURE_PATH,
@@ -35,6 +37,7 @@ class WorldHUD:
             base_texture=base_tex,
             needle_texture=needle_tex,
         )
+        self.minimap = MiniMapOverlay(self.scene)
 
         # Held item (sword) as a WorldSprite
         sword_tex = load_texture(SWORD_TEXTURE_PATH)
@@ -55,6 +58,17 @@ class WorldHUD:
         )
         # Visible only when looking down; initial false
         self._test_light_visible = True
+
+    def _profile(self, name: str):
+        profiler = getattr(self.scene, "profiler", None)
+        if profiler is None or not getattr(profiler, "enabled", False):
+            return nullcontext()
+        return profiler.section(name)
+
+    def _count(self, name: str, amount: float = 1.0) -> None:
+        profiler = getattr(self.scene, "profiler", None)
+        if profiler is not None and getattr(profiler, "enabled", False):
+            profiler.count(name, amount)
 
     def update(self, dt: float) -> None:
         # Place sword and compass using scene's helper view_space_position
@@ -106,18 +120,41 @@ class WorldHUD:
         elevation = 5
         self.test_light.position = Vector3(cx, ground_y + elevation, cz)
 
-    def draw(self) -> None:
-        # Draw held item and compass (world-space sprites with pitch effect)
-        if getattr(self.scene, "held_item_visible", True):
+        with self._profile("hud.update_minimap"):
             try:
-                self.sword.draw(pitch_effect=True)
-            except Exception:
-                pass
-        if getattr(self.scene, "compass_visible", True):
-            try:
-                self._compass.draw(pitch_effect=True)
+                self.minimap.update(dt)
             except Exception:
                 pass
 
+    def draw(self) -> None:
+        # Draw held item and compass (world-space sprites with pitch effect)
+        if getattr(self.scene, "held_item_visible", True):
+            with self._profile("hud.draw_sword"):
+                try:
+                    self.sword.draw(pitch_effect=True)
+                except Exception:
+                    pass
+        if getattr(self.scene, "compass_visible", True):
+            with self._profile("hud.draw_compass"):
+                try:
+                    self._compass.draw(pitch_effect=True)
+                except Exception:
+                    pass
+
         if getattr(self.scene, "test_light_visible", True):
-            self.test_light.draw(pitch_effect=True)
+            with self._profile("hud.draw_test_light"):
+                self.test_light.draw(pitch_effect=True)
+
+        if getattr(self.scene, "minimap_visible", True):
+            self._count("hud.minimap.visible")
+            with self._profile("hud.draw_minimap"):
+                try:
+                    self.minimap.draw()
+                except Exception:
+                    pass
+
+    def dispose(self) -> None:
+        try:
+            self.minimap.dispose()
+        except Exception:
+            pass

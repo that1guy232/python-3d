@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 import math
+import time
 
 from OpenGL.GL import (
     glBegin,
@@ -45,12 +46,19 @@ class WorldRenderer:
 
     def __init__(self, scene) -> None:
         self.scene = scene
+        self._fps_label = "FPS:   0.0"
+        self._fps_label_update_s = 0.0
 
     def _profile(self, name: str):
         profiler = getattr(self.scene, "profiler", None)
         if profiler is None or not getattr(profiler, "enabled", False):
             return nullcontext()
         return profiler.section(name)
+
+    def _count(self, name: str, amount: float = 1.0) -> None:
+        profiler = getattr(self.scene, "profiler", None)
+        if profiler is not None and getattr(profiler, "enabled", False):
+            profiler.count(name, amount)
 
     @staticmethod
     def _clamp01(value: float) -> float:
@@ -176,52 +184,95 @@ class WorldRenderer:
         with self._profile("render.world"):
             self.draw()
 
-        if show_hud and text is not None and fps is not None:
+        profiler = getattr(scene, "profiler", None)
+        if profiler is not None and getattr(profiler, "enabled", False):
+            profiler.count("render.hud_text.enabled", float(self._hud_text_will_draw()))
+            profiler.count("render.minimap.visible", float(getattr(scene, "minimap_visible", True)))
+
+        if (
+            show_hud
+            and text is not None
+            and fps is not None
+            and self._hud_text_will_draw()
+        ):
             with self._profile("render.hud_text"):
                 self.draw_hud(text, fps)
 
+    def _hud_text_will_draw(self) -> bool:
+        scene = self.scene
+        return bool(
+            getattr(scene, "inventory_open", False)
+            or getattr(scene, "paused", False)
+            or getattr(scene, "debug_text_visible", True)
+        )
+
     def draw_hud(self, text, fps: float) -> None:  # pragma: no cover - visual
         scene = self.scene
+        fps_label = self._fps_text(fps)
         if getattr(scene, "inventory_open", False):
-            text.begin()
-            text.draw_text(
-                f"FPS: {fps:5.1f}",
-                12,
-                10,
-                key="fps",
-                align="topleft",
-                color=[255, 0, 0, 0],
-            )
-            menu = "Inventory (press I to close)\n\n- Slot 1\n- Slot 2\n- Slot 3"
-            text.draw_text_multiline(
-                menu,
-                WIDTH // 2,
-                HEIGHT // 2,
-                align="center",
-                color=[255, 255, 255, 255],
-            )
-            text.end()
+            self._count("hud_text.inventory_frames")
+            with self._profile("hud_text.begin"):
+                text.begin()
+            try:
+                with self._profile("hud_text.fps"):
+                    text.draw_text(
+                        fps_label,
+                        12,
+                        10,
+                        key="fps",
+                        align="topleft",
+                        color=[255, 0, 0, 0],
+                    )
+                menu = "Inventory (press I to close)\n\n- Slot 1\n- Slot 2\n- Slot 3"
+                with self._profile("hud_text.inventory_menu"):
+                    text.draw_text_multiline(
+                        menu,
+                        WIDTH // 2,
+                        HEIGHT // 2,
+                        align="center",
+                        color=[255, 255, 255, 255],
+                    )
+            finally:
+                with self._profile("hud_text.end"):
+                    text.end()
         elif getattr(scene, "paused", False):
-            self.draw_pause_menu(text)
+            self._count("hud_text.pause_frames")
+            with self._profile("hud_text.pause_menu"):
+                self.draw_pause_menu(text)
         else:
             if not getattr(scene, "debug_text_visible", True):
+                self._count("hud_text.skipped")
                 return
-            text.begin()
-            text.draw_text(
-                f"FPS: {fps:5.1f}",
-                12,
-                10,
-                key="fps",
-                align="topleft",
-                color=[255, 0, 0, 0],
-            )
-            lorem = (
-                "Lore Epsum: Vivamus sed nibh.\n"
-                "Curabitur at leo quis nunc posuere congue.\n"
-                "Praesent tristique sem at augue pharetra."
-            )
-            text.draw_text_multiline(lorem, 12, HEIGHT - 12, align="bottomleft")
-            text.end()
+            self._count("hud_text.debug_frames")
+            with self._profile("hud_text.begin"):
+                text.begin()
+            try:
+                with self._profile("hud_text.fps"):
+                    text.draw_text(
+                        fps_label,
+                        12,
+                        10,
+                        key="fps",
+                        align="topleft",
+                        color=[255, 0, 0, 0],
+                    )
+                lorem = (
+                    "Lore Epsum: Vivamus sed nibh.\n"
+                    "Curabitur at leo quis nunc posuere congue.\n"
+                    "Praesent tristique sem at augue pharetra."
+                )
+                with self._profile("hud_text.debug_lorem"):
+                    text.draw_text_multiline(lorem, 12, HEIGHT - 12, align="bottomleft")
+            finally:
+                with self._profile("hud_text.end"):
+                    text.end()
+
+    def _fps_text(self, fps: float) -> str:
+        now_s = time.perf_counter()
+        if now_s >= self._fps_label_update_s:
+            self._fps_label = f"FPS: {fps:5.1f}"
+            self._fps_label_update_s = now_s + 0.25
+        return self._fps_label
 
     def _active_pause_menu(self):
         if getattr(self.scene, "showing_settings_menu", False):

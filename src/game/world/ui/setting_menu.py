@@ -34,6 +34,7 @@ class SettingMenu(ButtonMenu):
             MenuOption("toggle_audio", self.audio_label, self.toggle_audio),
             MenuOption("toggle_hud", self.hud_label, self.toggle_hud),
             MenuOption("toggle_compass", self.compass_label, self.toggle_compass),
+            MenuOption("toggle_minimap", self.minimap_label, self.toggle_minimap),
             MenuOption("toggle_held_item", self.held_item_label, self.toggle_held_item),
             MenuOption("toggle_test_light", self.test_light_label, self.toggle_test_light),
             MenuOption("toggle_debug_text", self.debug_text_label, self.toggle_debug_text),
@@ -533,6 +534,12 @@ class SettingMenu(ButtonMenu):
 
     def toggle_compass(self, scene) -> None:
         self._toggle_scene_flag(scene, "compass_visible", True)
+
+    def minimap_label(self, scene) -> str:
+        return self._bool_label("Minimap", getattr(scene, "minimap_visible", True))
+
+    def toggle_minimap(self, scene) -> None:
+        self._toggle_scene_flag(scene, "minimap_visible", True)
 
     def held_item_label(self, scene) -> str:
         return self._bool_label("Held Item", getattr(scene, "held_item_visible", True))

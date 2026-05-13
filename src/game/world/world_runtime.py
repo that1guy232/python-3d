@@ -85,6 +85,11 @@ def _update_ambient_birds(scene) -> None:
         Sounds.play(_AMBIENT_BIRDS_KEY, volume=volume, loops=-1, fade_ms=250)
 
 
+def stop_ambient_birds() -> None:
+    """Stop the world-owned ambient bird loop."""
+    Sounds.stop(_AMBIENT_BIRDS_KEY)
+
+
 def _iter_collision_sources(scene):
     seen: set[int] = set()
     for mesh in getattr(scene, "wall_tiles", ()) or ():
@@ -630,6 +635,10 @@ def handle_event(scene, event) -> None:
         scene.showing_settings_menu = False
         pygame.mouse.set_visible(scene.paused)
         pygame.event.set_grab(not scene.paused)
+        return
+
+    if event.type == pygame.KEYDOWN and event.key == pygame.K_m:
+        scene.minimap_visible = not getattr(scene, "minimap_visible", True)
         return
 
     if getattr(scene, "paused", False) and not getattr(scene, "inventory_open", False):

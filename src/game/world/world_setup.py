@@ -197,6 +197,7 @@ def load_assets(scene) -> None:
     scene.vibrance = 1.15
     scene.hud_visible = True
     scene.compass_visible = True
+    scene.minimap_visible = True
     scene.held_item_visible = True
     scene.test_light_visible = True
     scene.debug_text_visible = True

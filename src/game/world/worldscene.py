@@ -1138,6 +1138,7 @@ class WorldScene(Scene):
 
     def dispose(self) -> None:
         """Release scene-owned VBOs before the OpenGL context is destroyed."""
+        world_runtime.stop_ambient_birds()
         disposed: set[int] = set()
 
         def dispose_once(obj) -> None:
@@ -1159,6 +1160,7 @@ class WorldScene(Scene):
             "ground_mesh",
             "road",
             "decal_batch",
+            "_hud",
         ):
             dispose_once(getattr(self, attr_name, None))
 

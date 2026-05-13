@@ -67,7 +67,7 @@ delegates to `WorldRenderer.render()`, which:
 - Sets fog, clear color, projection, and camera transforms.
 - Draws sky/clouds before world geometry.
 - Draws terrain, fences, decals, walls, roads, doors, windows, polygons,
-  entities, sprites, shadows, and HUD.
+  entities, sprites, shadows, the minimap, and HUD.
 - Uses static VBO batches when available, falling back to immediate rendering
   for objects that need it.
 
@@ -75,9 +75,10 @@ delegates to `WorldRenderer.render()`, which:
 
 `Engine.handle_events()` handles quit/F3/F4 globally, forwards events to the
 scene, and sends raw mouse deltas through `scene.apply_mouse_delta()`.
-`world_runtime.handle_event()` owns pause/inventory toggles, pause-menu mouse
-input, and focused entity interaction. `PlayerCameraController` owns WASD,
-sprint, jump, mouse-look targets, and collision slides.
+`world_runtime.handle_event()` owns pause/inventory toggles, the `M` minimap
+toggle, pause-menu mouse input, and focused entity interaction.
+`PlayerCameraController` owns WASD, sprint, jump, mouse-look targets, and
+collision slides.
 
 ### Cleanup
 
@@ -180,8 +181,9 @@ collision data while the GL context still exists.
 | File | Quick docs |
 | --- | --- |
 | `src/game/world/ui/__init__.py` | World UI package exports. |
-| `src/game/world/ui/world_hud.py` | World HUD owner for compass, held item, sway/headbob offsets, shade overlay, and HUD updates/drawing. |
+| `src/game/world/ui/world_hud.py` | World HUD owner for compass, minimap, held item, sway/headbob offsets, shade overlay, and HUD updates/drawing. |
 | `src/game/world/ui/compass_overlay.py` | Compass overlay using base/needle textures in screen space. |
+| `src/game/world/ui/minimap_overlay.py` | Screen-space minimap with layered roads, building footprints, goblin markers, and player heading. |
 | `src/game/world/ui/pause_menu.py` | Pause-menu options and actions. |
 | `src/game/world/ui/setting_menu.py` | Settings menu sliders/toggles that update scene config live. |
 
@@ -212,6 +214,8 @@ collision data while the GL context still exists.
 - Add player movement changes in `game.world.player_controller` when they affect
   input or collision.
 - Add rendering-only world pass changes in `game.world.world_renderer`.
+- Add minimap markers by registering a layer on `WorldHUD.minimap`; layer draw
+  callbacks receive a `MiniMapContext` with world-to-map coordinate helpers.
 - Add static lighting rules in `world_lighting_plan.py` and reusable lighting
   math in `engine.rendering.lighting`.
 

@@ -27,6 +27,8 @@ class _TimingStat:
 class PerformanceLogger:
     """Collect and periodically print frame-time section costs."""
 
+    diagnostic_prefixes = ("hud.", "hud_text.", "minimap.", "render.hud_text", "render.minimap")
+
     def __init__(
         self,
         *,
@@ -150,7 +152,9 @@ class PerformanceLogger:
             rows.append((avg_per_frame_s, name, avg_per_hit_s, stat.max_s, hits_per_frame))
 
         rows.sort(reverse=True)
+        shown_names = set()
         for avg_frame_s, name, avg_hit_s, max_s, hits_per_frame in rows[: self.top_n]:
+            shown_names.add(name)
             print(
                 "[perf] "
                 f"{name[:30]:30} "
@@ -160,14 +164,46 @@ class PerformanceLogger:
                 f"{hits_per_frame:10.2f}"
             )
 
+        diagnostic_rows = [
+            row
+            for row in rows
+            if row[1] not in shown_names
+            and row[1].startswith(self.diagnostic_prefixes)
+        ][: self.top_n]
+        if diagnostic_rows:
+            print("[perf] diagnostics")
+            for avg_frame_s, name, avg_hit_s, max_s, hits_per_frame in diagnostic_rows:
+                print(
+                    "[perf] "
+                    f"{name[:30]:30} "
+                    f"{avg_frame_s * 1000.0:8.3f} "
+                    f"{avg_hit_s * 1000.0:8.3f} "
+                    f"{max_s * 1000.0:8.3f} "
+                    f"{hits_per_frame:10.2f}"
+                )
+
         if self._counters:
             print("[perf] counters                        avg/frame")
-            for name, value in sorted(
+            counter_rows = sorted(
                 self._counters.items(),
                 key=lambda item: item[1],
                 reverse=True,
-            )[: self.top_n]:
+            )
+            shown_counter_names = set()
+            for name, value in counter_rows[: self.top_n]:
+                shown_counter_names.add(name)
                 print("[perf] " f"{name[:30]:30} {value / self._frame_count:9.2f}")
+
+            diagnostic_counters = [
+                (name, value)
+                for name, value in counter_rows
+                if name not in shown_counter_names
+                and name.startswith(self.diagnostic_prefixes)
+            ][: self.top_n]
+            if diagnostic_counters:
+                print("[perf] diagnostic counters")
+                for name, value in diagnostic_counters:
+                    print("[perf] " f"{name[:30]:30} {value / self._frame_count:9.2f}")
 
     def _clear_interval(self, now_s: float) -> None:
         self._interval_start_s = now_s
