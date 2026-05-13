@@ -70,6 +70,8 @@ class WorldScene(Scene):
         self._texture_lighting_sync_key = None
         self._texture_lighting_sync_result = False
         self._collision_spatial_index = None
+        self.battle_mode = False
+        self.active_battle_goblin = None
 
         self.renderer = WorldRenderer(self)
         self._initialized = False
@@ -282,6 +284,99 @@ class WorldScene(Scene):
                     self.wall_tiles.append(mesh)
 
         return entity
+
+    def remove_entity(self, entity: Entity) -> None:
+        """Unregister a runtime entity and its scene-facing resources."""
+        if entity is None:
+            return
+
+        kill = getattr(entity, "kill", None)
+        if callable(kill):
+            kill()
+        else:
+            setattr(entity, "enabled", False)
+            setattr(entity, "visible", False)
+
+        def without_item(values):
+            return [value for value in (values or []) if value is not entity]
+
+        for attr_name in (
+            "entities",
+            "immediate_entities",
+            "goblins",
+            "chests",
+            "showcase_chests",
+        ):
+            if hasattr(self, attr_name):
+                setattr(self, attr_name, without_item(getattr(self, attr_name)))
+
+        get_sprites = getattr(entity, "get_sprites", None)
+        if callable(get_sprites):
+            sprites = tuple(get_sprites() or ())
+            if sprites:
+                sprite_ids = {id(sprite) for sprite in sprites}
+                self.sprite_items = [
+                    sprite
+                    for sprite in self.sprite_items
+                    if id(sprite) not in sprite_ids
+                ]
+
+        get_collision_meshes = getattr(entity, "get_collision_meshes", None)
+        if callable(get_collision_meshes):
+            meshes = tuple(get_collision_meshes() or ())
+            if meshes:
+                mesh_ids = {id(mesh) for mesh in meshes}
+                self.wall_tiles = [
+                    mesh for mesh in self.wall_tiles if id(mesh) not in mesh_ids
+                ]
+                self.invalidate_collision_index()
+
+        self._sprite_update_cache = None
+
+    def start_battle(self, goblin: Entity) -> bool:
+        if goblin is None or not getattr(goblin, "enabled", True):
+            return False
+
+        self.battle_mode = True
+        self.active_battle_goblin = goblin
+        self.paused = False
+        self.inventory_open = False
+        self.showing_settings_menu = False
+
+        controller = getattr(self, "_camera_controller", None)
+        look_at = getattr(controller, "look_at", None)
+        if callable(look_at):
+            position = getattr(goblin, "position", None)
+            if position is not None:
+                look_at(position)
+
+        import pygame
+
+        self.mouse_visible = True
+        self.mouse_grabbed = False
+        pygame.mouse.set_visible(True)
+        pygame.event.set_grab(False)
+        return True
+
+    def end_battle(self) -> None:
+        goblin = getattr(self, "active_battle_goblin", None)
+        if goblin is not None:
+            self.remove_entity(goblin)
+
+        self.active_battle_goblin = None
+        self.battle_mode = False
+
+        controller = getattr(self, "_camera_controller", None)
+        sync_target = getattr(controller, "sync_rotation_target_to_camera", None)
+        if callable(sync_target):
+            sync_target()
+
+        import pygame
+
+        self.mouse_visible = False
+        self.mouse_grabbed = True
+        pygame.mouse.set_visible(False)
+        pygame.event.set_grab(True)
 
     def refresh_immediate_entities(self) -> None:
         self.immediate_entities = [
@@ -666,6 +761,12 @@ class WorldScene(Scene):
 
     def _compute_pause_buttons(self, width: int = WIDTH, height: int = HEIGHT):
         return self.renderer.compute_pause_buttons(width=width, height=height)
+
+    def _compute_battle_buttons(self, width: int = WIDTH, height: int = HEIGHT):
+        return self.renderer.compute_battle_buttons(width=width, height=height)
+
+    def _handle_battle_click(self, pos):
+        return self.renderer.handle_battle_click(pos)
 
     def _handle_pause_click(self, pos):
         return self.renderer.handle_pause_click(pos)

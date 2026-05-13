@@ -285,6 +285,18 @@ class Goblin(Entity):
     def draw(self, camera=None) -> None:  # pragma: no cover - visual
         self._draw_shadow()
 
+    def kill(self) -> None:
+        self.enabled = False
+        self.visible = False
+        channel = self._sound_channel
+        if channel is not None:
+            try:
+                channel.stop()
+            except Exception:
+                pass
+        self._sound_channel = None
+        self._sound_key = None
+
     def update(self, dt: float) -> None:
         dt = max(0.0, float(dt))
         if dt <= 0.0:

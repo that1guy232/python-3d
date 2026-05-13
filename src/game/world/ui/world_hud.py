@@ -78,6 +78,9 @@ class WorldHUD:
         self._compass.position = self.scene.view_space_position(
             dist=5.0, nx=-0.85, ny=0.85
         )
+        self.minimap.position = self.scene.view_space_position(
+            dist=5.0, nx=0.82, ny=0.82
+        )
 
         # Apply headbob offsets if the active controller is enabled.
         hb = getattr(self.scene, "_headbob", None)
@@ -87,6 +90,7 @@ class WorldHUD:
             off_x = off_x * 0.75
             self.sword.position += Vector3(+off_x, +off_y, 0)
             self._compass.position += Vector3(+off_x * 1, +off_y * 1, 0)
+            self.minimap.position += Vector3(+off_x * 1, +off_y * 1, 0)
        
         # Apply mouse-look sway from scene's sway controller (if present)
         try:
@@ -105,6 +109,11 @@ class WorldHUD:
                     (right * sway_right) + (up * sway_up) + (forward * sway_forward)
                 )
                 self._compass.position += (
+                    right * (sway_right * 0.6)
+                    + up * (sway_up * 0.6)
+                    + forward * (sway_forward * 0.6)
+                )
+                self.minimap.position += (
                     right * (sway_right * 0.6)
                     + up * (sway_up * 0.6)
                     + forward * (sway_forward * 0.6)
@@ -149,7 +158,7 @@ class WorldHUD:
             self._count("hud.minimap.visible")
             with self._profile("hud.draw_minimap"):
                 try:
-                    self.minimap.draw()
+                    self.minimap.draw(pitch_effect=True)
                 except Exception:
                     pass
 

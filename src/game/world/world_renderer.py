@@ -201,7 +201,8 @@ class WorldRenderer:
     def _hud_text_will_draw(self) -> bool:
         scene = self.scene
         return bool(
-            getattr(scene, "inventory_open", False)
+            getattr(scene, "battle_mode", False)
+            or getattr(scene, "inventory_open", False)
             or getattr(scene, "paused", False)
             or getattr(scene, "debug_text_visible", True)
         )
@@ -209,7 +210,11 @@ class WorldRenderer:
     def draw_hud(self, text, fps: float) -> None:  # pragma: no cover - visual
         scene = self.scene
         fps_label = self._fps_text(fps)
-        if getattr(scene, "inventory_open", False):
+        if getattr(scene, "battle_mode", False):
+            self._count("hud_text.battle_frames")
+            with self._profile("hud_text.battle_menu"):
+                self.draw_battle_menu(text)
+        elif getattr(scene, "inventory_open", False):
             self._count("hud_text.inventory_frames")
             with self._profile("hud_text.begin"):
                 text.begin()
@@ -278,6 +283,62 @@ class WorldRenderer:
         if getattr(self.scene, "showing_settings_menu", False):
             return getattr(self.scene, "setting_menu", None)
         return getattr(self.scene, "pause_menu", None)
+
+    def draw_battle_menu(self, text) -> None:  # pragma: no cover - visual
+        import pygame
+
+        text.begin()
+        glDisable(GL_TEXTURE_2D)
+        glColor4f(0.0, 0.0, 0.0, 0.58)
+        glBegin(GL_QUADS)
+        glVertex2f(0, 0)
+        glVertex2f(WIDTH, 0)
+        glVertex2f(WIDTH, HEIGHT)
+        glVertex2f(0, HEIGHT)
+        glEnd()
+
+        menu = getattr(self.scene, "battle_menu", None)
+        buttons = menu.compute_buttons() if menu is not None else []
+        mx, my = pygame.mouse.get_pos()
+        for button in buttons:
+            x, y, w, h = button["rect"]
+            hovered = x <= mx <= x + w and y <= my <= y + h
+
+            glColor4f(0.15, 0.12, 0.11, 0.96 if hovered else 0.88)
+            glBegin(GL_QUADS)
+            glVertex2f(x, y)
+            glVertex2f(x + w, y)
+            glVertex2f(x + w, y + h)
+            glVertex2f(x, y + h)
+            glEnd()
+
+            glColor4f(0.42, 0.2, 0.16, 0.9 if hovered else 0.72)
+            glBegin(GL_QUADS)
+            glVertex2f(x + 2, y + 2)
+            glVertex2f(x + w - 2, y + 2)
+            glVertex2f(x + w - 2, y + h - 2)
+            glVertex2f(x + 2, y + h - 2)
+            glEnd()
+
+        glEnable(GL_TEXTURE_2D)
+        text.draw_text(
+            "Battle mode",
+            WIDTH // 2,
+            HEIGHT // 2 - 86,
+            color=(255, 245, 230, 255),
+            align="center",
+        )
+        for button in buttons:
+            x, y, w, h = button["rect"]
+            text.draw_text(
+                button["label"],
+                x + w / 2,
+                y + h / 2,
+                color=(255, 255, 255, 255),
+                align="center",
+            )
+
+        text.end()
 
     def draw_pause_menu(self, text) -> None:  # pragma: no cover - visual
         import pygame
@@ -400,6 +461,17 @@ class WorldRenderer:
         if menu is None:
             return []
         return menu.compute_buttons(width=width, height=height)
+
+    def compute_battle_buttons(self, width: int = WIDTH, height: int = HEIGHT):
+        menu = getattr(self.scene, "battle_menu", None)
+        if menu is None:
+            return []
+        return menu.compute_buttons(width=width, height=height)
+
+    def handle_battle_click(self, pos) -> None:
+        menu = getattr(self.scene, "battle_menu", None)
+        if menu is not None:
+            menu.handle_click(pos)
 
     def handle_pause_click(self, pos) -> None:
         menu = self._active_pause_menu()

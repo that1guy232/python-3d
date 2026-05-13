@@ -370,6 +370,78 @@ def _sprite_update_callables(scene, sprites) -> tuple:
     return updates
 
 
+def _goblin_battle_candidate(scene):
+    camera = getattr(scene, "camera", None)
+    player_position = getattr(camera, "position", None)
+    if player_position is None:
+        return None
+
+    trigger_distance = max(
+        0.0,
+        float(
+            getattr(
+                scene,
+                "goblin_battle_trigger_distance",
+                GOBLIN_BATTLE_TRIGGER_DISTANCE,
+            )
+        ),
+    )
+    trigger_distance_sq = trigger_distance * trigger_distance
+
+    best_goblin = None
+    best_distance_sq = trigger_distance_sq
+    for goblin in getattr(scene, "goblins", ()) or ():
+        if not getattr(goblin, "enabled", True):
+            continue
+        position = getattr(goblin, "position", None)
+        if position is None:
+            continue
+
+        dx = float(position.x) - float(player_position.x)
+        dz = float(position.z) - float(player_position.z)
+        distance_sq = dx * dx + dz * dz
+        if distance_sq <= best_distance_sq:
+            best_distance_sq = distance_sq
+            best_goblin = goblin
+
+    return best_goblin
+
+
+def _start_battle_if_goblin_close(scene) -> bool:
+    if getattr(scene, "battle_mode", False):
+        return True
+    goblin = _goblin_battle_candidate(scene)
+    if goblin is None:
+        return False
+
+    start_battle = getattr(scene, "start_battle", None)
+    if not callable(start_battle):
+        return False
+    return bool(start_battle(goblin))
+
+
+def _update_battle_camera(scene, dt: float) -> None:
+    controller = getattr(scene, "_camera_controller", None)
+    update_rotation = getattr(controller, "update_rotation_only", None)
+    if not callable(update_rotation):
+        return
+
+    smooth_hz = max(
+        0.001,
+        float(
+            getattr(
+                scene,
+                "goblin_battle_look_smooth_hz",
+                GOBLIN_BATTLE_LOOK_SMOOTH_HZ,
+            )
+        ),
+    )
+    try:
+        update_rotation(dt, smooth_hz=smooth_hz)
+    except TypeError:
+        update_rotation(dt)
+
+
 def _entity_interaction_position(entity):
     get_position = getattr(entity, "get_interaction_position", None)
     if callable(get_position):
@@ -521,6 +593,16 @@ def view_space_position(
 
 
 def update(scene, dt: float) -> None:
+    if getattr(scene, "battle_mode", False):
+        with _profile(scene, "update.battle_camera"):
+            _update_battle_camera(scene, dt)
+        with _profile(scene, "update.battle_hud"):
+            try:
+                scene._hud.update(dt)
+            except Exception:
+                pass
+        return
+
     if getattr(scene, "paused", False) or getattr(scene, "inventory_open", False):
         with _profile(scene, "update.paused_hud"):
             try:
@@ -540,6 +622,13 @@ def update(scene, dt: float) -> None:
         scene._sway_controller.update(dt)
     with _profile(scene, "update.entities"):
         _update_entities(scene, dt)
+        if _start_battle_if_goblin_close(scene):
+            _update_battle_camera(scene, dt)
+            try:
+                scene._hud.update(dt)
+            except Exception:
+                pass
+            return
     with _profile(scene, "update.sprites"):
         _update_sprites(scene, dt)
 
@@ -613,6 +702,15 @@ def update(scene, dt: float) -> None:
 
 
 def handle_event(scene, event) -> None:
+    if getattr(scene, "battle_mode", False):
+        if event.type == pygame.MOUSEBUTTONDOWN and getattr(event, "button", None) == 1:
+            pos = getattr(event, "pos", pygame.mouse.get_pos())
+            scene._handle_battle_click(pos)
+            return
+        if event.type == pygame.MOUSEMOTION:
+            scene._last_mouse_pos = getattr(event, "pos", pygame.mouse.get_pos())
+            return
+        return
 
     if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
         if getattr(scene, "inventory_open", False):
@@ -674,7 +772,11 @@ def handle_event(scene, event) -> None:
 
 
 def apply_mouse_delta(scene, dx: float, dy: float, dt: float | None = None) -> None:
-    if getattr(scene, "paused", False) or getattr(scene, "inventory_open", False):
+    if (
+        getattr(scene, "battle_mode", False)
+        or getattr(scene, "paused", False)
+        or getattr(scene, "inventory_open", False)
+    ):
         return
     try:
         try:

@@ -183,7 +183,7 @@ collision data while the GL context still exists.
 | `src/game/world/ui/__init__.py` | World UI package exports. |
 | `src/game/world/ui/world_hud.py` | World HUD owner for compass, minimap, held item, sway/headbob offsets, shade overlay, and HUD updates/drawing. |
 | `src/game/world/ui/compass_overlay.py` | Compass overlay using base/needle textures in screen space. |
-| `src/game/world/ui/minimap_overlay.py` | Screen-space minimap with layered roads, building footprints, goblin markers, and player heading. |
+| `src/game/world/ui/minimap_overlay.py` | Camera-facing world-space minimap billboard with layered roads, building footprints, goblin markers, and player heading. |
 | `src/game/world/ui/pause_menu.py` | Pause-menu options and actions. |
 | `src/game/world/ui/setting_menu.py` | Settings menu sliders/toggles that update scene config live. |
 

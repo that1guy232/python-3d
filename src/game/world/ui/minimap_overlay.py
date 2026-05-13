@@ -1,4 +1,4 @@
-"""Screen-space minimap overlay for world-space features."""
+"""World-space minimap billboard for world-space features."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from typing import Callable
 
 import numpy as np
 import pygame
+from pygame.math import Vector3
 from OpenGL.GL import (
     GL_ARRAY_BUFFER,
     GL_BLEND,
@@ -15,8 +16,6 @@ from OpenGL.GL import (
     GL_DEPTH_TEST,
     GL_FLOAT,
     GL_LINEAR,
-    GL_MODELVIEW,
-    GL_PROJECTION,
     GL_QUADS,
     GL_RGBA,
     GL_SRC_ALPHA,
@@ -35,6 +34,7 @@ from OpenGL.GL import (
     glBlendFunc,
     glColor4f,
     glDeleteTextures,
+    glDepthMask,
     glDisable,
     glDisableClientState,
     glDrawArrays,
@@ -42,24 +42,22 @@ from OpenGL.GL import (
     glEnableClientState,
     glEnd,
     glGenTextures,
-    glLoadIdentity,
-    glMatrixMode,
-    glOrtho,
-    glPopMatrix,
-    glPushMatrix,
     glTexCoord2f,
     glTexImage2D,
     glTexParameteri,
-    glVertex2f,
+    glVertex3f,
     glVertexPointer,
 )
 
-from game.config import HEIGHT, WIDTH
+from engine.core.consts import FORWARD, RIGHT, WORLD_UP
+
+
+_EPS2 = 1e-12
 
 
 @dataclass(frozen=True)
 class MiniMapContext:
-    """Resolved screen/world geometry passed to minimap layer callbacks."""
+    """Resolved local map geometry passed to minimap layer callbacks."""
 
     scene: object
     panel_x: float
@@ -95,11 +93,11 @@ class MiniMapLayer:
 
 
 class MiniMapOverlay:
-    """Draw a compact top-down view of selected world layers.
+    """Draw a compact top-down world map as a camera-facing billboard.
 
-    The built-in roads, buildings, goblins, and player layers are composited
-    into one tiny texture. That keeps the normal per-frame draw path to one
-    textured quad, with the moving markers refreshed at a capped rate.
+    The built-in roads/buildings are cached into one small texture. Live
+    markers are drawn on the same billboard plane so the minimap behaves like
+    the compass/sword HUD sprites instead of a hard-pinned screen overlay.
     """
 
     _DEFAULT_LAYER_KEYS = frozenset(("roads", "buildings", "goblins", "player"))
@@ -109,13 +107,15 @@ class MiniMapOverlay:
         scene,
         *,
         size: float = 230.0,
-        margin: float = 18.0,
         padding: float = 12.0,
+        world_size: tuple[float, float] = (1.75, 1.75),
     ) -> None:
         self.scene = scene
         self.size = float(size)
-        self.margin = float(margin)
         self.padding = float(padding)
+        self.world_size = (float(world_size[0]), float(world_size[1]))
+        self.camera = getattr(scene, "camera", None)
+        self.position = Vector3(0.0, 0.0, 0.0)
         self._layers: dict[str, MiniMapLayer] = {
             "roads": MiniMapLayer("roads"),
             "buildings": MiniMapLayer("buildings"),
@@ -125,7 +125,7 @@ class MiniMapOverlay:
         self._texture_id = 0
         self._static_surface: pygame.Surface | None = None
         self._static_cache_key = None
-        self._goblin_marker_vertices = np.empty((0, 2), dtype=np.float32)
+        self._goblin_marker_vertices = np.empty((0, 3), dtype=np.float32)
 
     def update(self, dt: float) -> None:
         return None
@@ -177,31 +177,37 @@ class MiniMapOverlay:
     def layers(self) -> tuple[MiniMapLayer, ...]:
         return tuple(self._layers.values())
 
-    def draw(self) -> None:  # pragma: no cover - visual
+    def draw(self, pitch_effect: bool = True) -> None:  # pragma: no cover - visual
         self._count("minimap.draw_calls")
         context = self._build_context()
         if context is None:
             self._count("minimap.skipped_context")
             return
 
+        axes = self._billboard_axes(pitch_effect=pitch_effect)
+        if axes is None:
+            self._count("minimap.skipped_axes")
+            return
+        right, up = axes
+
         with self._profile("minimap.ensure_texture"):
             self._ensure_texture(context)
 
-        self._begin_overlay()
+        self._begin_billboard()
         try:
             with self._profile("minimap.draw_texture"):
-                self._draw_texture(context)
+                self._draw_texture(context, right, up)
             glDisable(GL_TEXTURE_2D)
             if self._layer_visible("goblins"):
                 with self._profile("minimap.draw_goblin_markers"):
-                    self._draw_goblin_markers(context)
+                    self._draw_goblin_markers(context, right, up)
             if self._layer_visible("player"):
                 with self._profile("minimap.draw_player_marker"):
-                    self._draw_player_marker(context)
+                    self._draw_player_marker(context, right, up)
             with self._profile("minimap.custom_layers"):
                 self._draw_custom_layers(context)
         finally:
-            self._end_overlay()
+            self._end_billboard()
 
     def _profile(self, name: str):
         profiler = getattr(self.scene, "profiler", None)
@@ -222,14 +228,13 @@ class MiniMapOverlay:
 
         world_w = max(1.0, float(max_x) - float(min_x))
         world_h = max(1.0, float(max_z) - float(min_z))
-        max_panel = max(64.0, min(WIDTH, HEIGHT) - self.margin * 2)
-        panel_size = int(round(max(120.0, min(self.size, max_panel))))
+        panel_size = int(round(max(120.0, self.size)))
         map_size = max(1.0, panel_size - self.padding * 2)
         scale = min(map_size / world_w, map_size / world_h)
         map_w = world_w * scale
         map_h = world_h * scale
-        panel_x = WIDTH - self.margin - panel_size
-        panel_y = self.margin
+        panel_x = 0.0
+        panel_y = 0.0
         map_x = panel_x + (panel_size - map_w) * 0.5
         map_y = panel_y + (panel_size - map_h) * 0.5
 
@@ -246,29 +251,40 @@ class MiniMapOverlay:
             bounds=(float(min_x), float(max_x), float(min_z), float(max_z)),
         )
 
-    @staticmethod
-    def _begin_overlay() -> None:
-        glMatrixMode(GL_PROJECTION)
-        glPushMatrix()
-        glLoadIdentity()
-        glOrtho(0, WIDTH, HEIGHT, 0, -1, 1)
-        glMatrixMode(GL_MODELVIEW)
-        glPushMatrix()
-        glLoadIdentity()
+    def _billboard_axes(self, *, pitch_effect: bool) -> tuple[Vector3, Vector3] | None:
+        camera = self.camera
+        right = getattr(camera, "_right", RIGHT)
+        forward = getattr(camera, "_forward", FORWARD)
+        if pitch_effect:
+            r = right.normalize() if right.length_squared() > _EPS2 else None
+            f = forward.normalize() if forward.length_squared() > _EPS2 else None
+            if not r or not f:
+                return None
+            up = r.cross(f)
+            up = up.normalize() if up.length_squared() > _EPS2 else WORLD_UP
+            return r, up
 
+        r_flat = Vector3(right.x, 0.0, right.z)
+        if r_flat.length_squared() <= _EPS2:
+            f_flat = Vector3(forward.x, 0.0, forward.z)
+            if f_flat.length_squared() <= _EPS2:
+                return None
+            r_flat = WORLD_UP.cross(f_flat)
+        return r_flat.normalize(), WORLD_UP
+
+    @staticmethod
+    def _begin_billboard() -> None:
         glDisable(GL_DEPTH_TEST)
+        glDepthMask(False)
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
     @staticmethod
-    def _end_overlay() -> None:
+    def _end_billboard() -> None:
         glDisable(GL_TEXTURE_2D)
         glDisable(GL_BLEND)
+        glDepthMask(True)
         glEnable(GL_DEPTH_TEST)
-        glPopMatrix()
-        glMatrixMode(GL_PROJECTION)
-        glPopMatrix()
-        glMatrixMode(GL_MODELVIEW)
 
     def _layer_visible(self, key: str) -> bool:
         layer = self._layers.get(key)
@@ -366,13 +382,23 @@ class MiniMapOverlay:
         pygame.draw.rect(surface, (230, 242, 235, 92), (0, 0, size, size), width=1)
         return surface
 
-    def _draw_texture(self, context: MiniMapContext) -> None:
+    def _draw_texture(
+        self,
+        context: MiniMapContext,
+        right: Vector3,
+        up: Vector3,
+    ) -> None:
         if not self._texture_id:
             return
 
-        x = context.panel_x
-        y = context.panel_y
-        size = context.panel_size
+        w, h = self.world_size
+        hw = w * 0.5
+        hh = h * 0.5
+        center = self.position
+        tl = center - right * hw + up * hh
+        tr = center + right * hw + up * hh
+        br = center + right * hw - up * hh
+        bl = center - right * hw - up * hh
 
         glEnable(GL_TEXTURE_2D)
         glBindTexture(GL_TEXTURE_2D, self._texture_id)
@@ -380,13 +406,13 @@ class MiniMapOverlay:
         glBegin(GL_QUADS)
         try:
             glTexCoord2f(0.0, 1.0)
-            glVertex2f(x, y)
+            glVertex3f(tl.x, tl.y, tl.z)
             glTexCoord2f(1.0, 1.0)
-            glVertex2f(x + size, y)
+            glVertex3f(tr.x, tr.y, tr.z)
             glTexCoord2f(1.0, 0.0)
-            glVertex2f(x + size, y + size)
+            glVertex3f(br.x, br.y, br.z)
             glTexCoord2f(0.0, 0.0)
-            glVertex2f(x, y + size)
+            glVertex3f(bl.x, bl.y, bl.z)
         finally:
             glEnd()
 
@@ -443,11 +469,15 @@ class MiniMapOverlay:
     def _draw_goblin_markers(
         self,
         context: MiniMapContext,
+        right: Vector3,
+        up: Vector3,
     ) -> None:
         marker_radius = 3.5
         drawn = 0
         goblins = getattr(context.scene, "goblins", ()) or ()
         vertices = self._goblin_vertices_for_capacity(len(goblins))
+        radius_right = right * ((marker_radius / context.panel_size) * self.world_size[0])
+        radius_up = up * ((marker_radius / context.panel_size) * self.world_size[1])
 
         for goblin in goblins:
             if not getattr(goblin, "enabled", True):
@@ -460,11 +490,12 @@ class MiniMapOverlay:
                 continue
 
             x, y = context.world_to_map(position.x, position.z)
+            center = self._panel_to_world(context, x, y, right, up)
             start = drawn * 4
-            vertices[start + 0] = (x, y - marker_radius)
-            vertices[start + 1] = (x + marker_radius, y)
-            vertices[start + 2] = (x, y + marker_radius)
-            vertices[start + 3] = (x - marker_radius, y)
+            vertices[start + 0] = self._vector_to_tuple(center + radius_up)
+            vertices[start + 1] = self._vector_to_tuple(center + radius_right)
+            vertices[start + 2] = self._vector_to_tuple(center - radius_up)
+            vertices[start + 3] = self._vector_to_tuple(center - radius_right)
             drawn += 1
 
         if drawn <= 0:
@@ -476,7 +507,7 @@ class MiniMapOverlay:
         glBindBuffer(GL_ARRAY_BUFFER, 0)
         glEnableClientState(GL_VERTEX_ARRAY)
         try:
-            glVertexPointer(2, GL_FLOAT, 0, vertices[:vertex_count])
+            glVertexPointer(3, GL_FLOAT, 0, vertices[:vertex_count])
             glDrawArrays(GL_QUADS, 0, vertex_count)
         finally:
             glDisableClientState(GL_VERTEX_ARRAY)
@@ -488,12 +519,14 @@ class MiniMapOverlay:
             return self._goblin_marker_vertices
 
         capacity = max(64, vertex_count, int(self._goblin_marker_vertices.shape[0] * 1.5))
-        self._goblin_marker_vertices = np.empty((capacity, 2), dtype=np.float32)
+        self._goblin_marker_vertices = np.empty((capacity, 3), dtype=np.float32)
         return self._goblin_marker_vertices
 
     def _draw_player_marker(
         self,
         context: MiniMapContext,
+        right_axis: Vector3,
+        up_axis: Vector3,
     ) -> None:
         camera = getattr(context.scene, "camera", None)
         position = getattr(camera, "position", None)
@@ -511,23 +544,42 @@ class MiniMapOverlay:
         radius = 8.0
         right_x = fz
         right_y = -fx
-        tip = (x + fx * radius, y + fz * radius)
-        left = (
+        tip_2d = (x + fx * radius, y + fz * radius)
+        left_2d = (
             x - fx * radius * 0.65 - right_x * radius * 0.55,
             y - fz * radius * 0.65 - right_y * radius * 0.55,
         )
-        right = (
+        right_2d = (
             x - fx * radius * 0.65 + right_x * radius * 0.55,
             y - fz * radius * 0.65 + right_y * radius * 0.55,
         )
+        tip = self._panel_to_world(context, tip_2d[0], tip_2d[1], right_axis, up_axis)
+        left = self._panel_to_world(context, left_2d[0], left_2d[1], right_axis, up_axis)
+        right = self._panel_to_world(context, right_2d[0], right_2d[1], right_axis, up_axis)
         glColor4f(0.28, 0.76, 1.0, 0.98)
         glBegin(GL_TRIANGLES)
         try:
-            glVertex2f(*tip)
-            glVertex2f(*left)
-            glVertex2f(*right)
+            glVertex3f(tip.x, tip.y, tip.z)
+            glVertex3f(left.x, left.y, left.z)
+            glVertex3f(right.x, right.y, right.z)
         finally:
             glEnd()
+
+    def _panel_to_world(
+        self,
+        context: MiniMapContext,
+        x: float,
+        y: float,
+        right: Vector3,
+        up: Vector3,
+    ) -> Vector3:
+        px = ((float(x) / context.panel_size) - 0.5) * self.world_size[0]
+        py = (0.5 - (float(y) / context.panel_size)) * self.world_size[1]
+        return self.position + right * px + up * py
+
+    @staticmethod
+    def _vector_to_tuple(value: Vector3) -> tuple[float, float, float]:
+        return (float(value.x), float(value.y), float(value.z))
 
     def _world_to_local(
         self,

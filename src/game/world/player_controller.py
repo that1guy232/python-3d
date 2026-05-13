@@ -33,6 +33,54 @@ class PlayerCameraController:
         self.rot_target_y = float(camera.rotation.y)
         self.rot_smooth_hz = float(rot_smooth_hz)
 
+    @staticmethod
+    def _wrap_pi(angle: float) -> float:
+        return (float(angle) + math.pi) % math.tau - math.pi
+
+    @staticmethod
+    def _clamp_pitch(pitch: float) -> float:
+        return max(-math.pi / 2 + 0.001, min(math.pi / 2 - 0.001, float(pitch)))
+
+    def sync_rotation_target_to_camera(self) -> None:
+        self.rot_target_x = float(self.camera.rotation.x)
+        self.rot_target_y = float(self.camera.rotation.y)
+
+    def set_rotation_target(
+        self,
+        pitch: float,
+        yaw: float,
+        *,
+        shortest_yaw: bool = True,
+    ) -> None:
+        self.rot_target_x = self._clamp_pitch(pitch)
+        if shortest_yaw:
+            current_yaw = float(self.camera.rotation.y)
+            self.rot_target_y = current_yaw + self._wrap_pi(float(yaw) - current_yaw)
+        else:
+            self.rot_target_y = float(yaw)
+
+    def look_at(self, target) -> bool:
+        try:
+            dx = float(target.x) - float(self.camera.position.x)
+            dy = float(target.y) - float(self.camera.position.y)
+            dz = float(target.z) - float(self.camera.position.z)
+        except Exception:
+            return False
+
+        horizontal = math.hypot(dx, dz)
+        distance = math.hypot(horizontal, dy)
+        if distance <= 1e-6:
+            return False
+
+        pitch = math.asin(max(-1.0, min(1.0, dy / distance)))
+        yaw = (
+            float(self.camera.rotation.y)
+            if horizontal <= 1e-6
+            else math.atan2(-dx, -dz)
+        )
+        self.set_rotation_target(pitch, yaw)
+        return True
+
     def _eye_to_foot_offset(self) -> float:
         return CAMERA_GROUND_OFFSET + float(
             getattr(self.camera, "manual_height_offset", 0.0)
@@ -205,7 +253,7 @@ class PlayerCameraController:
         sensitivity = float(getattr(self.scene, "mouse_sensitivity", MOUSE_SENSITIVITY))
         self.rot_target_y -= dx * sensitivity
         cand_x = self.rot_target_x - dy * sensitivity
-        self.rot_target_x = max(-math.pi / 2 + 0.001, min(math.pi / 2 - 0.001, cand_x))
+        self.rot_target_x = self._clamp_pitch(cand_x)
         # Forward mouse delta into sway controller if present
         sc = getattr(self.scene, "_sway_controller", None)
         if sc is not None:
@@ -219,14 +267,15 @@ class PlayerCameraController:
             if dx != 0 or dy != 0:
                 hb.notify_mouse_moved()
 
-    def update(self, dt: float) -> Tuple[bool, bool]:
-        """Update rotation smoothing, movement, and collision.
-
-        Returns (moving, sprinting) booleans for callers (e.g., headbob).
-        """
-        # Rotation smoothing toward targets
+    def update_rotation_only(
+        self,
+        dt: float,
+        *,
+        smooth_hz: float | None = None,
+    ) -> bool:
         rotation_changed = False
-        if self.rot_smooth_hz <= 0 or dt <= 0:
+        smoothing = self.rot_smooth_hz if smooth_hz is None else float(smooth_hz)
+        if smoothing <= 0 or dt <= 0:
             if (
                 self.camera.rotation.x != self.rot_target_x
                 or self.camera.rotation.y != self.rot_target_y
@@ -238,12 +287,20 @@ class PlayerCameraController:
             delta_x = self.rot_target_x - self.camera.rotation.x
             delta_y = self.rot_target_y - self.camera.rotation.y
             if abs(delta_x) > 1e-8 or abs(delta_y) > 1e-8:
-                alpha = 1.0 - math.exp(-self.rot_smooth_hz * dt)
+                alpha = 1.0 - math.exp(-smoothing * dt)
                 self.camera.rotation.x += delta_x * alpha
                 self.camera.rotation.y += delta_y * alpha
                 rotation_changed = True
         if rotation_changed:
             self.camera.update_rotation(dt)
+        return rotation_changed
+
+    def update(self, dt: float) -> Tuple[bool, bool]:
+        """Update rotation smoothing, movement, and collision.
+
+        Returns (moving, sprinting) booleans for callers (e.g., headbob).
+        """
+        self.update_rotation_only(dt)
 
         # Read input and handle movement
         keys = pygame.key.get_pressed()

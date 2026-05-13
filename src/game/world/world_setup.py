@@ -21,6 +21,7 @@ from engine.sound.sound_utils import Sounds
 from game.resources.paths import *
 from game.resources.texture_manager import load_world_textures
 from game.world.player_controller import PlayerCameraController
+from game.world.ui.battle_menu import BattleMenu
 from game.world.ui.pause_menu import PauseMenu
 from game.world.ui.setting_menu import SettingMenu
 from game.world.ui.world_hud import WorldHUD
@@ -185,6 +186,7 @@ def load_assets(scene) -> None:
         moon_texture_path=MOON_TEXTURE_PATH,
     )
     scene._hud = WorldHUD(scene)
+    scene.battle_menu = BattleMenu(scene)
     scene.pause_menu = PauseMenu(scene)
     scene.setting_menu = SettingMenu(scene)
     scene.fov = FOV
@@ -208,6 +210,10 @@ def load_assets(scene) -> None:
     scene.jump_speed = JUMP_SPEED
     scene.gravity = GRAVITY
     scene.camera_follow_smooth_hz = CAMERA_FOLLOW_SMOOTH_HZ
+    scene.goblin_battle_trigger_distance = GOBLIN_BATTLE_TRIGGER_DISTANCE
+    scene.goblin_battle_look_smooth_hz = GOBLIN_BATTLE_LOOK_SMOOTH_HZ
+    scene.battle_mode = False
+    scene.active_battle_goblin = None
     scene.paused = False
     scene.inventory_open = False
     scene.showing_settings_menu = False
