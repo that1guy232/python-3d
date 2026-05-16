@@ -11,14 +11,27 @@ class BattleMenu(ButtonMenu):
 
     def __init__(self, scene) -> None:
         super().__init__(scene)
-        self.buttons = [
-            MenuOption("end_fight", "End fight", self.end_fight),
-        ]
+        self.damage_button = MenuOption(
+            "damage_goblin",
+            self.attack_label,
+            self.damage_goblin,
+        )
+
+    def attack_label(self, scene) -> str:
+        preview = getattr(scene, "player_attack_damage_preview", None)
+        amount = preview() if callable(preview) else 1
+        return f"Attack ({max(0, int(amount))})"
 
     def options(self) -> list[MenuOption]:
-        return self.buttons
+        goblin = getattr(self.scene, "active_battle_goblin", None)
+        if goblin is None or not getattr(goblin, "enabled", True):
+            return []
 
-    def end_fight(self, scene) -> None:
-        end_battle = getattr(scene, "end_battle", None)
-        if callable(end_battle):
-            end_battle()
+        max_hp = max(1, int(getattr(goblin, "max_hp", 5)))
+        hp = int(getattr(goblin, "hp", max_hp))
+        return [self.damage_button] if hp > 0 else []
+
+    def damage_goblin(self, scene) -> None:
+        damage_battle_goblin = getattr(scene, "damage_battle_goblin", None)
+        if callable(damage_battle_goblin):
+            damage_battle_goblin()

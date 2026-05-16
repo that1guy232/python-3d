@@ -31,6 +31,7 @@ from game.world.objects import Chest, WallTile
 from game.world.objects.goblin import draw_goblin_shadows_batched
 from game.world.objects.wall_tile import build_wall_tile_batches
 from game.world.objects.polygon import Polygon
+from game.world.player_stats import PlayerStats
 from game.world.world_content import WorldContent
 from game.world.world_renderer import WorldRenderer
 from game.world.world_road_planner import create_building_access_roads
@@ -66,12 +67,15 @@ class WorldScene(Scene):
         self.polygon_batches: list[object] = []
         self.chests: list[Chest] = []
         self.showcase_chests: list[Chest] = []
+        self.inventory_items: list[object] = []
         self.others: list[object] = []
         self._texture_lighting_sync_key = None
         self._texture_lighting_sync_result = False
         self._collision_spatial_index = None
         self.battle_mode = False
         self.active_battle_goblin = None
+        self.player_stats = PlayerStats()
+        self.last_player_attack: dict[str, int | bool] | None = None
 
         self.renderer = WorldRenderer(self)
         self._initialized = False
@@ -337,6 +341,11 @@ class WorldScene(Scene):
         if goblin is None or not getattr(goblin, "enabled", True):
             return False
 
+        max_hp = max(1, int(getattr(goblin, "max_hp", 5)))
+        setattr(goblin, "max_hp", max_hp)
+        if not hasattr(goblin, "hp"):
+            setattr(goblin, "hp", max_hp)
+
         self.battle_mode = True
         self.active_battle_goblin = goblin
         self.paused = False
@@ -354,15 +363,83 @@ class WorldScene(Scene):
 
         self.mouse_visible = True
         self.mouse_grabbed = False
-        pygame.mouse.set_visible(True)
-        pygame.event.set_grab(False)
+        try:
+            pygame.mouse.set_visible(True)
+            pygame.event.set_grab(False)
+        except pygame.error:
+            pass
+        return True
+
+    def player_attack_damage_preview(self) -> int:
+        stats = getattr(self, "player_stats", None)
+        if stats is None:
+            return 1
+        preview = getattr(stats, "base_attack_damage", None)
+        if callable(preview):
+            return max(0, int(preview()))
+        strength = max(0, int(getattr(stats, "strength", 1)))
+        elemental = max(0, int(getattr(stats, "elemental_damage", 0)))
+        return strength + elemental
+
+    def roll_player_attack_damage(self) -> tuple[int, bool]:
+        stats = getattr(self, "player_stats", None)
+        if stats is None:
+            self.last_player_attack = {"damage": 1, "critical": False}
+            return 1, False
+
+        roll_damage = getattr(stats, "roll_attack_damage", None)
+        if callable(roll_damage):
+            rng = getattr(self, "rng", None)
+            try:
+                damage, critical = roll_damage(rng)
+            except TypeError:
+                damage, critical = roll_damage()
+        else:
+            damage = self.player_attack_damage_preview()
+            critical = False
+
+        damage = max(0, int(damage))
+        critical = bool(critical)
+        self.last_player_attack = {"damage": damage, "critical": critical}
+        return damage, critical
+
+    def damage_battle_goblin(self, amount: int | None = None) -> int:
+        goblin = getattr(self, "active_battle_goblin", None)
+        if goblin is None or not getattr(goblin, "enabled", True):
+            return 0
+
+        if amount is None:
+            amount, _critical = self.roll_player_attack_damage()
+
+        take_damage = getattr(goblin, "take_damage", None)
+        if callable(take_damage):
+            hp = int(take_damage(amount))
+        else:
+            max_hp = max(1, int(getattr(goblin, "max_hp", 5)))
+            hp = max(0, int(getattr(goblin, "hp", max_hp)) - max(0, int(amount)))
+            setattr(goblin, "max_hp", max_hp)
+            setattr(goblin, "hp", hp)
+
+        if hp <= 0:
+            self.remove_battle_goblin()
+        return hp
+
+    def remove_battle_goblin(self) -> bool:
+        goblin = getattr(self, "active_battle_goblin", None)
+        if goblin is None:
+            self.end_battle()
+            return False
+
+        max_hp = max(1, int(getattr(goblin, "max_hp", 5)))
+        hp = int(getattr(goblin, "hp", max_hp))
+        if hp > 0:
+            return False
+
+        self.remove_entity(goblin)
+        self.end_battle()
         return True
 
     def end_battle(self) -> None:
-        goblin = getattr(self, "active_battle_goblin", None)
-        if goblin is not None:
-            self.remove_entity(goblin)
-
         self.active_battle_goblin = None
         self.battle_mode = False
 
@@ -375,8 +452,11 @@ class WorldScene(Scene):
 
         self.mouse_visible = False
         self.mouse_grabbed = True
-        pygame.mouse.set_visible(False)
-        pygame.event.set_grab(True)
+        try:
+            pygame.mouse.set_visible(False)
+            pygame.event.set_grab(True)
+        except pygame.error:
+            pass
 
     def refresh_immediate_entities(self) -> None:
         self.immediate_entities = [
@@ -767,6 +847,9 @@ class WorldScene(Scene):
 
     def _handle_battle_click(self, pos):
         return self.renderer.handle_battle_click(pos)
+
+    def _handle_inventory_click(self, pos):
+        return self.renderer.handle_inventory_click(pos)
 
     def _handle_pause_click(self, pos):
         return self.renderer.handle_pause_click(pos)

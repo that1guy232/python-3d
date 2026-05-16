@@ -739,6 +739,16 @@ def handle_event(scene, event) -> None:
         scene.minimap_visible = not getattr(scene, "minimap_visible", True)
         return
 
+    if getattr(scene, "inventory_open", False):
+        if event.type == pygame.MOUSEBUTTONDOWN and getattr(event, "button", None) == 1:
+            pos = getattr(event, "pos", pygame.mouse.get_pos())
+            scene._handle_inventory_click(pos)
+            return
+        if event.type == pygame.MOUSEMOTION:
+            scene._last_mouse_pos = getattr(event, "pos", pygame.mouse.get_pos())
+            return
+        return
+
     if getattr(scene, "paused", False) and not getattr(scene, "inventory_open", False):
         if event.type == pygame.MOUSEBUTTONDOWN and getattr(event, "button", None) == 1:
             pos = getattr(event, "pos", pygame.mouse.get_pos())
@@ -753,9 +763,6 @@ def handle_event(scene, event) -> None:
             scene._last_mouse_pos = pos
             scene._handle_pause_motion(pos)
             return
-        return
-
-    if getattr(scene, "inventory_open", False):
         return
 
     if event.type == pygame.KEYDOWN and event.key == pygame.K_e:

@@ -24,6 +24,7 @@ _EXPORTS = {
     "BuildingSpec": (".world_content", "BuildingSpec"),
     "WorldContent": (".world_content", "WorldContent"),
     "building": (".world_content", "building"),
+    "PlayerStats": (".player_stats", "PlayerStats"),
     "spawn_world_sprites": (".world_spawner", "spawn_world_sprites"),
     "WorldHUD": (".ui.world_hud", "WorldHUD"),
 }

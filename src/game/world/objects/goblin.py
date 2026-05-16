@@ -64,6 +64,7 @@ GOBLIN_COLLISION_RADIUS = 18.0
 GOBLIN_CHASE_RADIUS = 260.0
 GOBLIN_CHASE_GIVE_UP_RADIUS = 380.0
 GOBLIN_CHASE_STOP_DISTANCE = 34.0
+GOBLIN_MAX_HP = 5
 GOBLIN_TARGET_REACHED_DISTANCE = 7.0
 GOBLIN_MIN_IDLE_SECONDS = 0.35
 GOBLIN_MAX_IDLE_SECONDS = 1.45
@@ -139,6 +140,7 @@ class Goblin(Entity):
     DEFAULT_HEIGHT = GOBLIN_SPRITE_HEIGHT
     DEFAULT_ROAM_RADIUS = GOBLIN_ROAM_RADIUS
     DEFAULT_MOVE_SPEED = GOBLIN_MOVE_SPEED
+    DEFAULT_MAX_HP = GOBLIN_MAX_HP
 
     def __init__(
         self,
@@ -160,6 +162,7 @@ class Goblin(Entity):
         shadow_texture: int | None = None,
         shadow_size: tuple[float, float] = GOBLIN_SHADOW_SIZE,
         sound_keys: Iterable[str] | None = None,
+        max_hp: int = GOBLIN_MAX_HP,
         rng: random.Random | None = None,
     ) -> None:
         animations = self.animation_sets(texture)
@@ -172,6 +175,8 @@ class Goblin(Entity):
         self.position_blocked = position_blocked
         self.player_in_building = player_in_building
         self.rng = rng or random.Random()
+        self.max_hp = max(1, int(max_hp))
+        self.hp = self.max_hp
         keys = GOBLIN_SOUND_KEYS if sound_keys is None else tuple(sound_keys)
         self.sound_keys = tuple(str(key) for key in keys if key)
         self._sound_channel = None
@@ -296,6 +301,14 @@ class Goblin(Entity):
                 pass
         self._sound_channel = None
         self._sound_key = None
+
+    def take_damage(self, amount: int = 1) -> int:
+        amount = max(0, int(amount))
+        self.hp = max(0, int(getattr(self, "hp", self.max_hp)) - amount)
+        return self.hp
+
+    def is_defeated(self) -> bool:
+        return int(getattr(self, "hp", self.max_hp)) <= 0
 
     def update(self, dt: float) -> None:
         dt = max(0.0, float(dt))
