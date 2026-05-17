@@ -212,8 +212,33 @@ class WorldRenderer:
             getattr(scene, "battle_mode", False)
             or getattr(scene, "inventory_open", False)
             or getattr(scene, "paused", False)
-            or getattr(scene, "debug_text_visible", True)
+            or self._controls_text_visible()
         )
+
+    def _controls_text_visible(self) -> bool:
+        scene = self.scene
+        return bool(
+            getattr(
+                scene,
+                "controls_text_visible",
+                getattr(scene, "debug_text_visible", True),
+            )
+        )
+
+    def _controls_text(self) -> str:
+        lines = [
+            "Controls",
+            "WASD: Move",
+            "Mouse: Look",
+            "Esc: Pause",
+        ]
+        prompt = None
+        focused_prompt = getattr(self.scene, "focused_interaction_prompt", None)
+        if callable(focused_prompt):
+            prompt = focused_prompt()
+        if prompt:
+            lines.append(str(prompt))
+        return "\n".join(lines)
 
     def draw_hud(self, text, fps: float) -> None:  # pragma: no cover - visual
         scene = self.scene
@@ -231,10 +256,10 @@ class WorldRenderer:
             with self._profile("hud_text.pause_menu"):
                 self.draw_pause_menu(text)
         else:
-            if not getattr(scene, "debug_text_visible", True):
+            if not self._controls_text_visible():
                 self._count("hud_text.skipped")
                 return
-            self._count("hud_text.debug_frames")
+            self._count("hud_text.controls_frames")
             with self._profile("hud_text.begin"):
                 text.begin()
             try:
@@ -247,13 +272,14 @@ class WorldRenderer:
                         align="topleft",
                         color=[255, 0, 0, 0],
                     )
-                lorem = (
-                    "Lore Epsum: Vivamus sed nibh.\n"
-                    "Curabitur at leo quis nunc posuere congue.\n"
-                    "Praesent tristique sem at augue pharetra."
-                )
-                with self._profile("hud_text.debug_lorem"):
-                    text.draw_text_multiline(lorem, 12, HEIGHT - 12, align="bottomleft")
+                controls = self._controls_text()
+                with self._profile("hud_text.controls"):
+                    text.draw_text_multiline(
+                        controls,
+                        12,
+                        HEIGHT - 12,
+                        align="bottomleft",
+                    )
             finally:
                 with self._profile("hud_text.end"):
                     text.end()
@@ -713,34 +739,9 @@ class WorldRenderer:
             )
 
     def draw_battle_menu(self, text) -> None:  # pragma: no cover - visual
-        import pygame
-
         hp_anchor = self._battle_hp_anchor()
         text.begin()
         glDisable(GL_TEXTURE_2D)
-
-        menu = getattr(self.scene, "battle_menu", None)
-        buttons = menu.compute_buttons() if menu is not None else []
-        mx, my = pygame.mouse.get_pos()
-        for button in buttons:
-            x, y, w, h = button["rect"]
-            hovered = x <= mx <= x + w and y <= my <= y + h
-
-            glColor4f(0.15, 0.12, 0.11, 0.96 if hovered else 0.88)
-            glBegin(GL_QUADS)
-            glVertex2f(x, y)
-            glVertex2f(x + w, y)
-            glVertex2f(x + w, y + h)
-            glVertex2f(x, y + h)
-            glEnd()
-
-            glColor4f(0.42, 0.2, 0.16, 0.9 if hovered else 0.72)
-            glBegin(GL_QUADS)
-            glVertex2f(x + 2, y + 2)
-            glVertex2f(x + w - 2, y + 2)
-            glVertex2f(x + w - 2, y + h - 2)
-            glVertex2f(x + 2, y + h - 2)
-            glEnd()
 
         if hp_anchor is not None:
             self._draw_battle_hp_plate(text, hp_anchor)
@@ -757,15 +758,6 @@ class WorldRenderer:
             color=(255, 245, 230, 255),
             align="center",
         )
-        for button in buttons:
-            x, y, w, h = button["rect"]
-            text.draw_text(
-                button["label"],
-                x + w / 2,
-                y + h / 2,
-                color=(255, 255, 255, 255),
-                align="center",
-            )
 
         text.end()
 
@@ -892,15 +884,25 @@ class WorldRenderer:
         return menu.compute_buttons(width=width, height=height)
 
     def compute_battle_buttons(self, width: int = WIDTH, height: int = HEIGHT):
-        menu = getattr(self.scene, "battle_menu", None)
-        if menu is None:
-            return []
-        return menu.compute_buttons(width=width, height=height)
+        return []
 
-    def handle_battle_click(self, pos) -> None:
-        menu = getattr(self.scene, "battle_menu", None)
-        if menu is not None:
-            menu.handle_click(pos)
+    def handle_battle_click(self, pos) -> bool:
+        battle_overlay = getattr(self.scene, "battle_overlay", None)
+        if battle_overlay is not None:
+            return bool(battle_overlay.handle_mouse_down(pos))
+        return False
+
+    def handle_battle_motion(self, pos) -> bool:
+        battle_overlay = getattr(self.scene, "battle_overlay", None)
+        if battle_overlay is not None:
+            return bool(battle_overlay.handle_mouse_motion(pos))
+        return False
+
+    def handle_battle_release(self, pos) -> bool:
+        battle_overlay = getattr(self.scene, "battle_overlay", None)
+        if battle_overlay is not None:
+            return bool(battle_overlay.handle_mouse_up(pos))
+        return False
 
     def handle_pause_click(self, pos) -> None:
         menu = self._active_pause_menu()

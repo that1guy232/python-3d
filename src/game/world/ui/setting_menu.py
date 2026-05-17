@@ -37,7 +37,11 @@ class SettingMenu(ButtonMenu):
             MenuOption("toggle_minimap", self.minimap_label, self.toggle_minimap),
             MenuOption("toggle_held_item", self.held_item_label, self.toggle_held_item),
             MenuOption("toggle_test_light", self.test_light_label, self.toggle_test_light),
-            MenuOption("toggle_debug_text", self.debug_text_label, self.toggle_debug_text),
+            MenuOption(
+                "toggle_controls_text",
+                self.controls_text_label,
+                self.toggle_controls_text,
+            ),
             MenuOption("toggle_fog", self.fog_label, self.toggle_fog),
             MenuOption("toggle_clouds", self.clouds_label, self.toggle_clouds),
             self._scene_slider(
@@ -553,11 +557,27 @@ class SettingMenu(ButtonMenu):
     def toggle_test_light(self, scene) -> None:
         self._toggle_scene_flag(scene, "test_light_visible", True)
 
-    def debug_text_label(self, scene) -> str:
-        return self._bool_label("Debug Text", getattr(scene, "debug_text_visible", True))
+    def controls_text_label(self, scene) -> str:
+        return self._bool_label(
+            "Controls Text",
+            getattr(
+                scene,
+                "controls_text_visible",
+                getattr(scene, "debug_text_visible", True),
+            ),
+        )
 
-    def toggle_debug_text(self, scene) -> None:
-        self._toggle_scene_flag(scene, "debug_text_visible", True)
+    def toggle_controls_text(self, scene) -> None:
+        current = bool(
+            getattr(
+                scene,
+                "controls_text_visible",
+                getattr(scene, "debug_text_visible", True),
+            )
+        )
+        value = not current
+        setattr(scene, "controls_text_visible", value)
+        setattr(scene, "debug_text_visible", value)
 
     def fog_label(self, scene) -> str:
         return self._bool_label("Fog", getattr(scene, "fog_enabled", True))

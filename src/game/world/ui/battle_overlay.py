@@ -12,6 +12,7 @@ from OpenGL.GL import (
     glEnable,
     glEnd,
     glVertex2f,
+    GL_QUADS,
     GL_TEXTURE_2D,
     GL_TRIANGLE_FAN,
 )
@@ -45,6 +46,7 @@ class BattleResourceOverlay:
         if active:
             if not self._active or self._target_id != target_id:
                 self._enter_s = time.perf_counter()
+                self._reset_cards()
             self._active = True
             self._target_id = target_id
             return
@@ -52,6 +54,23 @@ class BattleResourceOverlay:
         self._active = False
         self._enter_s = 0.0
         self._target_id = None
+        self._reset_cards()
+
+    def _reset_cards(self) -> None:
+        battle_cards = getattr(self.scene, "battle_cards", None)
+        reset = getattr(battle_cards, "reset", None)
+        if callable(reset):
+            reset()
+            return
+        for card in self._cards():
+            card.reset_to_home()
+
+    def _cards(self) -> list:
+        battle_cards = getattr(self.scene, "battle_cards", None)
+        cards = getattr(battle_cards, "cards", None)
+        if callable(cards):
+            cards = cards()
+        return list(cards or ())
 
     def _entry_progress(self) -> float:
         if not self._active:
@@ -77,6 +96,81 @@ class BattleResourceOverlay:
             glVertex2f(x + math.cos(angle) * radius, y + math.sin(angle) * radius)
         glEnd()
 
+    @staticmethod
+    def _draw_quad(
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        color: tuple[float, float, float, float],
+    ) -> None:
+        glColor4f(*color)
+        glBegin(GL_QUADS)
+        glVertex2f(x, y)
+        glVertex2f(x + w, y)
+        glVertex2f(x + w, y + h)
+        glVertex2f(x, y + h)
+        glEnd()
+
+    def _resource_layout(self) -> dict[str, float]:
+        radius = min(76.0, max(48.0, min(float(WIDTH) * 0.045, float(HEIGHT) * 0.08)))
+        edge_margin = max(32.0, radius * 0.72)
+        left_x = edge_margin + radius
+        right_x = float(WIDTH) - left_x
+        final_y = float(HEIGHT) - radius - max(34.0, float(HEIGHT) * 0.05)
+        start_y = float(HEIGHT) + radius + 20.0
+        y = self._lerp(start_y, final_y, self._entry_progress())
+        return {"radius": radius, "left_x": left_x, "right_x": right_x, "y": y}
+
+    def _sync_card_layout(self, layout: dict[str, float], cards: list) -> None:
+        card_w = min(118.0, max(92.0, float(WIDTH) * 0.082))
+        card_h = card_w * 1.38
+        card_gap = max(18.0, card_w * 0.18)
+        total_w = len(cards) * card_w + max(0, len(cards) - 1) * card_gap
+        first_x = float(WIDTH) * 0.5 - total_w * 0.5 + card_w * 0.5
+        for index, card in enumerate(cards):
+            card.set_home_center(
+                first_x + index * (card_w + card_gap),
+                layout["y"],
+                size=(card_w, card_h),
+            )
+
+    @staticmethod
+    def _play_rect() -> tuple[float, float, float, float]:
+        zone_w = min(300.0, max(210.0, float(WIDTH) * 0.26))
+        zone_h = min(210.0, max(150.0, float(HEIGHT) * 0.24))
+        return (
+            float(WIDTH) * 0.5 - zone_w * 0.5,
+            float(HEIGHT) * 0.5 - zone_h * 0.5,
+            zone_w,
+            zone_h,
+        )
+
+    def _draw_play_zone(self) -> None:  # pragma: no cover - visual
+        x, y, w, h = self._play_rect()
+        glDisable(GL_TEXTURE_2D)
+        self._draw_quad(x, y, w, h, (0.02, 0.025, 0.03, 0.34))
+        self._draw_quad(x + 4.0, y + 4.0, w - 8.0, h - 8.0, (0.58, 0.17, 0.10, 0.18))
+        line_w = min(80.0, w * 0.34)
+        line_h = 5.0
+        cx = x + w * 0.5
+        cy = y + h * 0.5
+        self._draw_quad(
+            cx - line_w * 0.5,
+            cy - line_h * 0.5,
+            line_w,
+            line_h,
+            (0.9, 0.78, 0.56, 0.45),
+        )
+        self._draw_quad(
+            cx - line_h * 0.5,
+            cy - line_w * 0.5,
+            line_h,
+            line_w,
+            (0.9, 0.78, 0.56, 0.45),
+        )
+        glEnable(GL_TEXTURE_2D)
+
     def draw(self, text) -> None:  # pragma: no cover - visual
         if not getattr(self.scene, "battle_mode", False):
             return
@@ -91,13 +185,13 @@ class BattleResourceOverlay:
         mana = max(0, int(getattr(stats, "mana", 5)))
         max_mana = max(1, int(getattr(stats, "max_mana", max(1, mana))))
 
-        radius = min(76.0, max(48.0, min(float(WIDTH) * 0.045, float(HEIGHT) * 0.08)))
-        edge_margin = max(32.0, radius * 0.72)
-        left_x = edge_margin + radius
-        right_x = float(WIDTH) - left_x
-        final_y = float(HEIGHT) - radius - max(34.0, float(HEIGHT) * 0.05)
-        start_y = float(HEIGHT) + radius + 20.0
-        y = self._lerp(start_y, final_y, self._entry_progress())
+        layout = self._resource_layout()
+        cards = self._cards()
+        self._sync_card_layout(layout, cards)
+        radius = layout["radius"]
+        left_x = layout["left_x"]
+        right_x = layout["right_x"]
+        y = layout["y"]
 
         circles = (
             ("HP", f"{hp}/{max_hp}", left_x, y, (0.86, 0.08, 0.06, 0.96)),
@@ -132,6 +226,10 @@ class BattleResourceOverlay:
                 (0.025, 0.028, 0.036, 0.32),
             )
 
+        dragging_card = any(card.dragging for card in cards)
+        if dragging_card:
+            self._draw_play_zone()
+
         glEnable(GL_TEXTURE_2D)
         for label, value, x, circle_y, _color in circles:
             text.draw_text(
@@ -148,3 +246,51 @@ class BattleResourceOverlay:
                 color=(255, 255, 255, 255),
                 align="center",
             )
+
+        try:
+            import pygame
+
+            mouse_pos = pygame.mouse.get_pos()
+        except Exception:
+            mouse_pos = getattr(self.scene, "_last_mouse_pos", (0, 0))
+
+        for card in cards:
+            enabled = card.enabled_for(self.scene)
+            card.update_hover(mouse_pos, self.scene)
+            card.draw(text, enabled=enabled)
+
+    def _prepare_for_input(self) -> list:
+        self.sync_state()
+        cards = self._cards()
+        self._sync_card_layout(self._resource_layout(), cards)
+        return cards
+
+    def handle_mouse_down(self, pos) -> bool:
+        if not getattr(self.scene, "battle_mode", False):
+            return False
+        cards = self._prepare_for_input()
+        for card in reversed(cards):
+            if card.handle_mouse_down(pos, self.scene):
+                return True
+        return False
+
+    def handle_mouse_motion(self, pos) -> bool:
+        if not getattr(self.scene, "battle_mode", False):
+            return False
+        cards = self._prepare_for_input()
+        handled = False
+        for card in cards:
+            handled = card.handle_mouse_motion(pos, self.scene) or handled
+        return handled
+
+    def handle_mouse_up(self, pos) -> bool:
+        if not getattr(self.scene, "battle_mode", False):
+            return False
+        cards = self._prepare_for_input()
+        handled = False
+        play_rect = self._play_rect()
+        for card in cards:
+            handled = (
+                card.handle_mouse_up(pos, self.scene, play_rect=play_rect) or handled
+            )
+        return handled

@@ -20,6 +20,7 @@ from engine.rendering.sky_renderer import SkyRenderer
 from engine.sound.sound_utils import Sounds
 from game.resources.paths import *
 from game.resources.texture_manager import load_world_textures
+from game.world.battle_cards import BattleCardLoadout
 from game.world.player_controller import PlayerCameraController
 from game.world.ui.battle_menu import BattleMenu
 from game.world.ui.battle_overlay import BattleResourceOverlay
@@ -187,6 +188,7 @@ def load_assets(scene) -> None:
         moon_texture_path=MOON_TEXTURE_PATH,
     )
     scene._hud = WorldHUD(scene)
+    scene.battle_cards = BattleCardLoadout(scene)
     scene.battle_overlay = BattleResourceOverlay(scene)
     scene.battle_menu = BattleMenu(scene)
     scene.pause_menu = PauseMenu(scene)
@@ -204,7 +206,8 @@ def load_assets(scene) -> None:
     scene.minimap_visible = True
     scene.held_item_visible = True
     scene.test_light_visible = True
-    scene.debug_text_visible = True
+    scene.controls_text_visible = True
+    scene.debug_text_visible = scene.controls_text_visible
     scene.mouse_sensitivity = MOUSE_SENSITIVITY
     scene.walk_speed = BASE_SPEED
     scene.sprint_speed = SPRINT_SPEED

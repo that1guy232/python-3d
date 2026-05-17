@@ -28,6 +28,8 @@ _COLLISION_FALLBACK_CELL_LIMIT = 256
 _AMBIENT_BIRDS_KEY = "ambient_birds"
 _AMBIENT_BIRDS_OUTDOOR_VOLUME = 0.035
 _AMBIENT_BIRDS_INDOOR_VOLUME = 0.004
+_DOOR_INTERACTION_FOCUS_PADDING = 4.0
+_DOOR_INTERACTION_DEPTH_PADDING = 8.0
 
 
 def _profile(scene, name: str):
@@ -452,21 +454,112 @@ def _entity_interaction_position(entity):
     return getattr(entity, "position", None)
 
 
-def _try_interact_with_focused_entity(scene) -> bool:
+def _normalized_vector(value) -> Vector3 | None:
+    try:
+        vector = Vector3(float(value.x), float(value.y), float(value.z))
+    except Exception:
+        return None
+    if vector.length_squared() <= 1e-8:
+        return None
+    return vector.normalize()
+
+
+def _ray_oriented_box_hit_distance(
+    origin: Vector3,
+    direction: Vector3,
+    center: Vector3,
+    axes: tuple[Vector3, Vector3, Vector3],
+    half_extents: tuple[float, float, float],
+    max_distance: float,
+) -> float | None:
+    local_origin = origin - center
+    t_min = 0.0
+    t_max = float(max_distance)
+
+    for axis, half_extent in zip(axes, half_extents):
+        axis_n = _normalized_vector(axis)
+        if axis_n is None:
+            return None
+        origin_component = local_origin.dot(axis_n)
+        direction_component = direction.dot(axis_n)
+        half_extent = max(0.0, float(half_extent))
+
+        if abs(direction_component) <= 1e-8:
+            if abs(origin_component) > half_extent:
+                return None
+            continue
+
+        inv_direction = 1.0 / direction_component
+        near_t = (-half_extent - origin_component) * inv_direction
+        far_t = (half_extent - origin_component) * inv_direction
+        if near_t > far_t:
+            near_t, far_t = far_t, near_t
+
+        t_min = max(t_min, near_t)
+        t_max = min(t_max, far_t)
+        if t_min > t_max:
+            return None
+
+    return t_min if t_max >= 0.0 else None
+
+
+def _is_door_like(entity) -> bool:
+    return (
+        type(entity).__name__ == "Door"
+        or getattr(entity, "door_render_batched", False)
+        or hasattr(entity, "target_open")
+        and hasattr(entity, "panel_axis")
+        and hasattr(entity, "depth_axis")
+    )
+
+
+def _door_focus_hit_distance(entity, camera, max_distance: float) -> float | None:
+    origin = getattr(camera, "position", None)
+    direction = _normalized_vector(getattr(camera, "_forward", None))
+    center = getattr(entity, "position", None)
+    if origin is None or direction is None or center is None:
+        return None
+
+    width_axis = getattr(entity, "panel_axis", None)
+    depth_axis = getattr(entity, "depth_axis", None)
+    if width_axis is None or depth_axis is None:
+        return None
+
+    padding = _DOOR_INTERACTION_FOCUS_PADDING
+    half_width = max(0.5, float(getattr(entity, "width", 1.0)) * 0.5 + padding)
+    half_height = max(0.5, float(getattr(entity, "height", 1.0)) * 0.5 + padding)
+    half_depth = max(
+        0.5,
+        float(getattr(entity, "thickness", 1.0)) * 0.5 + _DOOR_INTERACTION_DEPTH_PADDING,
+    )
+
+    return _ray_oriented_box_hit_distance(
+        origin,
+        direction,
+        center,
+        (width_axis, Vector3(0.0, 1.0, 0.0), depth_axis),
+        (half_width, half_height, half_depth),
+        max_distance,
+    )
+
+
+def _focused_interactable_entity(scene):
     camera = getattr(scene, "camera", None)
     if camera is None:
-        return False
+        return None
 
     forward = getattr(camera, "_forward", None)
     camera_position = getattr(camera, "position", None)
     if forward is None or camera_position is None:
-        return False
+        return None
 
     forward_xz = Vector3(float(forward.x), 0.0, float(forward.z))
     if forward_xz.length_squared() <= 1e-8:
-        return False
+        return None
     forward_xz = forward_xz.normalize()
 
+    best_focused_door = None
+    best_focused_door_distance = float("inf")
     best_entity = None
     best_score = float("inf")
     for entity in getattr(scene, "entities", ()) or ():
@@ -478,6 +571,15 @@ def _try_interact_with_focused_entity(scene) -> bool:
 
         max_distance = float(getattr(entity, "interaction_distance", 0.0) or 0.0)
         if max_distance <= 0.0:
+            continue
+
+        if _is_door_like(entity):
+            hit_distance = _door_focus_hit_distance(entity, camera, max_distance)
+            if hit_distance is None:
+                continue
+            if hit_distance < best_focused_door_distance:
+                best_focused_door_distance = hit_distance
+                best_focused_door = entity
             continue
 
         position = _entity_interaction_position(entity)
@@ -503,9 +605,23 @@ def _try_interact_with_focused_entity(scene) -> bool:
             best_score = score
             best_entity = entity
 
+    return best_focused_door if best_focused_door is not None else best_entity
+
+
+def focused_interaction_prompt(scene) -> str | None:
+    entity = _focused_interactable_entity(scene)
+    if entity is None or not _is_door_like(entity):
+        return None
+    action = "close" if bool(getattr(entity, "target_open", False)) else "open"
+    return f"E to {action} door"
+
+
+def _try_interact_with_focused_entity(scene) -> bool:
+    best_entity = _focused_interactable_entity(scene)
     if best_entity is None:
         return False
 
+    camera = getattr(scene, "camera", None)
     interact = getattr(best_entity, "interact")
     try:
         return bool(interact(actor=camera, scene=scene))
@@ -707,8 +823,14 @@ def handle_event(scene, event) -> None:
             pos = getattr(event, "pos", pygame.mouse.get_pos())
             scene._handle_battle_click(pos)
             return
+        if event.type == pygame.MOUSEBUTTONUP and getattr(event, "button", None) == 1:
+            pos = getattr(event, "pos", pygame.mouse.get_pos())
+            scene._handle_battle_release(pos)
+            return
         if event.type == pygame.MOUSEMOTION:
-            scene._last_mouse_pos = getattr(event, "pos", pygame.mouse.get_pos())
+            pos = getattr(event, "pos", pygame.mouse.get_pos())
+            scene._last_mouse_pos = pos
+            scene._handle_battle_motion(pos)
             return
         return
 

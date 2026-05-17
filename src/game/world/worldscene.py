@@ -74,6 +74,7 @@ class WorldScene(Scene):
         self._collision_spatial_index = None
         self.battle_mode = False
         self.active_battle_goblin = None
+        self.battle_cards = None
         self.player_stats = PlayerStats()
         self.last_player_attack: dict[str, int | bool] | None = None
 
@@ -833,6 +834,9 @@ class WorldScene(Scene):
             self, dist=dist, nx=nx, ny=ny, px=px, py=py
         )
 
+    def focused_interaction_prompt(self) -> str | None:
+        return world_runtime.focused_interaction_prompt(self)
+
     def update(self, dt: float) -> None:
         return world_runtime.update(self, dt)
 
@@ -847,6 +851,12 @@ class WorldScene(Scene):
 
     def _handle_battle_click(self, pos):
         return self.renderer.handle_battle_click(pos)
+
+    def _handle_battle_motion(self, pos):
+        return self.renderer.handle_battle_motion(pos)
+
+    def _handle_battle_release(self, pos):
+        return self.renderer.handle_battle_release(pos)
 
     def _handle_inventory_click(self, pos):
         return self.renderer.handle_inventory_click(pos)
