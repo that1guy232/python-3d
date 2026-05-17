@@ -22,6 +22,7 @@ from game.resources.paths import *
 from game.resources.texture_manager import load_world_textures
 from game.world.player_controller import PlayerCameraController
 from game.world.ui.battle_menu import BattleMenu
+from game.world.ui.battle_overlay import BattleResourceOverlay
 from game.world.ui.pause_menu import PauseMenu
 from game.world.ui.setting_menu import SettingMenu
 from game.world.ui.world_hud import WorldHUD
@@ -186,6 +187,7 @@ def load_assets(scene) -> None:
         moon_texture_path=MOON_TEXTURE_PATH,
     )
     scene._hud = WorldHUD(scene)
+    scene.battle_overlay = BattleResourceOverlay(scene)
     scene.battle_menu = BattleMenu(scene)
     scene.pause_menu = PauseMenu(scene)
     scene.setting_menu = SettingMenu(scene)

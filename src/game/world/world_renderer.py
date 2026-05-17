@@ -139,6 +139,9 @@ class WorldRenderer:
         self, *, show_hud: bool = True, text=None, fps: float | None = None
     ) -> None:  # pragma: no cover - visual
         scene = self.scene
+        battle_overlay = getattr(scene, "battle_overlay", None)
+        if battle_overlay is not None:
+            battle_overlay.sync_state()
         rgba = self._sky_rgba()
         fog_enabled = self._fog_enabled()
         fog_density = max(0.0, float(getattr(scene, "fog_density", FOGDENSITY)))
@@ -565,8 +568,6 @@ class WorldRenderer:
         if not rows:
             return []
         return [
-            f"HP {rows['HP']}",
-            f"Mana {rows['Mana']}",
             f"STR {rows['Strength']}  DEX {rows['Dexterity']}",
             f"Crit {rows['Crit Chance']}  Elem {rows['Elemental Damage']}",
             f"Draw {rows['Card Draw']}",
@@ -744,6 +745,9 @@ class WorldRenderer:
         if hp_anchor is not None:
             self._draw_battle_hp_plate(text, hp_anchor)
         self._draw_battle_player_stats(text)
+        battle_overlay = getattr(self.scene, "battle_overlay", None)
+        if battle_overlay is not None:
+            battle_overlay.draw(text)
 
         glEnable(GL_TEXTURE_2D)
         text.draw_text(
