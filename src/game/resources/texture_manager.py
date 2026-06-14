@@ -10,7 +10,42 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict
 from engine.textures.texture_utils import load_texture, load_texture_atlas
-from game.resources.paths import *
+from game.resources.paths import (
+    DOOR_TEXTURE_PATH,
+    FENCE1_TEXTURE_PATH,
+    FENCE2_TEXTURE_PATH,
+    FENCE3_TEXTURE_PATH,
+    FENCE4_TEXTURE_PATH,
+    FENCE5_TEXTURE_PATH,
+    FENCE6_TEXTURE_PATH,
+    GOBLIN_BACK_TEXTURE_DIR_PATH,
+    GOBLIN_FRONT_TEXTURE_DIR_PATH,
+    GOBLIN_RIGHT_TEXTURE_DIR_PATH,
+    GRASS1_TEXTURE_PATH,
+    GRASS2_TEXTURE_PATH,
+    GRASS3_TEXTURE_PATH,
+    GRASS4_TEXTURE_PATH,
+    GRASS_TEXTURE_PATH,
+    ROAD_TEXTURE_PATH,
+    ROCK1_TEXTURE_PATH,
+    ROCK2_TEXTURE_PATH,
+    ROCK3_TEXTURE_PATH,
+    ROCK4_TEXTURE_PATH,
+    ROCK5_TEXTURE_PATH,
+    ROCK6_TEXTURE_PATH,
+    SWORD_TEXTURE_PATH,
+    TORCH_FRAME_TEXTURE_PATHS,
+    TORCH_TEXTURE_PATH,
+    TREE1_TEXTURE_PATH,
+    TREE2_TEXTURE_PATH,
+    TREE3_TEXTURE_PATH,
+    TREE4_TEXTURE_PATH,
+    TREE5_TEXTURE_PATH,
+    TREE6_TEXTURE_PATH,
+    TREE7_TEXTURE_PATH,
+    WALL1_TEXTURE_PATH,
+    WINDOW_TEXTURE_PATH,
+)
 
 
 def _frame_sort_key(path: Path) -> tuple[int, int | str]:

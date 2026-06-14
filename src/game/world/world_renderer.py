@@ -7,23 +7,17 @@ import math
 import time
 
 from OpenGL.GL import (
-    glBegin,
     glClear,
     glClearColor,
-    glColor4f,
     glDisable,
     glEnable,
-    glEnd,
     glFogf,
     glFogfv,
     glFogi,
-    glGetDoublev,
-    glGetIntegerv,
     glLoadIdentity,
     glMatrixMode,
     glRotatef,
     glTranslatef,
-    glVertex2f,
     GL_COLOR_BUFFER_BIT,
     GL_DEPTH_BUFFER_BIT,
     GL_EXP2,
@@ -31,19 +25,19 @@ from OpenGL.GL import (
     GL_FOG_COLOR,
     GL_FOG_DENSITY,
     GL_FOG_MODE,
-    GL_MODELVIEW_MATRIX,
     GL_MODELVIEW,
     GL_PROJECTION,
-    GL_PROJECTION_MATRIX,
-    GL_QUADS,
-    GL_TEXTURE_2D,
-    GL_VIEWPORT,
 )
-from OpenGL.GLU import gluPerspective, gluProject
+from OpenGL.GLU import gluPerspective
 
 from game.config import FOGDENSITY, FOV, HEADBOB_ENABLED, HEIGHT, LIGHT_BLUE, VIEWDISTANCE, WIDTH
 from engine.core.compat_shader import set_texture_fog_state
 from engine.core.mesh import BatchedMesh
+from engine.rendering.sprite import draw_sprites_batched
+from game.world.objects.goblin import draw_goblin_shadows_batched
+from game.world.ui.battle_panel import BattlePanel
+from game.world.ui.inventory_panel import InventoryPanel
+from game.world.ui.pause_panel import PauseMenuPanel
 
 
 class WorldRenderer:
@@ -51,6 +45,9 @@ class WorldRenderer:
 
     def __init__(self, scene) -> None:
         self.scene = scene
+        self.battle_panel = BattlePanel(scene)
+        self.inventory_panel = InventoryPanel(scene)
+        self.pause_panel = PauseMenuPanel(scene)
         self._fps_label = "FPS:   0.0"
         self._fps_label_update_s = 0.0
 
@@ -126,7 +123,7 @@ class WorldRenderer:
             )
 
         with self._profile("draw.world_objects"):
-            scene.draw_world_objects(enable_timing=enable_timing)
+            self.draw_world_objects(enable_timing=enable_timing)
 
         with self._profile("draw.world_hud"):
             try:
@@ -291,630 +288,307 @@ class WorldRenderer:
             self._fps_label_update_s = now_s + 0.25
         return self._fps_label
 
-    def _player_stat_rows(self) -> list[tuple[str, str]]:
-        stats = getattr(self.scene, "player_stats", None)
-        if stats is None:
-            return []
-
-        hp = max(0, int(getattr(stats, "hp", 5)))
-        max_hp = max(1, int(getattr(stats, "max_hp", max(1, hp))))
-        mana = max(0, int(getattr(stats, "mana", 5)))
-        max_mana = max(1, int(getattr(stats, "max_mana", max(1, mana))))
-        strength = max(0, int(getattr(stats, "strength", 1)))
-        dexterity = max(0, int(getattr(stats, "dexterity", 1)))
-        elemental = max(0, int(getattr(stats, "elemental_damage", 0)))
-        card_draw = max(0, int(getattr(stats, "card_draw", 1)))
-
-        crit_percent = getattr(stats, "crit_percent", None)
-        if callable(crit_percent):
-            crit = int(crit_percent())
-        else:
-            crit = int(round(max(0.0, float(getattr(stats, "crit_chance", 0.0)))))
-
-        return [
-            ("HP", f"{hp}/{max_hp}"),
-            ("Mana", f"{mana}/{max_mana}"),
-            ("Strength", str(strength)),
-            ("Dexterity", str(dexterity)),
-            ("Crit Chance", f"{crit}%"),
-            ("Elemental Damage", str(elemental)),
-            ("Card Draw", str(card_draw)),
-        ]
-
-    @staticmethod
-    def _inventory_item_label(item) -> str:
-        if item is None:
-            return ""
-        if isinstance(item, dict):
-            for key in ("name", "label", "title", "id"):
-                value = item.get(key)
-                if value:
-                    return str(value)
-            return ""
-        name = getattr(item, "name", None) or getattr(item, "label", None)
-        if name:
-            return str(name)
-        return str(item)
-
-    @staticmethod
-    def _fit_text_width(text, label: str, max_width: float) -> str:
-        if not label:
-            return ""
-        try:
-            if text.font.size(label)[0] <= max_width:
-                return label
-            for length in range(len(label) - 1, 0, -1):
-                candidate = label[:length] + "."
-                if text.font.size(candidate)[0] <= max_width:
-                    return candidate
-        except Exception:
-            return label[:8]
-        return ""
-
-    @staticmethod
-    def _inventory_panel_rect(
-        width: int = WIDTH,
-        height: int = HEIGHT,
-    ) -> tuple[float, float, float, float]:
-        outer_w = min(float(width) - 72.0, 930.0)
-        outer_h = min(float(height) - 72.0, 560.0)
-        outer_x = (float(width) - outer_w) * 0.5
-        outer_y = (float(height) - outer_h) * 0.5
-        return outer_x, outer_y, outer_w, outer_h
-
-    def _inventory_close_rect(
-        self,
-        width: int = WIDTH,
-        height: int = HEIGHT,
-    ) -> tuple[float, float, float, float]:
-        outer_x, outer_y, outer_w, _outer_h = self._inventory_panel_rect(width, height)
-        size = 34.0
-        return outer_x + outer_w - size - 20.0, outer_y + 18.0, size, size
-
-    def draw_inventory(self, text, fps_label: str) -> None:  # pragma: no cover - visual
-        import pygame
-
-        text.begin()
-        try:
-            with self._profile("hud_text.fps"):
-                text.draw_text(
-                    fps_label,
-                    12,
-                    10,
-                    key="fps",
-                    align="topleft",
-                    color=[255, 0, 0, 0],
+    def _approx_object_position(self, obj) -> tuple[float, float, float] | None:
+        position = getattr(obj, "position", None)
+        if position is not None:
+            try:
+                return (
+                    float(position.x),
+                    float(getattr(position, "y", 0.0)),
+                    float(position.z),
                 )
+            except Exception:
+                pass
 
-            outer_x, outer_y, outer_w, outer_h = self._inventory_panel_rect()
-            padding = 24.0
-            gap = 22.0
-            stats_w = min(280.0, max(230.0, outer_w * 0.31))
-            grid_x = outer_x + padding
-            grid_y = outer_y + 82.0
-            grid_w = outer_w - padding * 2.0 - stats_w - gap
-            stats_x = grid_x + grid_w + gap
-            stats_y = grid_y
-            stats_h = outer_h - 108.0
-
-            rows = self._player_stat_rows()
-            items = list(getattr(self.scene, "inventory_items", ()) or ())
-            cols = 6
-            visible_rows = 4
-            slot_gap = 10.0
-            slot_size = min(
-                72.0,
-                max(
-                    44.0,
-                    min(
-                        (grid_w - slot_gap * (cols - 1)) / cols,
-                        (stats_h - slot_gap * (visible_rows - 1)) / visible_rows,
-                    ),
-                ),
-            )
-            grid_h = visible_rows * slot_size + (visible_rows - 1) * slot_gap
-            slot_count = cols * visible_rows
-            close_x, close_y, close_w, close_h = self._inventory_close_rect()
-            mx, my = pygame.mouse.get_pos()
-            close_hovered = close_x <= mx <= close_x + close_w and close_y <= my <= close_y + close_h
-
-            glDisable(GL_TEXTURE_2D)
-            self._draw_overlay_rect(0, 0, WIDTH, HEIGHT, (0.0, 0.0, 0.0, 0.55))
-            self._draw_overlay_rect(
-                outer_x,
-                outer_y,
-                outer_w,
-                outer_h,
-                (0.035, 0.04, 0.045, 0.96),
-            )
-            self._draw_overlay_rect(
-                outer_x + 4.0,
-                outer_y + 4.0,
-                outer_w - 8.0,
-                outer_h - 8.0,
-                (0.085, 0.075, 0.065, 0.9),
-            )
-            self._draw_overlay_rect(
-                grid_x - 12.0,
-                grid_y - 14.0,
-                grid_w + 24.0,
-                grid_h + 28.0,
-                (0.025, 0.026, 0.03, 0.72),
-            )
-            self._draw_overlay_rect(
-                stats_x,
-                outer_y + 62.0,
-                stats_w,
-                outer_h - 86.0,
-                (0.025, 0.026, 0.03, 0.72),
-            )
-            self._draw_overlay_rect(
-                close_x,
-                close_y,
-                close_w,
-                close_h,
-                (0.30, 0.12, 0.10, 0.96) if close_hovered else (0.12, 0.08, 0.075, 0.92),
-            )
-            self._draw_overlay_rect(
-                close_x + 3.0,
-                close_y + 3.0,
-                close_w - 6.0,
-                close_h - 6.0,
-                (0.48, 0.18, 0.14, 0.74) if close_hovered else (0.22, 0.13, 0.11, 0.64),
-            )
-
-            for index in range(slot_count):
-                col = index % cols
-                row = index // cols
-                x = grid_x + col * (slot_size + slot_gap)
-                y = grid_y + row * (slot_size + slot_gap)
-                filled = index < len(items)
-                self._draw_overlay_rect(
-                    x,
-                    y,
-                    slot_size,
-                    slot_size,
-                    (
-                        (0.12, 0.105, 0.09, 0.96)
-                        if filled
-                        else (0.06, 0.058, 0.055, 0.92)
-                    ),
+        center = getattr(obj, "center", None)
+        if center is not None:
+            try:
+                return (
+                    float(center.x),
+                    float(getattr(center, "y", 0.0)),
+                    float(center.z),
                 )
-                self._draw_overlay_rect(
-                    x + 3.0,
-                    y + 3.0,
-                    slot_size - 6.0,
-                    slot_size - 6.0,
-                    (
-                        (0.23, 0.18, 0.12, 0.54)
-                        if filled
-                        else (0.11, 0.105, 0.1, 0.5)
-                    ),
-                )
+            except Exception:
+                pass
 
-            glEnable(GL_TEXTURE_2D)
-            text.draw_text(
-                "Inventory",
-                outer_x + padding,
-                outer_y + 24.0,
-                color=(255, 245, 230, 255),
-                align="topleft",
-            )
-            text.draw_text(
-                "Stats",
-                stats_x + 16.0,
-                outer_y + 24.0,
-                color=(255, 245, 230, 255),
-                align="topleft",
-            )
-            text.draw_text(
-                "X",
-                close_x + close_w * 0.5,
-                close_y + close_h * 0.5,
-                color=(255, 245, 230, 255),
-                align="center",
-            )
-
-            for index, item in enumerate(items[:slot_count]):
-                label = self._inventory_item_label(item)
-                if not label:
-                    continue
-                col = index % cols
-                row = index // cols
-                x = grid_x + col * (slot_size + slot_gap)
-                y = grid_y + row * (slot_size + slot_gap)
-                label = self._fit_text_width(text, label, slot_size - 10.0)
-                if not label:
-                    continue
-                text.draw_text(
-                    label,
-                    x + slot_size * 0.5,
-                    y + slot_size * 0.5,
-                    color=(245, 235, 215, 255),
-                    align="center",
-                )
-
-            stat_line_h = 38.0
-            for index, (label, value) in enumerate(rows):
-                y = stats_y + index * stat_line_h
-                text.draw_text(
-                    label,
-                    stats_x + 18.0,
-                    y,
-                    color=(210, 214, 220, 255),
-                    align="topleft",
-                )
-                text.draw_text(
-                    value,
-                    stats_x + stats_w - 18.0,
-                    y,
-                    color=(255, 245, 230, 255),
-                    align="topright",
-                )
-        finally:
-            text.end()
-
-    def handle_inventory_click(self, pos) -> bool:
-        mx, my = pos
-        x, y, w, h = self._inventory_close_rect()
-        if not (x <= mx <= x + w and y <= my <= y + h):
-            return False
-
-        self.scene.inventory_open = False
-        self.scene.paused = False
-        self.scene.showing_settings_menu = False
-
-        import pygame
-
-        try:
-            pygame.mouse.set_visible(False)
-            pygame.event.set_grab(True)
-        except pygame.error:
-            pass
-        return True
-
-    def _active_pause_menu(self):
-        if getattr(self.scene, "showing_settings_menu", False):
-            return getattr(self.scene, "setting_menu", None)
-        return getattr(self.scene, "pause_menu", None)
-
-    def _active_battle_goblin(self):
-        goblin = getattr(self.scene, "active_battle_goblin", None)
-        if goblin is None or not getattr(goblin, "enabled", True):
-            return None
-        return goblin
-
-    def _battle_goblin_hp(self, goblin) -> tuple[int, int]:
-        max_hp = max(1, int(getattr(goblin, "max_hp", 5)))
-        hp = max(0, min(max_hp, int(getattr(goblin, "hp", max_hp))))
-        return hp, max_hp
-
-    def _battle_player_stat_lines(self) -> list[str]:
-        rows = dict(self._player_stat_rows())
-        if not rows:
-            return []
-        return [
-            f"STR {rows['Strength']}  DEX {rows['Dexterity']}",
-            f"Crit {rows['Crit Chance']}  Elem {rows['Elemental Damage']}",
-            f"Draw {rows['Card Draw']}",
-        ]
-
-    def _battle_hp_anchor(self) -> tuple[float, float] | None:
-        goblin = self._active_battle_goblin()
-        if goblin is None:
-            return None
-
-        position = getattr(goblin, "position", None)
-        if position is None:
-            return None
-
-        try:
-            sprite_height = max(
-                1.0,
-                float(
+        if hasattr(obj, "start") and hasattr(obj, "end"):
+            try:
+                scene = self.scene
+                start = obj.start
+                end = obj.end
+                cx = (float(start.x) + float(end.x)) * 0.5
+                cz = (float(start.z) + float(end.z)) * 0.5
+                cy = float(
                     getattr(
-                        goblin,
-                        "_sprite_height",
-                        getattr(goblin, "DEFAULT_HEIGHT", 42.0),
+                        obj,
+                        "ground_y",
+                        getattr(scene.camera.position, "y", 0.0)
+                        if getattr(scene, "camera", None)
+                        else 0.0,
                     )
-                ),
-            )
-            modelview = glGetDoublev(GL_MODELVIEW_MATRIX)
-            projection = glGetDoublev(GL_PROJECTION_MATRIX)
-            viewport = glGetIntegerv(GL_VIEWPORT)
-            win_x, win_y, win_z = gluProject(
-                float(position.x),
-                float(position.y) + sprite_height * 0.62,
-                float(position.z),
-                modelview,
-                projection,
-                viewport,
-            )
-        except Exception:
-            return None
+                )
+                return (cx, cy, cz)
+            except Exception:
+                pass
 
-        if win_z < 0.0 or win_z > 1.0:
-            return None
-
-        viewport_x = float(viewport[0])
-        viewport_y = float(viewport[1])
-        viewport_h = float(viewport[3])
-        screen_x = float(win_x) - viewport_x
-        screen_y = viewport_h - (float(win_y) - viewport_y)
-        return (
-            max(0.0, min(float(WIDTH), screen_x)),
-            max(0.0, min(float(HEIGHT), screen_y)),
-        )
+        return None
 
     @staticmethod
-    def _draw_overlay_rect(
-        x: float,
-        y: float,
-        w: float,
-        h: float,
-        color: tuple[float, float, float, float],
-    ) -> None:
-        glColor4f(*color)
-        glBegin(GL_QUADS)
-        glVertex2f(x, y)
-        glVertex2f(x + w, y)
-        glVertex2f(x + w, y + h)
-        glVertex2f(x, y + h)
-        glEnd()
-
-    def _draw_battle_hp_plate(
-        self,
-        text,
-        anchor: tuple[float, float],
-    ) -> None:  # pragma: no cover - visual
-        goblin = self._active_battle_goblin()
-        if goblin is None:
-            return
-
-        hp, max_hp = self._battle_goblin_hp(goblin)
-        label = f"HP {hp}/{max_hp}"
-        try:
-            label_w = text.font.size(label)[0]
-        except Exception:
-            label_w = 72
-
-        plate_w = max(112.0, float(label_w) + 28.0)
-        plate_h = 42.0
-        x = max(10.0, min(float(WIDTH) - plate_w - 10.0, anchor[0] - plate_w * 0.5))
-        y = max(10.0, min(float(HEIGHT) - plate_h - 10.0, anchor[1] - plate_h - 8.0))
-        ratio = hp / max_hp
-
-        glDisable(GL_TEXTURE_2D)
-        self._draw_overlay_rect(x, y, plate_w, plate_h, (0.04, 0.035, 0.03, 0.9))
-        self._draw_overlay_rect(x + 4, y + 4, plate_w - 8, plate_h - 8, (0.12, 0.08, 0.06, 0.86))
-        bar_x = x + 10.0
-        bar_y = y + plate_h - 14.0
-        bar_w = plate_w - 20.0
-        self._draw_overlay_rect(bar_x, bar_y, bar_w, 7.0, (0.18, 0.03, 0.03, 0.95))
-        self._draw_overlay_rect(
-            bar_x,
-            bar_y,
-            bar_w * ratio,
-            7.0,
-            (0.86, 0.14, 0.08, 0.96),
+    def _sphere_for_vertices(vertices):
+        if not vertices:
+            return None
+        min_x = min(float(v.x) for v in vertices)
+        max_x = max(float(v.x) for v in vertices)
+        min_y = min(float(v.y) for v in vertices)
+        max_y = max(float(v.y) for v in vertices)
+        min_z = min(float(v.z) for v in vertices)
+        max_z = max(float(v.z) for v in vertices)
+        center = (
+            (min_x + max_x) * 0.5,
+            (min_y + max_y) * 0.5,
+            (min_z + max_z) * 0.5,
         )
-        glEnable(GL_TEXTURE_2D)
-        text.draw_text(
-            label,
-            x + plate_w * 0.5,
-            y + 16.0,
-            color=(255, 245, 230, 255),
-            align="center",
+        radius = (
+            ((max_x - min_x) * 0.5) ** 2
+            + ((max_y - min_y) * 0.5) ** 2
+            + ((max_z - min_z) * 0.5) ** 2
+        ) ** 0.5
+        return center, radius
+
+    def _object_render_sphere(self, obj):
+        center = getattr(obj, "bounds_center", None)
+        if center is not None:
+            return center, float(getattr(obj, "bounds_radius", 0.0))
+
+        for method_name in ("get_render_bounding_sphere", "get_bounding_sphere"):
+            method = getattr(obj, method_name, None)
+            if callable(method):
+                try:
+                    sphere = method()
+                except Exception:
+                    sphere = None
+                if sphere:
+                    return sphere
+
+        visual_vertices = getattr(obj, "_visual_vertices", None)
+        if callable(visual_vertices):
+            try:
+                sphere = self._sphere_for_vertices(visual_vertices())
+            except Exception:
+                sphere = None
+            if sphere:
+                return sphere
+
+        get_vertices = getattr(obj, "get_world_vertices", None)
+        if callable(get_vertices):
+            try:
+                sphere = self._sphere_for_vertices(get_vertices())
+            except Exception:
+                sphere = None
+            if sphere:
+                return sphere
+
+        get_bounds = getattr(obj, "get_bounding_box", None)
+        if callable(get_bounds):
+            try:
+                bbox = get_bounds()
+                if bbox:
+                    min_x, max_x, min_z, max_z = (float(v) for v in bbox)
+                    scene = self.scene
+                    pos = self._approx_object_position(obj)
+                    cy = pos[1] if pos is not None else (
+                        float(getattr(scene.camera.position, "y", 0.0))
+                        if getattr(scene, "camera", None)
+                        else 0.0
+                    )
+                    center = (
+                        (min_x + max_x) * 0.5,
+                        cy,
+                        (min_z + max_z) * 0.5,
+                    )
+                    radius = (
+                        ((max_x - min_x) * 0.5) ** 2
+                        + ((max_z - min_z) * 0.5) ** 2
+                    ) ** 0.5
+                    return center, radius
+            except Exception:
+                pass
+
+        pos = self._approx_object_position(obj)
+        if pos is None:
+            return None
+        radius = max(
+            0.0,
+            float(
+                getattr(
+                    obj,
+                    "render_radius",
+                    getattr(obj, "collision_radius", 0.0),
+                )
+                or 0.0
+            ),
         )
+        return pos, radius
 
-    def _draw_battle_player_stats(self, text) -> None:  # pragma: no cover - visual
-        lines = self._battle_player_stat_lines()
-        if not lines:
-            return
+    def _object_visible(self, obj) -> bool:
+        camera = getattr(self.scene, "camera", None)
+        if camera is None:
+            return True
+        tester = getattr(camera, "sphere_in_frustum", None)
+        if not callable(tester):
+            return True
+        sphere = self._object_render_sphere(obj)
+        if sphere is None:
+            return True
+        center, radius = sphere
+        return bool(tester(center, radius, far_distance=VIEWDISTANCE))
 
-        try:
-            max_label_w = max(text.font.size(line)[0] for line in lines)
-            line_h = max(16, text.font.get_height())
-        except Exception:
-            max_label_w = 142
-            line_h = 18
+    def draw_world_objects(self, enable_timing: bool = False) -> None:  # pragma: no cover - visual
+        scene = self.scene
 
-        panel_w = max(150.0, float(max_label_w) + 24.0)
-        panel_h = 18.0 + float(len(lines) * line_h)
-        x = 14.0
-        y = 14.0
-
-        glDisable(GL_TEXTURE_2D)
-        self._draw_overlay_rect(x, y, panel_w, panel_h, (0.035, 0.035, 0.04, 0.9))
-        self._draw_overlay_rect(x + 4, y + 4, panel_w - 8, panel_h - 8, (0.08, 0.075, 0.07, 0.86))
-        glEnable(GL_TEXTURE_2D)
-
-        for index, line in enumerate(lines):
-            text.draw_text(
-                line,
-                x + 12.0,
-                y + 9.0 + index * line_h,
-                color=(235, 240, 250, 255),
-                align="topleft",
+        start_draw_decal_batches_time = time.perf_counter()
+        with self._profile("objects.decal_batches"):
+            profiler = getattr(scene, "profiler", None)
+            for batch in scene.decal_batches:
+                batch.draw(camera=scene.camera, profiler=profiler)
+        end_draw_decal_batches_time = time.perf_counter()
+        if enable_timing:
+            print(
+                "Drawing decal batches took "
+                f"{end_draw_decal_batches_time - start_draw_decal_batches_time:.6f} seconds"
             )
 
-    def draw_battle_menu(self, text) -> None:  # pragma: no cover - visual
-        hp_anchor = self._battle_hp_anchor()
-        text.begin()
-        glDisable(GL_TEXTURE_2D)
-
-        if hp_anchor is not None:
-            self._draw_battle_hp_plate(text, hp_anchor)
-        self._draw_battle_player_stats(text)
-        battle_overlay = getattr(self.scene, "battle_overlay", None)
-        if battle_overlay is not None:
-            battle_overlay.draw(text)
-
-        glEnable(GL_TEXTURE_2D)
-        text.draw_text(
-            "Battle mode",
-            WIDTH // 2,
-            24,
-            color=(255, 245, 230, 255),
-            align="center",
-        )
-
-        text.end()
-
-    def draw_pause_menu(self, text) -> None:  # pragma: no cover - visual
-        import pygame
-
-        text.begin()
-        glDisable(GL_TEXTURE_2D)
-        glColor4f(0.0, 0.0, 0.0, 0.6)
-        glBegin(GL_QUADS)
-        glVertex2f(0, 0)
-        glVertex2f(WIDTH, 0)
-        glVertex2f(WIDTH, HEIGHT)
-        glVertex2f(0, HEIGHT)
-        glEnd()
-
-        menu = self._active_pause_menu()
-        if menu is None:
-            glEnable(GL_TEXTURE_2D)
-            text.end()
-            return
-
-        buttons = menu.compute_buttons()
-        mx, my = pygame.mouse.get_pos()
-        for button in buttons:
-            x, y, w, h = button["rect"]
-            hovered = x <= mx <= x + w and y <= my <= y + h
-            is_slider = button.get("type") == "slider"
-
-            glColor4f(0.12, 0.12, 0.12, 0.95 if hovered else 0.85)
-            glBegin(GL_QUADS)
-            glVertex2f(x, y)
-            glVertex2f(x + w, y)
-            glVertex2f(x + w, y + h)
-            glVertex2f(x, y + h)
-            glEnd()
-
-            glColor4f(0.2, 0.2, 0.2, 0.9 if hovered else 0.75)
-            glBegin(GL_QUADS)
-            glVertex2f(x + 2, y + 2)
-            glVertex2f(x + w - 2, y + 2)
-            glVertex2f(x + w - 2, y + h - 2)
-            glVertex2f(x + 2, y + h - 2)
-            glEnd()
-
-            if is_slider:
-                padding = getattr(menu, "slider_horizontal_padding", 18)
-                track_x = x + padding
-                track_w = max(1, w - padding * 2)
-                track_y = y + h - 12
-                track_h = 5
-                ratio = max(0.0, min(1.0, float(button.get("ratio", 0.0))))
-                fill_w = track_w * ratio
-                knob_x = track_x + fill_w
-
-                glColor4f(0.08, 0.08, 0.08, 0.9)
-                glBegin(GL_QUADS)
-                glVertex2f(track_x, track_y)
-                glVertex2f(track_x + track_w, track_y)
-                glVertex2f(track_x + track_w, track_y + track_h)
-                glVertex2f(track_x, track_y + track_h)
-                glEnd()
-
-                glColor4f(0.35, 0.58, 0.86, 0.95)
-                glBegin(GL_QUADS)
-                glVertex2f(track_x, track_y)
-                glVertex2f(track_x + fill_w, track_y)
-                glVertex2f(track_x + fill_w, track_y + track_h)
-                glVertex2f(track_x, track_y + track_h)
-                glEnd()
-
-                glColor4f(0.88, 0.92, 0.98, 1.0)
-                glBegin(GL_QUADS)
-                glVertex2f(knob_x - 5, track_y - 5)
-                glVertex2f(knob_x + 5, track_y - 5)
-                glVertex2f(knob_x + 5, track_y + track_h + 5)
-                glVertex2f(knob_x - 5, track_y + track_h + 5)
-                glEnd()
-
-        glEnable(GL_TEXTURE_2D)
-        for button in buttons:
-            x, y, w, h = button["rect"]
-            if button.get("type") == "slider":
-                padding = getattr(menu, "slider_horizontal_padding", 18)
-                text.draw_text(
-                    button["label"],
-                    x + padding,
-                    y + 6,
-                    color=(255, 255, 255, 255),
-                    align="topleft",
-                )
-                text.draw_text(
-                    button.get("value_text", ""),
-                    x + w - padding,
-                    y + 6,
-                    color=(220, 230, 245, 255),
-                    align="topright",
+        start_draw_wall_tiles_time = time.perf_counter()
+        with self._profile("objects.wall_tiles"):
+            if scene.wall_tile_batches:
+                BatchedMesh.draw_many(
+                    scene.wall_tile_batches,
+                    camera=scene.camera,
+                    view_distance=VIEWDISTANCE,
                 )
             else:
-                text.draw_text(
-                    button["label"],
-                    x + w / 2,
-                    y + h / 2,
-                    color=(255, 255, 255, 255),
-                    align="center",
-                )
-
-        title = getattr(menu, "title", None)
-        if title and buttons:
-            text.draw_text(
-                title,
-                WIDTH // 2,
-                buttons[0]["rect"][1] - 40,
-                color=(230, 230, 230, 255),
-                align="center",
+                entity_ids = {id(entity) for entity in scene.entities}
+                for wall in scene.wall_tiles:
+                    if id(wall) in entity_ids:
+                        continue
+                    if not self._object_visible(wall):
+                        continue
+                    wall.draw(camera=scene.camera)
+        end_draw_wall_tiles_time = time.perf_counter()
+        if enable_timing:
+            print(
+                "Drawing wall tiles took "
+                f"{end_draw_wall_tiles_time - start_draw_wall_tiles_time:.6f} seconds"
             )
 
-        text.end()
+        start_draw_polygons_time = time.perf_counter()
+        with self._profile("objects.polygon_batches"):
+            for batch in getattr(scene, "polygon_batches", ()) or ():
+                batch.draw(camera=scene.camera, view_distance=VIEWDISTANCE)
+        with self._profile("objects.polygons"):
+            for polygon in scene.polygons:
+                if getattr(polygon, "render_batched", False):
+                    continue
+                if not self._object_visible(polygon):
+                    continue
+                polygon.draw(camera=scene.camera)
+        end_draw_polygons_time = time.perf_counter()
+        if enable_timing:
+            print(
+                "Drawing polygons took "
+                f"{end_draw_polygons_time - start_draw_polygons_time:.6f} seconds"
+            )
 
-    def compute_pause_buttons(self, width: int = WIDTH, height: int = HEIGHT):
-        menu = self._active_pause_menu()
-        if menu is None:
-            return []
-        return menu.compute_buttons(width=width, height=height)
+        starting_draw_other_time = time.perf_counter()
+        with self._profile("objects.road_batches"):
+            for batch in getattr(scene, "road_batches", ()) or ():
+                batch.draw(camera=scene.camera, view_distance=VIEWDISTANCE)
 
-    def compute_battle_buttons(self, width: int = WIDTH, height: int = HEIGHT):
-        return []
+        with self._profile("objects.others"):
+            for obj in scene.others:
+                if getattr(obj, "render_batched", False):
+                    continue
+                if not self._object_visible(obj):
+                    continue
 
-    def handle_battle_click(self, pos) -> bool:
-        battle_overlay = getattr(self.scene, "battle_overlay", None)
-        if battle_overlay is not None:
-            return bool(battle_overlay.handle_mouse_down(pos))
-        return False
+                obj.draw()
+        end_draw_other_time = time.perf_counter()
+        if enable_timing:
+            print(
+                "Drawing other objects took "
+                f"{end_draw_other_time - starting_draw_other_time:.6f} seconds"
+            )
 
-    def handle_battle_motion(self, pos) -> bool:
-        battle_overlay = getattr(self.scene, "battle_overlay", None)
-        if battle_overlay is not None:
-            return bool(battle_overlay.handle_mouse_motion(pos))
-        return False
+        start_draw_entities_time = time.perf_counter()
 
-    def handle_battle_release(self, pos) -> bool:
-        battle_overlay = getattr(self.scene, "battle_overlay", None)
-        if battle_overlay is not None:
-            return bool(battle_overlay.handle_mouse_up(pos))
-        return False
+        with self._profile("objects.door_batches"):
+            for batch in getattr(scene, "door_batches", ()) or ():
+                batch.draw(camera=scene.camera, view_distance=VIEWDISTANCE)
 
-    def handle_pause_click(self, pos) -> None:
-        menu = self._active_pause_menu()
-        if menu is not None:
-            menu.handle_click(pos)
+        with self._profile("objects.window_batches"):
+            for batch in getattr(scene, "window_batches", ()) or ():
+                batch.draw(camera=scene.camera, view_distance=VIEWDISTANCE)
 
-    def handle_pause_motion(self, pos) -> None:
-        menu = self._active_pause_menu()
-        if menu is not None:
-            menu.handle_motion(pos)
+        with self._profile("objects.goblin_shadows"):
+            goblins = getattr(scene, "goblins", None) or scene.entities
+            draw_goblin_shadows_batched(
+                goblins,
+                camera=scene.camera,
+                view_distance=VIEWDISTANCE,
+            )
 
-    def handle_pause_release(self, pos) -> None:
-        menu = self._active_pause_menu()
-        if menu is not None:
-            menu.handle_release(pos)
+        with self._profile("objects.entities"):
+            for entity in getattr(scene, "immediate_entities", ()) or ():
+                if not getattr(entity, "enabled", True) or not getattr(
+                    entity,
+                    "visible",
+                    True,
+                ):
+                    continue
+
+                if not self._object_visible(entity):
+                    continue
+
+                draw_entity = getattr(entity, "draw", None)
+                if callable(draw_entity):
+                    with self._profile(f"entities.{type(entity).__name__}"):
+                        try:
+                            draw_entity(camera=scene.camera)
+                        except TypeError:
+                            draw_entity()
+        end_draw_entities_time = time.perf_counter()
+        if enable_timing:
+            print(
+                "Drawing entities took "
+                f"{end_draw_entities_time - start_draw_entities_time:.6f} seconds"
+            )
+
+        start_draw_sprites_time = time.perf_counter()
+        with self._profile("objects.sprites"):
+            if scene.sprite_items and scene.camera is not None:
+                draw_sprites_batched(
+                    scene.sprite_items,
+                    scene.camera,
+                    scene.ground_height_at,
+                    lighting=getattr(scene, "lighting", None),
+                    sun_direction=getattr(scene, "sun_direction", None),
+                    profiler=getattr(scene, "profiler", None),
+                    static_data=True,
+                )
+
+        end_draw_sprites_time = time.perf_counter()
+        if enable_timing:
+            print(
+                "Drawing sprites took "
+                f"{end_draw_sprites_time - start_draw_sprites_time:.6f} seconds"
+            )
+
+    def draw_inventory(self, text, fps_label: str) -> None:  # pragma: no cover - visual
+        self.inventory_panel.draw(text, fps_label, profile=self._profile)
+
+    def draw_battle_menu(self, text) -> None:  # pragma: no cover - visual
+        self.battle_panel.draw(text)
+
+    def draw_pause_menu(self, text) -> None:  # pragma: no cover - visual
+        self.pause_panel.draw(text)
+

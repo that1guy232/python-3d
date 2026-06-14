@@ -12,7 +12,18 @@ import pygame
 
 from pygame.math import Vector3
 
-from game.config import *
+from game.config import (
+    CAMERA_FOLLOW_SMOOTH_HZ,
+    CAMERA_GROUND_OFFSET,
+    FOV,
+    GOBLIN_BATTLE_LOOK_SMOOTH_HZ,
+    GOBLIN_BATTLE_TRIGGER_DISTANCE,
+    GRAVITY,
+    HEIGHT,
+    PLAYER_HEAD_CLEARANCE,
+    PLAYER_RADIUS,
+    WIDTH,
+)
 from engine.entity import Entity
 from engine.collision import (
     player_support_height_at,
@@ -23,8 +34,6 @@ from engine.sound.sound_utils import Sounds
 
 
 _BASE_ENTITY_UPDATE = Entity.update
-_COLLISION_CELL_SIZE = 128.0
-_COLLISION_FALLBACK_CELL_LIMIT = 256
 _AMBIENT_BIRDS_KEY = "ambient_birds"
 _AMBIENT_BIRDS_OUTDOOR_VOLUME = 0.035
 _AMBIENT_BIRDS_INDOOR_VOLUME = 0.004
@@ -92,205 +101,6 @@ def stop_ambient_birds() -> None:
     Sounds.stop(_AMBIENT_BIRDS_KEY)
 
 
-def _iter_collision_sources(scene):
-    seen: set[int] = set()
-    for mesh in getattr(scene, "wall_tiles", ()) or ():
-        if mesh is None:
-            continue
-        mesh_id = id(mesh)
-        if mesh_id in seen:
-            continue
-        seen.add(mesh_id)
-        yield mesh, False
-    for mesh in getattr(scene, "polygons", ()) or ():
-        if mesh is None:
-            continue
-        mesh_id = id(mesh)
-        if mesh_id in seen:
-            continue
-        seen.add(mesh_id)
-        yield mesh, True
-
-
-def _collision_source_key(scene):
-    wall_tiles = getattr(scene, "wall_tiles", ()) or ()
-    polygons = getattr(scene, "polygons", ()) or ()
-
-    def edge_ids(values):
-        if not values:
-            return (None, None)
-        return (id(values[0]), id(values[-1]))
-
-    return (
-        id(wall_tiles),
-        len(wall_tiles),
-        *edge_ids(wall_tiles),
-        id(polygons),
-        len(polygons),
-        *edge_ids(polygons),
-    )
-
-
-def _collision_mesh_dynamic(mesh) -> bool:
-    return (
-        getattr(mesh, "door_render_batched", False)
-        or hasattr(mesh, "open_amount")
-        or type(mesh).__name__ == "Door"
-    )
-
-
-def _mesh_bounds(mesh):
-    get_bounds = getattr(mesh, "get_bounding_box", None)
-    if not callable(get_bounds):
-        return None
-    try:
-        bounds = get_bounds()
-    except Exception:
-        return None
-    if not bounds:
-        return None
-    try:
-        min_x, max_x, min_z, max_z = bounds
-        return (float(min_x), float(max_x), float(min_z), float(max_z))
-    except Exception:
-        return None
-
-
-def rebuild_collision_index(scene) -> dict:
-    cell_size = float(getattr(scene, "collision_cell_size", _COLLISION_CELL_SIZE))
-    if cell_size <= 1.0:
-        cell_size = _COLLISION_CELL_SIZE
-
-    cells: dict[tuple[int, int], list] = {}
-    wall_cells: dict[tuple[int, int], list] = {}
-    dynamic = []
-    wall_dynamic = []
-    fallback = []
-    wall_fallback = []
-
-    def add_to_grid(grid, mesh, bounds) -> bool:
-        min_x, max_x, min_z, max_z = bounds
-        min_cx = math.floor(min_x / cell_size)
-        max_cx = math.floor(max_x / cell_size)
-        min_cz = math.floor(min_z / cell_size)
-        max_cz = math.floor(max_z / cell_size)
-        cell_count = (max_cx - min_cx + 1) * (max_cz - min_cz + 1)
-        if cell_count > _COLLISION_FALLBACK_CELL_LIMIT:
-            return False
-        for cx in range(min_cx, max_cx + 1):
-            for cz in range(min_cz, max_cz + 1):
-                grid.setdefault((cx, cz), []).append(mesh)
-        return True
-
-    for mesh, is_polygon in _iter_collision_sources(scene):
-        is_wall = not is_polygon
-        if _collision_mesh_dynamic(mesh):
-            dynamic.append(mesh)
-            if is_wall:
-                wall_dynamic.append(mesh)
-            continue
-
-        bounds = _mesh_bounds(mesh)
-        if bounds is None:
-            fallback.append(mesh)
-            if is_wall:
-                wall_fallback.append(mesh)
-            continue
-
-        if not add_to_grid(cells, mesh, bounds):
-            fallback.append(mesh)
-        if is_wall and not add_to_grid(wall_cells, mesh, bounds):
-            wall_fallback.append(mesh)
-
-    index = {
-        "key": _collision_source_key(scene),
-        "cell_size": cell_size,
-        "cells": cells,
-        "wall_cells": wall_cells,
-        "dynamic": tuple(dynamic),
-        "wall_dynamic": tuple(wall_dynamic),
-        "fallback": tuple(fallback),
-        "wall_fallback": tuple(wall_fallback),
-    }
-    scene._collision_spatial_index = index
-    return index
-
-
-def invalidate_collision_index(scene) -> None:
-    scene._collision_spatial_index = None
-
-
-def _collision_index(scene) -> dict:
-    index = getattr(scene, "_collision_spatial_index", None)
-    key = _collision_source_key(scene)
-    if not isinstance(index, dict) or index.get("key") != key:
-        index = rebuild_collision_index(scene)
-    return index
-
-
-def collision_meshes_for_bounds(
-    scene,
-    min_x: float,
-    max_x: float,
-    min_z: float,
-    max_z: float,
-    *,
-    include_polygons: bool = True,
-) -> list:
-    index = _collision_index(scene)
-    cell_size = float(index.get("cell_size") or _COLLISION_CELL_SIZE)
-    cells = index["cells"] if include_polygons else index["wall_cells"]
-    dynamic = index["dynamic"] if include_polygons else index["wall_dynamic"]
-    fallback = index["fallback"] if include_polygons else index["wall_fallback"]
-
-    min_cx = math.floor(float(min_x) / cell_size)
-    max_cx = math.floor(float(max_x) / cell_size)
-    min_cz = math.floor(float(min_z) / cell_size)
-    max_cz = math.floor(float(max_z) / cell_size)
-
-    candidates = []
-    seen: set[int] = set()
-
-    def add(mesh) -> None:
-        mesh_id = id(mesh)
-        if mesh_id in seen:
-            return
-        seen.add(mesh_id)
-        candidates.append(mesh)
-
-    for cx in range(min_cx, max_cx + 1):
-        for cz in range(min_cz, max_cz + 1):
-            for mesh in cells.get((cx, cz), ()):
-                add(mesh)
-    for mesh in dynamic:
-        add(mesh)
-    for mesh in fallback:
-        add(mesh)
-
-    return candidates
-
-
-def collision_meshes_at(
-    scene,
-    x: float,
-    z: float,
-    radius: float,
-    *,
-    include_polygons: bool = True,
-) -> list:
-    x = float(x)
-    z = float(z)
-    radius = max(0.0, float(radius))
-    return collision_meshes_for_bounds(
-        scene,
-        x - radius,
-        x + radius,
-        z - radius,
-        z + radius,
-        include_polygons=include_polygons,
-    )
-
-
 def ground_height_at(scene, x: float, z: float) -> float:
     sampler = getattr(scene, "_ground_height_sampler", None)
     if sampler is not None and hasattr(sampler, "height_at"):
@@ -313,10 +123,6 @@ def _player_foot_offset(scene) -> float:
 
 def _player_head_offset(scene) -> float:
     return float(getattr(scene, "player_head_clearance", PLAYER_HEAD_CLEARANCE))
-
-
-def _wall_collision_meshes(scene):
-    return getattr(scene, "wall_tiles", None) or []
 
 
 def _update_entities(scene, dt: float) -> None:
@@ -637,8 +443,7 @@ def _support_height_at(scene, x: float, z: float, foot_y: float | None = None) -
     if foot_y is None:
         foot_y = scene.camera.position.y - _player_foot_offset(scene)
     player_radius = _player_radius(scene)
-    candidates = collision_meshes_at(
-        scene,
+    candidates = scene.collision_meshes_at(
         x,
         z,
         player_radius,
@@ -766,8 +571,7 @@ def update(scene, dt: float) -> None:
             scene.camera.vertical_velocity -= float(getattr(scene, "gravity", GRAVITY)) * dt
             scene.camera.position.y += scene.camera.vertical_velocity * dt
             player_radius = _player_radius(scene)
-            vertical_candidates = collision_meshes_at(
-                scene,
+            vertical_candidates = scene.collision_meshes_at(
                 scene.camera.position.x,
                 scene.camera.position.z,
                 player_radius,

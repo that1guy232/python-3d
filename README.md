@@ -26,6 +26,15 @@ Useful knobs:
 $env:PY3D_PERF_INTERVAL="3.0"  # seconds between reports
 $env:PY3D_PERF_TOP="14"        # number of slowest sections to print
 $env:PY3D_SETUP_TIMING="1"     # print world-loading setup timings
+$env:PY3D_RERAISE_SCENE_EXCEPTIONS="1"  # crash on scene hook failures while debugging
+```
+
+## Tests
+
+Run the headless unit tests with:
+
+```powershell
+py -m unittest discover -s tests
 ```
 
 ## Declaring world content

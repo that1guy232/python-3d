@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import math
 import random
 import time
-from typing import Iterator
+from typing import Callable, Iterator
 
 from pygame.math import Vector3
 
@@ -43,7 +44,6 @@ from game.world.world_road_planner import create_building_access_roads
 from game.world.world_spawner import spawn_world_sprites
 
 
-CREATE_WORLD_OBJECT_STEPS = 11
 BUILDING_ROOF_OVERHANG = 6.0
 BUILDING_WALL_TERRAIN_EMBED_DEPTH = 8.0
 BUILDING_WALL_TERRAIN_SAMPLE_SPACING = 18.0
@@ -61,6 +61,13 @@ _WINDOW_SIDE_BY_DOORWAY = {
     "south": "west",
     "west": "north",
 }
+
+
+@dataclass(frozen=True)
+class WorldObjectBuildStep:
+    label: str
+    action: Callable[[], None]
+    message: str | None = None
 
 
 def _dispose_value(obj) -> None:
@@ -458,10 +465,100 @@ def create_world_objects_steps(
     grass_count: int,
     rock_count: int,
 ) -> Iterator[tuple[str, bool]]:
-    label = "Creating buildings"
-    print("Creating buildings...")
-    yield (label, False)
-    start_time = time.perf_counter()
+    for step in create_world_object_step_specs(
+        scene,
+        grid_count,
+        spacing,
+        half,
+        grid_tile_size,
+        grid_gap,
+        tree_count,
+        grass_count,
+        rock_count,
+    ):
+        if step.message:
+            print(step.message)
+        yield (step.label, False)
+        start_time = time.perf_counter()
+        step.action()
+        scene.log_timing(step.label, start_time, time.perf_counter())
+        yield (step.label, True)
+
+
+def create_world_object_step_count(
+    scene,
+    grid_count: int,
+    spacing: float,
+    half: float,
+    grid_tile_size: int,
+    grid_gap: int,
+    tree_count: int,
+    grass_count: int,
+    rock_count: int,
+) -> int:
+    return len(
+        create_world_object_step_specs(
+            scene,
+            grid_count,
+            spacing,
+            half,
+            grid_tile_size,
+            grid_gap,
+            tree_count,
+            grass_count,
+            rock_count,
+        )
+    )
+
+
+def create_world_object_step_specs(
+    scene,
+    grid_count: int,
+    spacing: float,
+    half: float,
+    grid_tile_size: int,
+    grid_gap: int,
+    tree_count: int,
+    grass_count: int,
+    rock_count: int,
+) -> tuple[WorldObjectBuildStep, ...]:
+    del spacing, half
+    return (
+        WorldObjectBuildStep(
+            "Creating buildings",
+            lambda: _prepare_buildings(scene, grid_count, grid_tile_size, grid_gap),
+            "Creating buildings...",
+        ),
+        WorldObjectBuildStep(
+            "Generating ground mesh",
+            lambda: _generate_ground_mesh(scene),
+            "Generating ground mesh...",
+        ),
+        WorldObjectBuildStep("Building structures", lambda: _build_buildings(scene)),
+        WorldObjectBuildStep(
+            "Building showcase polygons",
+            lambda: _build_showcase_polygons_and_collision(scene),
+        ),
+        WorldObjectBuildStep(
+            "Creating roads",
+            lambda: _build_roads(scene),
+            "Creating roads...",
+        ),
+        WorldObjectBuildStep("Spawning trees", lambda: _spawn_trees(scene, tree_count)),
+        WorldObjectBuildStep("Spawning goblins", lambda: _build_goblins(scene)),
+        WorldObjectBuildStep("Spawning grass", lambda: _spawn_grass(scene, grass_count)),
+        WorldObjectBuildStep("Spawning rocks", lambda: _spawn_rocks(scene, rock_count)),
+        WorldObjectBuildStep("Building fences", lambda: _build_fences(scene)),
+        WorldObjectBuildStep("Adding ground details", lambda: _build_shadow_decals(scene)),
+    )
+
+
+def _prepare_buildings(
+    scene,
+    grid_count: int,
+    grid_tile_size: int,
+    grid_gap: int,
+) -> None:
     scene.buildings: list[Building] = []
     content = resolve_world_content(
         scene,
@@ -486,45 +583,18 @@ def create_world_objects_steps(
         covered_regions=getattr(scene, "covered_regions", ()),
     )
 
-    scene.log_timing(label, start_time, time.perf_counter())
-    yield (label, True)
 
-    label = "Generating ground mesh"
-    print("Generating ground mesh...")
-    yield (label, False)
-    start_time = time.perf_counter()
+def _generate_ground_mesh(scene) -> None:
     _dispose_value(getattr(scene, "ground_mesh", None))
     scene.ground_mesh = scene.builder.build()
     scene._ground_height_sampler = getattr(scene.ground_mesh, "height_sampler", None)
-    scene.log_timing(label, start_time, time.perf_counter())
-    yield (label, True)
 
-    label = "Building structures"
-    yield (label, False)
-    _build_buildings(scene)
-    yield (label, True)
 
-    label = "Building showcase polygons"
-    yield (label, False)
+def _build_showcase_polygons_and_collision(scene) -> None:
     _build_showcase_polygons(scene)
     rebuild_collision_index = getattr(scene, "rebuild_collision_index", None)
     if callable(rebuild_collision_index):
         rebuild_collision_index()
-    yield (label, True)
-
-    yield from _build_roads_and_spawn_sprites_steps(
-        scene, tree_count, grass_count, rock_count
-    )
-
-    label = "Building fences"
-    yield (label, False)
-    _build_fences(scene)
-    yield (label, True)
-
-    label = "Adding ground details"
-    yield (label, False)
-    _build_shadow_decals(scene)
-    yield (label, True)
 
 
 def _build_buildings(scene) -> None:
@@ -785,18 +855,14 @@ def _build_showcase_chest(scene, texture) -> None:
 def _build_roads_and_spawn_sprites(
     scene, tree_count: int, grass_count: int, rock_count: int
 ) -> None:
-    for _label, _finished in _build_roads_and_spawn_sprites_steps(
-        scene, tree_count, grass_count, rock_count
-    ):
-        pass
+    _build_roads(scene)
+    _spawn_trees(scene, tree_count)
+    _build_goblins(scene)
+    _spawn_grass(scene, grass_count)
+    _spawn_rocks(scene, rock_count)
 
 
-def _build_roads_and_spawn_sprites_steps(
-    scene, tree_count: int, grass_count: int, rock_count: int
-) -> Iterator[tuple[str, bool]]:
-    label = "Creating roads"
-    print("Creating roads...")
-    yield (label, False)
+def _build_roads(scene) -> None:
     start_time = time.perf_counter()
     center_z = (scene.ground_bounds[2] + scene.ground_bounds[3]) * 0.5
     center_x = (scene.ground_bounds[0] + scene.ground_bounds[1]) * 0.5
@@ -843,10 +909,9 @@ def _build_roads_and_spawn_sprites_steps(
         f"Built {len(scene.building_roads)} building access road routes "
         f"({segment_count} segments)."
     )
-    yield (label, True)
 
-    label = "Spawning trees"
-    yield (label, False)
+
+def _spawn_trees(scene, tree_count: int) -> None:
     _spawn_sprite_layer(
         scene,
         label="trees",
@@ -858,15 +923,9 @@ def _build_roads_and_spawn_sprites_steps(
         max_spawn_x=(scene.ground_bounds[1] - scene.ground_bounds[0]) / 2 - 35,
         max_spawn_z=(scene.ground_bounds[3] - scene.ground_bounds[2]) / 2 - 35,
     )
-    yield (label, True)
 
-    label = "Spawning goblins"
-    yield (label, False)
-    _build_goblins(scene)
-    yield (label, True)
 
-    label = "Spawning grass"
-    yield (label, False)
+def _spawn_grass(scene, grass_count: int) -> None:
     _spawn_sprite_layer(
         scene,
         label="grasses",
@@ -878,10 +937,9 @@ def _build_roads_and_spawn_sprites_steps(
         max_spawn_x=(scene.ground_bounds[1] - scene.ground_bounds[0]) / 2,
         max_spawn_z=(scene.ground_bounds[3] - scene.ground_bounds[2]) / 2,
     )
-    yield (label, True)
 
-    label = "Spawning rocks"
-    yield (label, False)
+
+def _spawn_rocks(scene, rock_count: int) -> None:
     _spawn_sprite_layer(
         scene,
         label="rocks",
@@ -893,7 +951,6 @@ def _build_roads_and_spawn_sprites_steps(
         max_spawn_x=(scene.ground_bounds[1] - scene.ground_bounds[0]) / 2,
         max_spawn_z=(scene.ground_bounds[3] - scene.ground_bounds[2]) / 2,
     )
-    yield (label, True)
 
 
 def _goblin_position_blocker(scene, *, block_roads: bool = True):

@@ -31,7 +31,10 @@ The package boundary is intentional:
    show progress instead of blocking on a blank screen.
 6. `game.world.worldscene.WorldScene` owns the world state, but delegates most work:
    setup to `world_setup.py`, object construction to `world_builder.py`,
-   runtime behavior to `world_runtime.py`, road planning to
+   runtime behavior to `world_runtime.py`, combat to `combat.py`, entity
+   registration to `entity_registry.py`, collision indexing to
+   `collision_index.py`, static lighting refresh to `lighting_controller.py`,
+   resource cleanup to `scene_resources.py`, road planning to
    `world_road_planner.py`, and drawing to `world_renderer.py`.
 
 ## Runtime Flow
@@ -83,8 +86,9 @@ collision slides.
 ### Cleanup
 
 `Engine.run()` disposes the active scene before quitting Pygame. `WorldScene`
-releases OpenGL-backed meshes, batches, roads, decals, entities, and cached
-collision data while the GL context still exists.
+delegates cleanup to `SceneResourceDisposer`, which releases OpenGL-backed
+meshes, batches, roads, decals, entities, HUD resources, ambient audio, and
+cached collision data while the GL context still exists.
 
 ## Source Map
 
@@ -146,11 +150,16 @@ collision data while the GL context still exists.
 | File | Quick docs |
 | --- | --- |
 | `src/game/world/__init__.py` | Lazy public exports for world objects, `WorldScene`, `WorldContent`, and content helpers. |
-| `src/game/world/worldscene.py` | Central scene state owner. Delegates setup/build/runtime/rendering while keeping entity lists, batches, collision indexes, lighting aliases, and cleanup. |
+| `src/game/world/worldscene.py` | Central scene state owner. Delegates setup/build/runtime/rendering/combat/entity registration/collision indexing/static lighting/resource cleanup while keeping batches and compatibility aliases. |
 | `src/game/world/world_setup.py` | Bootstrap helpers for brightness, controllers, fog/lighting, texture/sound loading, sky, HUD, menus, and tunable scene flags. |
 | `src/game/world/world_builder.py` | World construction pipeline: content, terrain, buildings, lighting, roads, sprites, goblins, fences, decals, doors, windows, and render batches. |
-| `src/game/world/world_runtime.py` | Per-frame runtime helpers: bounds checks, road checks, collision spatial index, height queries, entity updates, interaction, pause/inventory input, and mouse delta forwarding. |
-| `src/game/world/world_renderer.py` | World render pipeline: fog/projection/camera setup, sky, terrain, object passes, HUD text, pause menu, and menu interaction forwarding. |
+| `src/game/world/world_runtime.py` | Per-frame runtime helpers: bounds checks, road checks, height queries, entity updates, interaction, pause/inventory input, and mouse delta forwarding. |
+| `src/game/world/world_renderer.py` | World render pipeline: fog/projection/camera setup, sky, terrain, object passes, and HUD text/panel delegation. |
+| `src/game/world/combat.py` | Battle-mode controller for entering/leaving combat, player damage rolls, active enemy damage, and battle mouse state. |
+| `src/game/world/collision_index.py` | Spatial collision candidate index for wall and polygon meshes, including dynamic/fallback mesh handling. |
+| `src/game/world/entity_registry.py` | Runtime entity registry that keeps entity lists, immediate draw lists, sprites, and collision meshes synchronized. |
+| `src/game/world/lighting_controller.py` | Static lighting controller for brightness changes, baked mesh refresh, texture-lighting shader sync, and exposure fallbacks. |
+| `src/game/world/scene_resources.py` | Scene resource disposer for OpenGL-backed meshes, batches, HUD resources, entities, ambient audio, and cached render/collision references. |
 | `src/game/world/world_content.py` | Declarative scene content. Converts hand-authored or generated building declarations into mutable runtime specs. |
 | `src/game/world/world_lighting_plan.py` | Builds indoor covered regions and doorway/window/torch brightness modifiers from building specs. |
 | `src/game/world/world_road_planner.py` | Plans non-overlapping driveway routes from buildings to the road network. |
@@ -216,8 +225,9 @@ collision data while the GL context still exists.
 - Add rendering-only world pass changes in `game.world.world_renderer`.
 - Add minimap markers by registering a layer on `WorldHUD.minimap`; layer draw
   callbacks receive a `MiniMapContext` with world-to-map coordinate helpers.
-- Add static lighting rules in `world_lighting_plan.py` and reusable lighting
-  math in `engine.rendering.lighting`.
+- Add static lighting rules in `world_lighting_plan.py`, refresh policy in
+  `game.world.lighting_controller`, and reusable lighting math in
+  `engine.rendering.lighting`.
 
 ## Practical Notes
 
@@ -225,7 +235,7 @@ collision data while the GL context still exists.
   When adding a new object type, decide whether it is static enough to batch.
 - Many rendering objects expose `dispose()`. Call or register disposal before
   replacing VBO-backed batches.
-- Collision candidate lookup is indexed in `world_runtime.py`; invalidate or
+- Collision candidate lookup is indexed in `collision_index.py`; invalidate or
   rebuild the index when collision shapes are added or removed after loading.
 - Camera brightness is cached by position buckets. Clear or invalidate caches
   when brightness areas change.

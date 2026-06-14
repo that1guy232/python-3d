@@ -12,13 +12,44 @@ import time
 
 from pygame.math import Vector3
 
-from game.config import *
+from game.config import (
+    BASE_SPEED,
+    CAMERA_FOLLOW_SMOOTH_HZ,
+    CLOUDS_ENABLED,
+    CLOUD_DENSITY,
+    CLOUD_OPACITY,
+    CLOUD_SPEED,
+    FOGDENSITY,
+    FOV,
+    GOBLIN_BATTLE_LOOK_SMOOTH_HZ,
+    GOBLIN_BATTLE_TRIGGER_DISTANCE,
+    GRAVITY,
+    HEADBOB_AMPLITUDE,
+    HEADBOB_AMPLITUDE_SIDE,
+    HEADBOB_DAMPING,
+    HEADBOB_ENABLED,
+    HEADBOB_FREQUENCY,
+    HEADBOB_SPRINT_MULT,
+    JUMP_SPEED,
+    LIGHT_BLUE,
+    MOUSE_SENSITIVITY,
+    SPRINT_SPEED,
+)
 from engine.camera.headbob import HeadBob
 from engine.camera.sway_controller import SwayController
 from engine.rendering.lighting import SceneLighting
 from engine.rendering.sky_renderer import SkyRenderer
 from engine.sound.sound_utils import Sounds
-from game.resources.paths import *
+from game.resources.paths import (
+    BIRDS_SOUND_PATH,
+    DOOR_CLOSE_SOUND_PATH,
+    DOOR_OPEN_SOUND_PATH,
+    GOBLIN_SOUND_PATHS,
+    LEAVES02_SOUND_PATH,
+    MOON_TEXTURE_PATH,
+    STAR_TEXTURE_PATH,
+    STEP1_SOUND_PATH,
+)
 from game.resources.texture_manager import load_world_textures
 from game.world.battle_cards import BattleCardLoadout
 from game.world.player_controller import PlayerCameraController

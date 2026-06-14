@@ -11,6 +11,8 @@ in shader pipeline later.
 
 from __future__ import annotations
 
+import traceback
+
 import pygame
 from OpenGL.GL import (
     glEnable,
@@ -22,7 +24,19 @@ from OpenGL.GL import (
     GL_CULL_FACE,
 )
 
-from engine.config import *
+from engine.config import (
+    FPS,
+    FULLSCREEN,
+    HEIGHT,
+    LIGHT_BLUE,
+    PERFORMANCE_LOG_INTERVAL,
+    PERFORMANCE_LOG_TOP,
+    PERFORMANCE_LOG_WARMUP_FRAMES,
+    PERFORMANCE_LOGGING,
+    RERAISE_SCENE_EXCEPTIONS,
+    VSYNC,
+    WIDTH,
+)
 from engine.core.performance import PerformanceLogger
 from engine.ui.text_renderer import TextRenderer
 
@@ -78,13 +92,23 @@ class Engine:
         self._apply_scene_mouse_state(self.scene)
 
     @staticmethod
-    def _dispose_scene(scene) -> None:
+    def _handle_scene_exception(exc: Exception, *, scene, hook: str, event=None) -> None:
+        scene_name = type(scene).__name__ if scene is not None else "<none>"
+        details = f"scene={scene_name} hook={hook}"
+        if event is not None:
+            details += f" event_type={getattr(event, 'type', '<unknown>')}"
+        print(f"[engine] Scene hook failed: {details}")
+        traceback.print_exception(type(exc), exc, exc.__traceback__)
+        if RERAISE_SCENE_EXCEPTIONS:
+            raise exc
+
+    def _dispose_scene(self, scene) -> None:
         dispose = getattr(scene, "dispose", None)
         if callable(dispose):
             try:
                 dispose()
-            except Exception:
-                pass
+            except Exception as exc:
+                self._handle_scene_exception(exc, scene=scene, hook="dispose")
 
     def _attach_profiler(self, scene) -> None:
         setattr(scene, "profiler", self.profiler)
@@ -118,8 +142,13 @@ class Engine:
             if hasattr(self.scene, "handle_event"):
                 try:
                     self.scene.handle_event(event)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    self._handle_scene_exception(
+                        exc,
+                        scene=self.scene,
+                        hook="handle_event",
+                        event=event,
+                    )
         # mouse look (update target rotation; smoothing applied in update())
         mdx, mdy = pygame.mouse.get_rel()
         # Forward mouse delta and frame dt so handlers can normalize by frame time

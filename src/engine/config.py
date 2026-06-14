@@ -31,3 +31,8 @@ PERFORMANCE_LOG_INTERVAL = float(_os.getenv("PY3D_PERF_INTERVAL", "15.0"))
 PERFORMANCE_LOG_TOP = int(_os.getenv("PY3D_PERF_TOP", "20"))
 PERFORMANCE_LOG_WARMUP_FRAMES = int(_os.getenv("PY3D_PERF_WARMUP", "20"))
 PERFORMANCE_SETUP_TIMING = _env_bool("PY3D_SETUP_TIMING", PERFORMANCE_LOGGING)
+
+# Scene hook exception handling.
+# By default, the engine logs scene event/dispose failures and continues. Enable
+# this while developing to make those failures crash at the source.
+RERAISE_SCENE_EXCEPTIONS = _env_bool("PY3D_RERAISE_SCENE_EXCEPTIONS", False)
