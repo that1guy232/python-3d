@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import math
 
-
 DEFAULT_COLLISION_CELL_SIZE = 128.0
 COLLISION_FALLBACK_CELL_LIMIT = 256
 

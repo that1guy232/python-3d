@@ -26,7 +26,7 @@ from OpenGL.GL import (
     GL_TEXTURE_WRAP_S,
     GL_TEXTURE_WRAP_T,
     GL_REPEAT,
-    GL_TRIANGLE_FAN
+    GL_TRIANGLE_FAN,
 )
 import numpy as np
 from engine.textures.texture_utils import get_texture_size
@@ -36,7 +36,9 @@ from engine.rendering.lighting import sunlight_factor_for_normal
 class Polygon(Object3D):
     """Extrude arbitrary 2D points into a textured or colored 3D shape."""
 
-    def __init__(self, position=None, rotation=None, points_2d=None, thickness=1.0, texture=None):
+    def __init__(
+        self, position=None, rotation=None, points_2d=None, thickness=1.0, texture=None
+    ):
         self.points_2d = points_2d
         if len(self.points_2d) < 3:
             raise ValueError("A polygon must have at least 3 points.")
@@ -49,7 +51,6 @@ class Polygon(Object3D):
         self.vertices = self._generate_vertices()
         self.faces = self._generate_faces()
         self.local_vertices = self.vertices
-
 
     def _generate_faces(self):
         """Generate faces for a 3D extruded polygon.
@@ -162,10 +163,10 @@ class Polygon(Object3D):
         for i in range(n_points):
             next_i = (i + 1) % n_points
             face = [
-                i,                    # current front vertex
-                next_i,               # next front vertex
-                next_i + n_points,    # next back vertex
-                i + n_points          # current back vertex
+                i,  # current front vertex
+                next_i,  # next front vertex
+                next_i + n_points,  # next back vertex
+                i + n_points,  # current back vertex
             ]
             faces.append(face)
 
@@ -177,15 +178,15 @@ class Polygon(Object3D):
         Creates front face at z=0 and back face at z=-thickness.
         """
         vertices = []
-        
+
         # Front face vertices (z = 0) - FIXED: Using Vector3 instead of lists
         for point in self.points_2d:
             vertices.append(Vector3(point[0], point[1], 0.0))
-        
+
         # Back face vertices (z = -thickness) - FIXED: Using Vector3 instead of lists
         for point in self.points_2d:
             vertices.append(Vector3(point[0], point[1], -self.thickness))
-        
+
         return vertices
 
     # Alternative face generation for triangulated faces (if needed)
@@ -196,26 +197,25 @@ class Polygon(Object3D):
         """
         faces = []
         n_points = len(self.points_2d)
-        
+
         # Triangulate front face (fan triangulation from first vertex)
         for i in range(1, n_points - 1):
             faces.append([0, i, i + 1])
-        
+
         # Triangulate back face (fan triangulation, reversed for correct normal)
         for i in range(1, n_points - 1):
             faces.append([n_points, n_points + i + 1, n_points + i])
-        
+
         # Side faces as triangles
         for i in range(n_points):
             next_i = (i + 1) % n_points
-            
+
             # First triangle of the quad
             faces.append([i, next_i, next_i + n_points])
             # Second triangle of the quad
             faces.append([i, next_i + n_points, i + n_points])
-        
+
         return faces
-    
 
     def draw(self, camera=None):
         """Draw the polygon with OpenGL immediate mode."""
@@ -261,7 +261,7 @@ class Polygon(Object3D):
             # Normalize to [0,1] across the polygon. If you prefer pixel-based
             # tiling you can factor in get_texture_size(self.texture).
             uv_map = []
-            for (x, y) in self.points_2d:
+            for x, y in self.points_2d:
                 u = (x - minx) / spanx
                 v = (y - miny) / spany
                 uv_map.append((u, v))
@@ -300,10 +300,9 @@ class Polygon(Object3D):
                 # Get color for this face
                 color = (
                     self.face_colors[face_idx]
-                    if hasattr(self, 'face_colors') and face_idx < len(self.face_colors)
+                    if hasattr(self, "face_colors") and face_idx < len(self.face_colors)
                     else (1.0, 1.0, 1.0)
                 )
-                
 
                 # Normalize color if in 0-255 range
                 if any(x > 2.0 for x in color):
@@ -404,27 +403,26 @@ class Polygon(Object3D):
         """Draw a textured quad face (side face) with edge-sampling for thin faces."""
         if len(face) != 4:
             return
-            
+
         a, b, c, d = face
         va, vb, vc, vd = [world_verts[i] for i in face]
-                # Compute face dimensions
+        # Compute face dimensions
         edge1 = vb - va
         edge2 = vc - vb
         span_u = edge1.length()
         span_v = edge2.length()
-        
+
         # FIXED: Get texture size for proper tiling - removed incorrect hasattr check
         tex_size = get_texture_size(self.texture) if self.texture else None
         if tex_size:
             tex_w, tex_h = tex_size
             u_repeat = span_u / max(1e-6, float(tex_w))
             v_repeat = span_v / max(1e-6, float(tex_h))
-            
+
             # For thin side faces, sample edge pixels to avoid stretching
             if self.thickness > 0.0:
                 strip_u = max(1.0 / max(1.0, float(tex_w)) * u_repeat, 0.001 * u_repeat)
 
-                
                 # Sample appropriate edge based on side
                 if side_idx % 2 == 0:  # Even sides - sample thin vertical strip
                     u_min = 0.0
@@ -432,12 +430,12 @@ class Polygon(Object3D):
                 else:  # Odd sides - sample from opposite edge
                     u_min = max(0.0, u_repeat - strip_u)
                     u_max = u_repeat
-                    
+
                 face_uvs = [
                     (u_min, 0.0),
-                    (u_max, 0.0), 
+                    (u_max, 0.0),
                     (u_max, v_repeat),
-                    (u_min, v_repeat)
+                    (u_min, v_repeat),
                 ]
             else:
                 # Normal UV mapping for non-extruded faces
@@ -445,12 +443,12 @@ class Polygon(Object3D):
                     (0.0, 0.0),
                     (u_repeat, 0.0),
                     (u_repeat, v_repeat),
-                    (0.0, v_repeat)
+                    (0.0, v_repeat),
                 ]
         else:
             # Default UV mapping
             face_uvs = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
-        
+
         glBegin(GL_QUADS)
         for vi, idx in enumerate(face):
             uv = face_uvs[vi]
@@ -621,12 +619,14 @@ class PolygonRenderBatch:
                     id(polygon),
                     int(getattr(polygon, "texture", 0) or 0),
                     polygon._transform_cache_key(),
-                    polygon._face_sun_factor(
-                        polygon.get_world_vertices(),
-                        polygon.faces[0],
-                    )
-                    if polygon.faces
-                    else 1.0,
+                    (
+                        polygon._face_sun_factor(
+                            polygon.get_world_vertices(),
+                            polygon.faces[0],
+                        )
+                        if polygon.faces
+                        else 1.0
+                    ),
                 )
                 for polygon in self.polygons
             ),
@@ -654,7 +654,10 @@ class PolygonRenderBatch:
                 )
             except Exception:
                 continue
-        return (round(float(getattr(camera, "brightness_default", 1.0)), 4), tuple(areas))
+        return (
+            round(float(getattr(camera, "brightness_default", 1.0)), 4),
+            tuple(areas),
+        )
 
     def _rebuild(self, camera=None) -> None:
         self.dispose()
@@ -664,7 +667,9 @@ class PolygonRenderBatch:
             if vertex_data is None or vertex_data.size == 0:
                 continue
             texture = int(getattr(polygon, "texture", 0) or 0)
-            groups.setdefault((texture, int(vertex_data.shape[1])), []).append(vertex_data)
+            groups.setdefault((texture, int(vertex_data.shape[1])), []).append(
+                vertex_data
+            )
 
         for (texture, _columns), chunks in groups.items():
             vertex_data = np.ascontiguousarray(

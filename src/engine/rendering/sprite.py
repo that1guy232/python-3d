@@ -51,9 +51,11 @@ from OpenGL.GL import (
 )
 from engine.config import WIDTH, HEIGHT, VIEWDISTANCE
 from engine.core.consts import FORWARD, RIGHT, WORLD_UP
-from engine.core.compat_shader import get_texture_color_exposure_shader, use_fixed_pipeline
+from engine.core.compat_shader import (
+    get_texture_color_exposure_shader,
+    use_fixed_pipeline,
+)
 from engine.rendering.lighting import sprite_light_factor
-
 
 # Internal helpers for billboard math
 _EPS = 1e-6
@@ -95,7 +97,9 @@ def _sprite_array_scratch(owner, sprite_count: int) -> dict:
     return scratch
 
 
-def _sprite_data_cache(owner, sprites: list["WorldSprite"], *, static_data: bool) -> dict:
+def _sprite_data_cache(
+    owner, sprites: list["WorldSprite"], *, static_data: bool
+) -> dict:
     sprite_count = len(sprites)
     cache = getattr(owner, "_sprite_cull_cache", None)
     cache_valid = (

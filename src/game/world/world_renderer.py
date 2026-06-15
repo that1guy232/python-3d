@@ -30,7 +30,15 @@ from OpenGL.GL import (
 )
 from OpenGL.GLU import gluPerspective
 
-from game.config import FOGDENSITY, FOV, HEADBOB_ENABLED, HEIGHT, LIGHT_BLUE, VIEWDISTANCE, WIDTH
+from game.config import (
+    FOGDENSITY,
+    FOV,
+    HEADBOB_ENABLED,
+    HEIGHT,
+    LIGHT_BLUE,
+    VIEWDISTANCE,
+    WIDTH,
+)
 from engine.core.compat_shader import set_texture_fog_state
 from engine.core.mesh import BatchedMesh
 from engine.rendering.sprite import draw_sprites_batched
@@ -76,13 +84,14 @@ class WorldRenderer:
             glDisable(GL_FOG)
 
     def _sky_rgba(self) -> list[float]:
-        brightness = self._clamp01(getattr(self.scene.camera, "brightness_default", 1.0))
+        brightness = self._clamp01(
+            getattr(self.scene.camera, "brightness_default", 1.0)
+        )
         lighting = getattr(self.scene, "lighting", None)
         sky_color = getattr(lighting, "sky_color", LIGHT_BLUE)
-        return [
-            self._clamp01(channel * brightness)
-            for channel in sky_color[:3]
-        ] + [1.0]
+        return [self._clamp01(channel * brightness) for channel in sky_color[:3]] + [
+            1.0
+        ]
 
     def draw_sky(self) -> None:  # pragma: no cover - visual
         scene = self.scene
@@ -163,7 +172,9 @@ class WorldRenderer:
 
             glMatrixMode(GL_PROJECTION)
             glLoadIdentity()
-            gluPerspective(float(getattr(scene, "fov", FOV)), WIDTH / HEIGHT, 1, 1_000_000.0)
+            gluPerspective(
+                float(getattr(scene, "fov", FOV)), WIDTH / HEIGHT, 1, 1_000_000.0
+            )
 
             glMatrixMode(GL_MODELVIEW)
             glLoadIdentity()
@@ -192,7 +203,9 @@ class WorldRenderer:
         profiler = getattr(scene, "profiler", None)
         if profiler is not None and getattr(profiler, "enabled", False):
             profiler.count("render.hud_text.enabled", float(self._hud_text_will_draw()))
-            profiler.count("render.minimap.visible", float(getattr(scene, "minimap_visible", True)))
+            profiler.count(
+                "render.minimap.visible", float(getattr(scene, "minimap_visible", True))
+            )
 
         if (
             show_hud
@@ -322,9 +335,11 @@ class WorldRenderer:
                     getattr(
                         obj,
                         "ground_y",
-                        getattr(scene.camera.position, "y", 0.0)
-                        if getattr(scene, "camera", None)
-                        else 0.0,
+                        (
+                            getattr(scene.camera.position, "y", 0.0)
+                            if getattr(scene, "camera", None)
+                            else 0.0
+                        ),
                     )
                 )
                 return (cx, cy, cz)
@@ -396,10 +411,14 @@ class WorldRenderer:
                     min_x, max_x, min_z, max_z = (float(v) for v in bbox)
                     scene = self.scene
                     pos = self._approx_object_position(obj)
-                    cy = pos[1] if pos is not None else (
-                        float(getattr(scene.camera.position, "y", 0.0))
-                        if getattr(scene, "camera", None)
-                        else 0.0
+                    cy = (
+                        pos[1]
+                        if pos is not None
+                        else (
+                            float(getattr(scene.camera.position, "y", 0.0))
+                            if getattr(scene, "camera", None)
+                            else 0.0
+                        )
                     )
                     center = (
                         (min_x + max_x) * 0.5,
@@ -407,8 +426,7 @@ class WorldRenderer:
                         (min_z + max_z) * 0.5,
                     )
                     radius = (
-                        ((max_x - min_x) * 0.5) ** 2
-                        + ((max_z - min_z) * 0.5) ** 2
+                        ((max_x - min_x) * 0.5) ** 2 + ((max_z - min_z) * 0.5) ** 2
                     ) ** 0.5
                     return center, radius
             except Exception:
@@ -443,7 +461,9 @@ class WorldRenderer:
         center, radius = sphere
         return bool(tester(center, radius, far_distance=VIEWDISTANCE))
 
-    def draw_world_objects(self, enable_timing: bool = False) -> None:  # pragma: no cover - visual
+    def draw_world_objects(
+        self, enable_timing: bool = False
+    ) -> None:  # pragma: no cover - visual
         scene = self.scene
 
         start_draw_decal_batches_time = time.perf_counter()
@@ -591,4 +611,3 @@ class WorldRenderer:
 
     def draw_pause_menu(self, text) -> None:  # pragma: no cover - visual
         self.pause_panel.draw(text)
-

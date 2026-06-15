@@ -20,7 +20,7 @@ class Scene:
     # scenes can use it without duplicating initialization.
     # Use a lazy import inside the default_factory to avoid a circular import
     # when `world` package imports `core.scene` during module initialization.
-    
+
     def __init__(self):
         self.updaters: list[UpdateFn] = []
 

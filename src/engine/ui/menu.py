@@ -7,7 +7,6 @@ from typing import Callable
 
 from engine.config import HEIGHT, WIDTH
 
-
 LabelProvider = str | Callable[[object], str]
 MenuHandler = Callable[[object], None]
 SliderGetter = Callable[[object], float]
@@ -70,7 +69,9 @@ class SliderOption:
 
     def set_from_ratio(self, scene, ratio: float) -> None:
         ratio = max(0.0, min(1.0, float(ratio)))
-        value = float(self.minimum) + (float(self.maximum) - float(self.minimum)) * ratio
+        value = (
+            float(self.minimum) + (float(self.maximum) - float(self.minimum)) * ratio
+        )
         if self.step:
             value = round(value / self.step) * self.step
         value = max(float(self.minimum), min(float(self.maximum), value))
@@ -148,7 +149,10 @@ class ButtonMenu:
 
     def handle_action(self, action: str) -> None:
         for option in self.options():
-            if option.action == action and getattr(option, "kind", "button") == "button":
+            if (
+                option.action == action
+                and getattr(option, "kind", "button") == "button"
+            ):
                 option.on_click(self.scene)
                 return
 
@@ -167,6 +171,9 @@ class ButtonMenu:
 
     def handle_slider_value(self, action: str, ratio: float) -> None:
         for option in self.options():
-            if option.action == action and getattr(option, "kind", "button") == "slider":
+            if (
+                option.action == action
+                and getattr(option, "kind", "button") == "slider"
+            ):
                 option.set_from_ratio(self.scene, ratio)
                 return

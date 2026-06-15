@@ -493,7 +493,9 @@ class TextureColorExposureShader:
         if self.light_max_factor_location >= 0:
             glUniform1f(self.light_max_factor_location, state.light_max_factor)
         if self.brightness_area_count_location >= 0:
-            glUniform1i(self.brightness_area_count_location, len(state.brightness_areas))
+            glUniform1i(
+                self.brightness_area_count_location, len(state.brightness_areas)
+            )
 
         for index, location in enumerate(self.brightness_area_locations):
             if location < 0:
@@ -887,7 +889,9 @@ def get_texture_color_exposure_shader() -> TextureColorExposureShader | None:
             fog_density_location=int(glGetUniformLocation(program, "u_fog_density")),
             fog_color_location=int(glGetUniformLocation(program, "u_fog_color")),
             vibrance_location=int(glGetUniformLocation(program, "u_vibrance")),
-            shine_enabled_location=int(glGetUniformLocation(program, "u_shine_enabled")),
+            shine_enabled_location=int(
+                glGetUniformLocation(program, "u_shine_enabled")
+            ),
             shine_strength_location=int(
                 glGetUniformLocation(program, "u_shine_strength")
             ),
@@ -955,7 +959,9 @@ def set_texture_color_exposure_scale(
     return True
 
 
-def _vector3_tuple(value, fallback: tuple[float, float, float]) -> tuple[float, float, float]:
+def _vector3_tuple(
+    value, fallback: tuple[float, float, float]
+) -> tuple[float, float, float]:
     try:
         return (float(value.x), float(value.y), float(value.z))
     except Exception:
@@ -981,7 +987,9 @@ def _rgba_tuple(
     return fallback
 
 
-def _light_direction_from(lighting=None, sun_direction=None) -> tuple[float, float, float]:
+def _light_direction_from(
+    lighting=None, sun_direction=None
+) -> tuple[float, float, float]:
     if lighting is not None:
         return _vector3_tuple(
             getattr(lighting, "light_direction", None),
@@ -1114,9 +1122,7 @@ def _environment_region_uniforms(
                 raw_openings = region.get("openings")
                 if isinstance(raw_openings, (list, tuple)):
                     opening_values = [
-                        opening
-                        for opening in raw_openings
-                        if isinstance(opening, dict)
+                        opening for opening in raw_openings if isinstance(opening, dict)
                     ]
                 else:
                     if isinstance(doorway, dict):
@@ -1247,7 +1253,9 @@ def set_texture_lighting_state(
             if base_brightness is not None
             else current.base_brightness
         ),
-        light_direction=_light_direction_from(lighting=lighting, sun_direction=sun_direction),
+        light_direction=_light_direction_from(
+            lighting=lighting, sun_direction=sun_direction
+        ),
         light_ambient=(
             float(ambient)
             if ambient is not None
@@ -1398,7 +1406,9 @@ def set_texture_shine_state(
 
     _texture_shine_state = TextureShineState(
         enabled=bool(enabled) if enabled is not None else current.enabled,
-        strength=max(0.0, float(strength)) if strength is not None else current.strength,
+        strength=(
+            max(0.0, float(strength)) if strength is not None else current.strength
+        ),
         power=max(1.0, float(power)) if power is not None else current.power,
         fresnel=max(0.0, float(fresnel)) if fresnel is not None else current.fresnel,
         tint=tint_value,

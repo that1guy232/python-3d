@@ -27,16 +27,11 @@ from game.config import (
 from engine.camera import Camera
 from engine.core.scene import Scene
 from engine.entity import Entity
-from engine.rendering.decal import Decal
-from engine.rendering.decal_batch import DecalBatch
-from engine.rendering.sprite import WorldSprite
 from game.world import world_builder, world_runtime, world_setup
 from game.world.combat import BattleController
 from game.world.collision_index import SceneCollisionIndex
 from game.world.entity_registry import SceneEntityRegistry
 from game.world.lighting_controller import StaticLightingController
-from game.world.objects import Chest, WallTile
-from game.world.objects.polygon import Polygon
 from game.world.scene_resources import SceneResourceDisposer
 from game.world.ui.interactions import WorldUIInteractions
 from game.world.world_content import WorldContent
@@ -60,22 +55,32 @@ class WorldScene(Scene):
         defer_setup: bool = False,
     ) -> None:
         super().__init__()
-        self.sprite_items: list[WorldSprite] = []
+        self.sprite_items: list[object] = []
         self.entities: list[Entity] = []
         self.immediate_entities: list[Entity] = []
-        self.decals: list[Decal] = []
-        self.decal_batches: list[DecalBatch] = []
+        self.decals: list[object] = []
+        self.decal_batches: list[object] = []
         self.wall_tiles: list[object] = []
         self.wall_tile_batches: list[object] = []
         self.road_batches: list[object] = []
         self.door_batches: list[object] = []
         self.window_batches: list[object] = []
-        self.polygons: list[Polygon] = []
+        self.polygons: list[object] = []
         self.polygon_batches: list[object] = []
-        self.chests: list[Chest] = []
-        self.showcase_chests: list[Chest] = []
+        self.chests: list[object] = []
+        self.showcase_chests: list[object] = []
         self.inventory_items: list[object] = []
         self.others: list[object] = []
+        self.roads: list[object] = []
+        self.building_roads: list[object] = []
+        self.doors: list[object] = []
+        self.windows: list[object] = []
+        self.buildings: list[object] = []
+        self.walls: list[object] = []
+        self.goblins: list[object] = []
+        self.showcase_polygons: list[object] = []
+        self.building_road_routes: list[object] = []
+        self.building_road_segments: list[object] = []
         self._texture_lighting_sync_key = None
         self._texture_lighting_sync_result = False
         self._collision_spatial_index = None
@@ -324,7 +329,9 @@ class WorldScene(Scene):
     def draw(self, enable_timing: bool = False):  # pragma: no cover - visual
         return self.renderer.draw(enable_timing=enable_timing)
 
-    def draw_world_objects(self, enable_timing: bool = False):  # pragma: no cover - visual
+    def draw_world_objects(
+        self, enable_timing: bool = False
+    ):  # pragma: no cover - visual
         return self.renderer.draw_world_objects(enable_timing=enable_timing)
 
     def contains_horizontal(self, pos: Vector3) -> bool:

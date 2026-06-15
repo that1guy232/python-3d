@@ -7,7 +7,6 @@ from typing import Any
 
 from game.world.objects import Door
 
-
 _SIDES_BY_ENTRY_AXIS = {
     "north": ("z", -1.0),
     "south": ("z", 1.0),
@@ -134,8 +133,7 @@ def _segment_bounds(start: float, end: float, count: int) -> list[tuple[float, f
     count = max(1, int(count))
     step = (float(end) - float(start)) / count
     return [
-        (start + step * index, start + step * (index + 1))
-        for index in range(count)
+        (start + step * index, start + step * (index + 1)) for index in range(count)
     ]
 
 
@@ -403,9 +401,7 @@ def _chain_layout(
         for index in range(room_count - 1):
             current = rooms[index]
             nxt = rooms[index + 1]
-            boundary = (
-                current["z_max"] if inward_sign > 0.0 else current["z_min"]
-            )
+            boundary = current["z_max"] if inward_sign > 0.0 else current["z_min"]
             door_id = f"door_{len(doors)}"
             partitions.append(
                 _partition(
@@ -449,9 +445,7 @@ def _chain_layout(
         for index in range(room_count - 1):
             current = rooms[index]
             nxt = rooms[index + 1]
-            boundary = (
-                current["x_max"] if inward_sign > 0.0 else current["x_min"]
-            )
+            boundary = current["x_max"] if inward_sign > 0.0 else current["x_min"]
             door_id = f"door_{len(doors)}"
             partitions.append(
                 _partition(

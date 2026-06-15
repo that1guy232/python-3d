@@ -95,7 +95,9 @@ class PlayerCameraController:
             sampler = getattr(ground, "height_sampler", None)
             if sampler is None or not hasattr(sampler, "height_at"):
                 return 0.0
-            ground_height = sampler.height_at(self.camera.position.x, self.camera.position.z)
+            ground_height = sampler.height_at(
+                self.camera.position.x, self.camera.position.z
+            )
 
         player_radius = float(getattr(self.scene, "player_radius", PLAYER_RADIUS))
         wall_support = player_support_height_at(
@@ -191,7 +193,7 @@ class PlayerCameraController:
 
     def _attempt_wall_slide(self, old_position: Vector3) -> bool:
 
-        #meshes = getattr(self.scene, "static_meshes", None) or []
+        # meshes = getattr(self.scene, "static_meshes", None) or []
         # Try to handle multiple, sequential wall collisions (e.g. at a 90deg
         # corner) by repeatedly querying for a blocking plane and projecting
         # the attempted movement onto that plane. Limit iterations to avoid
@@ -207,11 +209,10 @@ class PlayerCameraController:
         )
         foot_offset = self._eye_to_foot_offset()
         player_bottom_y = min(old_position.y, self.camera.position.y) - foot_offset
-        player_top_y = (
-            max(old_position.y, self.camera.position.y)
-            + float(getattr(self.scene, "player_head_clearance", PLAYER_HEAD_CLEARANCE))
+        player_top_y = max(old_position.y, self.camera.position.y) + float(
+            getattr(self.scene, "player_head_clearance", PLAYER_HEAD_CLEARANCE)
         )
-        #filter out WorldSprites
+        # filter out WorldSprites
         for _ in range(max_iters):
             col_normal = movement_blocked_by_wall(
                 col_meshes,
@@ -307,10 +308,7 @@ class PlayerCameraController:
         # pygame ScancodeWrapper is not iterable in some builds; check relevant
         # keys explicitly instead of using any(keys).
         moving = bool(
-            keys[pygame.K_w]
-            or keys[pygame.K_a]
-            or keys[pygame.K_s]
-            or keys[pygame.K_d]
+            keys[pygame.K_w] or keys[pygame.K_a] or keys[pygame.K_s] or keys[pygame.K_d]
         )
         sprinting = bool(keys[pygame.K_LSHIFT])
         jump_pressed = bool(keys[pygame.K_SPACE])
@@ -327,19 +325,22 @@ class PlayerCameraController:
         base_speed = float(getattr(self.scene, "walk_speed", BASE_SPEED))
         sprint_speed = float(getattr(self.scene, "sprint_speed", SPRINT_SPEED))
         speed = sprint_speed if sprinting else base_speed
-        if moving and self.scene.is_on_road(self.camera.position.x, self.camera.position.z):
+        if moving and self.scene.is_on_road(
+            self.camera.position.x, self.camera.position.z
+        ):
             speed *= road_multi
         # speed is in world units/sec; Camera.move_camera applies dt internally
 
         if jump_pressed and not self.camera.is_jumping:
             desired_ground_y = (
-                self._support_height_at_current_position()
-                + self._eye_to_foot_offset()
+                self._support_height_at_current_position() + self._eye_to_foot_offset()
             )
             if self.camera.position.y < desired_ground_y:
                 self.camera.position.y = desired_ground_y
             self.camera.is_jumping = True
-            self.camera.vertical_velocity = float(getattr(self.scene, "jump_speed", JUMP_SPEED))
+            self.camera.vertical_velocity = float(
+                getattr(self.scene, "jump_speed", JUMP_SPEED)
+            )
 
         old_position = self.camera.position.copy()
         if moving:

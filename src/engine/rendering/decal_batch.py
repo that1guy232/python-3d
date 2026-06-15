@@ -100,7 +100,9 @@ class DecalBatch:
         )
 
     @staticmethod
-    def build(decals: Iterable[Decal], *, tile_size: float | None = None) -> "DecalBatch":
+    def build(
+        decals: Iterable[Decal], *, tile_size: float | None = None
+    ) -> "DecalBatch":
         """Build decal batches grouped by texture and spatial tile.
 
         Grouping by tile ensures each VBO covers a small area so distance
@@ -143,7 +145,9 @@ class DecalBatch:
         meshes: Dict[tuple, BatchedMesh] = {}
         centers_out: Dict[tuple, tuple[float, float, float]] = {}
         radii_out: Dict[tuple, float] = {}
-        tiles_by_tex: Dict[int, list[tuple[tuple[float, float, float], float, np.ndarray]]] = {}
+        tiles_by_tex: Dict[
+            int, list[tuple[tuple[float, float, float], float, np.ndarray]]
+        ] = {}
 
         for key, chunks in buckets.items():
             vertex_data = np.vstack(chunks) if len(chunks) > 1 else chunks[0]
@@ -402,10 +406,8 @@ class DecalBatch:
                             half_v = max(0.0, depth) * tan_half
                             half_h = half_v * aspect
                             if (
-                                abs(x_cam)
-                                > half_h + radius * horizontal_radius_scale
-                                or abs(y_cam)
-                                > half_v + radius * vertical_radius_scale
+                                abs(x_cam) > half_h + radius * horizontal_radius_scale
+                                or abs(y_cam) > half_v + radius * vertical_radius_scale
                             ):
                                 continue
 

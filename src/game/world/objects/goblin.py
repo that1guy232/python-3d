@@ -54,7 +54,6 @@ from game.resources.paths import (
 )
 from engine.textures.texture_utils import get_texture_size, load_texture_atlas
 
-
 GOBLIN_SPRITE_HEIGHT = 42.0
 GOBLIN_ANIMATION_FPS = 8.0
 GOBLIN_ANIMATION_FRAME_DURATION = 1.0 / GOBLIN_ANIMATION_FPS
@@ -318,7 +317,9 @@ class Goblin(Entity):
         self._update_sound(dt)
 
         self._direction_update_elapsed += dt
-        direction_due = self._direction_update_elapsed >= GOBLIN_DIRECTION_UPDATE_INTERVAL
+        direction_due = (
+            self._direction_update_elapsed >= GOBLIN_DIRECTION_UPDATE_INTERVAL
+        )
         if direction_due:
             self._direction_update_elapsed %= GOBLIN_DIRECTION_UPDATE_INTERVAL
 
@@ -750,11 +751,7 @@ class Goblin(Entity):
 
         facing = self._facing_xz
         front_dot = facing.x * view_x + facing.z * view_z
-        front_threshold_sq = (
-            GOBLIN_VIEW_FRONT_DOT
-            * GOBLIN_VIEW_FRONT_DOT
-            * view_len_sq
-        )
+        front_threshold_sq = GOBLIN_VIEW_FRONT_DOT * GOBLIN_VIEW_FRONT_DOT * view_len_sq
         if front_dot >= 0.0 and front_dot * front_dot >= front_threshold_sq:
             return "front", False
         if front_dot <= 0.0 and front_dot * front_dot >= front_threshold_sq:
@@ -765,7 +762,9 @@ class Goblin(Entity):
         right_dot = right_x * view_x + right_z * view_z
         return "right", right_dot > 0.0
 
-    def _set_directional_animation(self, animation: str, *, flip_x: bool = False) -> None:
+    def _set_directional_animation(
+        self, animation: str, *, flip_x: bool = False
+    ) -> None:
         frames = self._animations.get(animation, ())
         if not frames:
             frames = self._animations["front"]
@@ -773,9 +772,8 @@ class Goblin(Entity):
             flip_x = False
 
         visual_name = "left" if animation == "right" and flip_x else animation
-        if (
-            self._current_animation == visual_name
-            and self._current_flip_x == bool(flip_x)
+        if self._current_animation == visual_name and self._current_flip_x == bool(
+            flip_x
         ):
             return
 
@@ -868,7 +866,11 @@ def draw_goblin_shadows_batched(
             width, depth = getattr(goblin, "shadow_size", GOBLIN_SHADOW_SIZE)
             radius = max(float(width), float(depth)) * 0.75
             ground_y = float(getattr(goblin, "_ground_y", position.y))
-            center = (float(position.x), ground_y + GOBLIN_SHADOW_ELEVATION, float(position.z))
+            center = (
+                float(position.x),
+                ground_y + GOBLIN_SHADOW_ELEVATION,
+                float(position.z),
+            )
             if not frustum_test(center, radius, far_distance=view_distance):
                 continue
         if view_distance_sq is not None:

@@ -32,7 +32,6 @@ from engine.collision import (
 from engine.rendering.lighting import INDOOR_LIGHT_FACTOR, covered_region_factor_at
 from engine.sound.sound_utils import Sounds
 
-
 _BASE_ENTITY_UPDATE = Entity.update
 _AMBIENT_BIRDS_KEY = "ambient_birds"
 _AMBIENT_BIRDS_OUTDOOR_VOLUME = 0.035
@@ -83,9 +82,10 @@ def _ambient_birds_volume(scene) -> float:
         1.0 - indoor_factor
     )
     outside_mix = max(0.0, min(1.0, outside_mix))
-    return _AMBIENT_BIRDS_INDOOR_VOLUME + (
-        _AMBIENT_BIRDS_OUTDOOR_VOLUME - _AMBIENT_BIRDS_INDOOR_VOLUME
-    ) * outside_mix
+    return (
+        _AMBIENT_BIRDS_INDOOR_VOLUME
+        + (_AMBIENT_BIRDS_OUTDOOR_VOLUME - _AMBIENT_BIRDS_INDOOR_VOLUME) * outside_mix
+    )
 
 
 def _update_ambient_birds(scene) -> None:
@@ -336,7 +336,8 @@ def _door_focus_hit_distance(entity, camera, max_distance: float) -> float | Non
     half_height = max(0.5, float(getattr(entity, "height", 1.0)) * 0.5 + padding)
     half_depth = max(
         0.5,
-        float(getattr(entity, "thickness", 1.0)) * 0.5 + _DOOR_INTERACTION_DEPTH_PADDING,
+        float(getattr(entity, "thickness", 1.0)) * 0.5
+        + _DOOR_INTERACTION_DEPTH_PADDING,
     )
 
     return _ray_oriented_box_hit_distance(
@@ -568,7 +569,9 @@ def update(scene, dt: float) -> None:
 
         if scene.camera.is_jumping:
             old_vertical_position = scene.camera.position.copy()
-            scene.camera.vertical_velocity -= float(getattr(scene, "gravity", GRAVITY)) * dt
+            scene.camera.vertical_velocity -= (
+                float(getattr(scene, "gravity", GRAVITY)) * dt
+            )
             scene.camera.position.y += scene.camera.vertical_velocity * dt
             player_radius = _player_radius(scene)
             vertical_candidates = scene.collision_meshes_at(

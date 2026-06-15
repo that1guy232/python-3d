@@ -4,7 +4,6 @@ from pathlib import Path
 import sys
 import unittest
 
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from game.world.entity_registry import SceneEntityRegistry
@@ -71,7 +70,9 @@ class EntityRegistryTests(unittest.TestCase):
         self.assertEqual(scene.entities, [entity])
         self.assertEqual(scene.immediate_entities, [])
 
-    def test_remove_unregisters_entity_resources_and_invalidates_collision(self) -> None:
+    def test_remove_unregisters_entity_resources_and_invalidates_collision(
+        self,
+    ) -> None:
         scene = FakeScene()
         registry = SceneEntityRegistry(scene)
         entity = FakeEntity()

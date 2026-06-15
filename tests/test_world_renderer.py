@@ -5,7 +5,6 @@ from types import SimpleNamespace
 import sys
 import unittest
 
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from game.world.world_renderer import WorldRenderer

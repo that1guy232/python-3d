@@ -37,8 +37,7 @@ def _bounds_overlap_circle(bounds, x: float, z: float, radius: float) -> bool:
         return True
     min_x, max_x, min_z, max_z = bounds
     return (
-        min_x - radius <= x <= max_x + radius
-        and min_z - radius <= z <= max_z + radius
+        min_x - radius <= x <= max_x + radius and min_z - radius <= z <= max_z + radius
     )
 
 

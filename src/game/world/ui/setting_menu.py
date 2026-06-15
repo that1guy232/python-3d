@@ -36,7 +36,9 @@ class SettingMenu(ButtonMenu):
             MenuOption("toggle_compass", self.compass_label, self.toggle_compass),
             MenuOption("toggle_minimap", self.minimap_label, self.toggle_minimap),
             MenuOption("toggle_held_item", self.held_item_label, self.toggle_held_item),
-            MenuOption("toggle_test_light", self.test_light_label, self.toggle_test_light),
+            MenuOption(
+                "toggle_test_light", self.test_light_label, self.toggle_test_light
+            ),
             MenuOption(
                 "toggle_controls_text",
                 self.controls_text_label,
@@ -300,7 +302,9 @@ class SettingMenu(ButtonMenu):
                 step=0.05,
                 formatter=lambda value: self._format_float(value, 2),
             ),
-            MenuOption("toggle_mouse_sway", self.mouse_sway_label, self.toggle_mouse_sway),
+            MenuOption(
+                "toggle_mouse_sway", self.mouse_sway_label, self.toggle_mouse_sway
+            ),
             self._object_slider(
                 "set_sway_scale",
                 "Sway Scale",
@@ -312,7 +316,9 @@ class SettingMenu(ButtonMenu):
                 step=0.001,
                 formatter=lambda value: self._format_float(value, 3),
             ),
-            MenuOption("cycle_sway_limit", self.sway_limit_label, self.cycle_sway_limit),
+            MenuOption(
+                "cycle_sway_limit", self.sway_limit_label, self.cycle_sway_limit
+            ),
             MenuOption("reset_motion", "Reset Motion Values", self.reset_motion_values),
         ]
         self.buttons = [
@@ -438,7 +444,9 @@ class SettingMenu(ButtonMenu):
             return current
         try:
             current_f = float(current)
-            index = min(range(len(values)), key=lambda i: abs(float(values[i]) - current_f))
+            index = min(
+                range(len(values)), key=lambda i: abs(float(values[i]) - current_f)
+            )
         except Exception:
             try:
                 index = values.index(current)
@@ -504,7 +512,9 @@ class SettingMenu(ButtonMenu):
         if camera is None:
             return
         try:
-            camera._fov_scale = (HEIGHT * 0.5) / math.tan(math.radians(float(fov) * 0.5))
+            camera._fov_scale = (HEIGHT * 0.5) / math.tan(
+                math.radians(float(fov) * 0.5)
+            )
         except Exception:
             pass
 
@@ -552,7 +562,9 @@ class SettingMenu(ButtonMenu):
         self._toggle_scene_flag(scene, "held_item_visible", True)
 
     def test_light_label(self, scene) -> str:
-        return self._bool_label("Test Light", getattr(scene, "test_light_visible", True))
+        return self._bool_label(
+            "Test Light", getattr(scene, "test_light_visible", True)
+        )
 
     def toggle_test_light(self, scene) -> None:
         self._toggle_scene_flag(scene, "test_light_visible", True)
@@ -586,7 +598,9 @@ class SettingMenu(ButtonMenu):
         self._toggle_scene_flag(scene, "fog_enabled", True)
 
     def clouds_label(self, scene) -> str:
-        return self._bool_label("Clouds", getattr(scene, "clouds_enabled", CLOUDS_ENABLED))
+        return self._bool_label(
+            "Clouds", getattr(scene, "clouds_enabled", CLOUDS_ENABLED)
+        )
 
     def toggle_clouds(self, scene) -> None:
         self._toggle_scene_flag(scene, "clouds_enabled", CLOUDS_ENABLED)
@@ -596,7 +610,9 @@ class SettingMenu(ButtonMenu):
         return f"Fog Density: {float(value):.4f}"
 
     def cycle_fog_density(self, scene) -> None:
-        self._cycle_scene_value(scene, "fog_density", [0.0, 0.0002, 0.0005, 0.001, 0.002])
+        self._cycle_scene_value(
+            scene, "fog_density", [0.0, 0.0002, 0.0005, 0.001, 0.002]
+        )
 
     def fov_label(self, scene) -> str:
         return f"FOV: {self._format_int(getattr(scene, 'fov', 90))}"
@@ -639,7 +655,9 @@ class SettingMenu(ButtonMenu):
 
     def cycle_look_smooth(self, scene) -> None:
         controller = self._controller(scene)
-        self._cycle_object_value(controller, "rot_smooth_hz", [0.0, 2.0, 4.0, 8.0, 12.0], 4.0)
+        self._cycle_object_value(
+            controller, "rot_smooth_hz", [0.0, 2.0, 4.0, 8.0, 12.0], 4.0
+        )
 
     def walk_speed_label(self, scene) -> str:
         return f"Walk Speed: {self._format_int(getattr(scene, 'walk_speed', 120))}"
@@ -657,7 +675,9 @@ class SettingMenu(ButtonMenu):
         return f"Road Boost: {self._format_float(getattr(scene, 'road_speed_multiplier', 1.5), 1)}x"
 
     def cycle_road_boost(self, scene) -> None:
-        self._cycle_scene_value(scene, "road_speed_multiplier", [1.0, 1.25, 1.5, 2.0], 1.5)
+        self._cycle_scene_value(
+            scene, "road_speed_multiplier", [1.0, 1.25, 1.5, 2.0], 1.5
+        )
 
     def jump_speed_label(self, scene) -> str:
         return f"Jump Speed: {self._format_int(getattr(scene, 'jump_speed', 250))}"
@@ -676,7 +696,9 @@ class SettingMenu(ButtonMenu):
         return f"Ground Smooth: {self._format_float(value, 1)}"
 
     def cycle_follow_smooth(self, scene) -> None:
-        self._cycle_scene_value(scene, "camera_follow_smooth_hz", [0.0, 2.0, 5.0, 10.0], 5.0)
+        self._cycle_scene_value(
+            scene, "camera_follow_smooth_hz", [0.0, 2.0, 5.0, 10.0], 5.0
+        )
 
     def eye_height_label(self, scene) -> str:
         camera = self._camera(scene)
@@ -685,7 +707,9 @@ class SettingMenu(ButtonMenu):
 
     def cycle_eye_height(self, scene) -> None:
         camera = self._camera(scene)
-        self._cycle_object_value(camera, "manual_height_offset", [-25, 0, 25, 50, 100], 0.0)
+        self._cycle_object_value(
+            camera, "manual_height_offset", [-25, 0, 25, 50, 100], 0.0
+        )
 
     def height_speed_label(self, scene) -> str:
         camera = self._camera(scene)
@@ -694,7 +718,9 @@ class SettingMenu(ButtonMenu):
 
     def cycle_height_speed(self, scene) -> None:
         camera = self._camera(scene)
-        self._cycle_object_value(camera, "height_adjust_speed", [25, 50, 100, 200], 50.0)
+        self._cycle_object_value(
+            camera, "height_adjust_speed", [25, 50, 100, 200], 50.0
+        )
 
     @staticmethod
     def headbob_label(scene) -> str:
@@ -759,7 +785,9 @@ class SettingMenu(ButtonMenu):
 
     def cycle_idle_delay(self, scene) -> None:
         headbob = self._headbob(scene)
-        self._cycle_object_value(headbob, "_idle_threshold", [0.0, 0.5, 1.0, 2.0, 4.0], 1.0)
+        self._cycle_object_value(
+            headbob, "_idle_threshold", [0.0, 0.5, 1.0, 2.0, 4.0], 1.0
+        )
 
     def idle_sway_amount_label(self, scene) -> str:
         headbob = self._headbob(scene)
@@ -768,7 +796,9 @@ class SettingMenu(ButtonMenu):
 
     def cycle_idle_sway_amount(self, scene) -> None:
         headbob = self._headbob(scene)
-        self._cycle_object_value(headbob, "_idle_amplitude", [0.0, 0.2, 0.35, 0.7, 1.2], 0.35)
+        self._cycle_object_value(
+            headbob, "_idle_amplitude", [0.0, 0.2, 0.35, 0.7, 1.2], 0.35
+        )
 
     def breath_amount_label(self, scene) -> str:
         headbob = self._headbob(scene)
@@ -777,7 +807,9 @@ class SettingMenu(ButtonMenu):
 
     def cycle_breath_amount(self, scene) -> None:
         headbob = self._headbob(scene)
-        self._cycle_object_value(headbob, "_idle_breath_amplitude", [0.0, 0.5, 1.0, 2.0], 1.0)
+        self._cycle_object_value(
+            headbob, "_idle_breath_amplitude", [0.0, 0.5, 1.0, 2.0], 1.0
+        )
 
     def mouse_sway_label(self, scene) -> str:
         sway = self._sway(scene)
@@ -795,7 +827,9 @@ class SettingMenu(ButtonMenu):
 
     def cycle_sway_scale(self, scene) -> None:
         sway = self._sway(scene)
-        self._cycle_object_value(sway, "mouse_scale", [0.0, 0.005, 0.01, 0.02, 0.04], 0.01)
+        self._cycle_object_value(
+            sway, "mouse_scale", [0.0, 0.005, 0.01, 0.02, 0.04], 0.01
+        )
 
     def sway_limit_label(self, scene) -> str:
         sway = self._sway(scene)
@@ -808,12 +842,15 @@ class SettingMenu(ButtonMenu):
         sway = self._sway(scene)
         if sway is None:
             return
-        x, y = self._cycle_value((getattr(sway.max, "x", 1.25), getattr(sway.max, "y", 0.75)), [
-            (0.0, 0.0),
-            (0.75, 0.45),
-            (1.25, 0.75),
-            (2.0, 1.2),
-        ])
+        x, y = self._cycle_value(
+            (getattr(sway.max, "x", 1.25), getattr(sway.max, "y", 0.75)),
+            [
+                (0.0, 0.0),
+                (0.75, 0.45),
+                (1.25, 0.75),
+                (2.0, 1.2),
+            ],
+        )
         sway.max.x = x
         sway.max.y = y
 

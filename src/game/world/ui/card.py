@@ -16,7 +16,6 @@ from OpenGL.GL import (
     GL_TEXTURE_2D,
 )
 
-
 CardHandler = Callable[[object], None]
 CardPredicate = Callable[[object], bool]
 

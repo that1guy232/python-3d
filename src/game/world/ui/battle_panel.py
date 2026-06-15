@@ -149,7 +149,9 @@ class BattlePanel:
 
         glDisable(GL_TEXTURE_2D)
         self.overlay_rect(x, y, plate_w, plate_h, (0.04, 0.035, 0.03, 0.9))
-        self.overlay_rect(x + 4, y + 4, plate_w - 8, plate_h - 8, (0.12, 0.08, 0.06, 0.86))
+        self.overlay_rect(
+            x + 4, y + 4, plate_w - 8, plate_h - 8, (0.12, 0.08, 0.06, 0.86)
+        )
         bar_x = x + 10.0
         bar_y = y + plate_h - 14.0
         bar_w = plate_w - 20.0
@@ -189,7 +191,9 @@ class BattlePanel:
 
         glDisable(GL_TEXTURE_2D)
         self.overlay_rect(x, y, panel_w, panel_h, (0.035, 0.035, 0.04, 0.9))
-        self.overlay_rect(x + 4, y + 4, panel_w - 8, panel_h - 8, (0.08, 0.075, 0.07, 0.86))
+        self.overlay_rect(
+            x + 4, y + 4, panel_w - 8, panel_h - 8, (0.08, 0.075, 0.07, 0.86)
+        )
         glEnable(GL_TEXTURE_2D)
 
         for index, line in enumerate(lines):

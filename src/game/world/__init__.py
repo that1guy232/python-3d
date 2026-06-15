@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from importlib import import_module
 
-
 _EXPORTS = {
     "WorldScene": (".worldscene", "WorldScene"),
     "WorldSprite": ("engine.rendering.sprite", "WorldSprite"),

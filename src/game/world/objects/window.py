@@ -38,7 +38,6 @@ from .slab import (
 from game.resources.paths import WINDOW_TEXTURE_PATH
 from engine.textures.texture_utils import get_texture_size, load_texture
 
-
 WINDOW_THICKNESS = 3.0
 WINDOW_EDGE_UV_FRACTION = 0.08
 WINDOW_FRAME_OVERLAP = 0.5
@@ -149,7 +148,9 @@ class Window(TexturedSlabMixin, Entity):
     ) -> "Window":
         window = window_spec or {}
         side = str(window.get("side", spec.get("window_side", "north"))).lower()
-        wall_thickness = float(window.get("wall_thickness", spec.get("wall_thickness", wall_thickness)))
+        wall_thickness = float(
+            window.get("wall_thickness", spec.get("wall_thickness", wall_thickness))
+        )
         normal = normal_for_side(side)
         tangent = axis_wall_tangent_for_normal(normal)
         center = spec["position"]
@@ -188,7 +189,12 @@ class Window(TexturedSlabMixin, Entity):
         base_y = float(base_y)
         sill_height = max(
             0.0,
-            float(window.get("sill_height", spec.get("window_sill_height", WINDOW_DEFAULT_SILL_HEIGHT))),
+            float(
+                window.get(
+                    "sill_height",
+                    spec.get("window_sill_height", WINDOW_DEFAULT_SILL_HEIGHT),
+                )
+            ),
         )
         position = Vector3(x, base_y + sill_height + visual_height * 0.5, z)
 
@@ -250,7 +256,9 @@ class Window(TexturedSlabMixin, Entity):
         half_h = self.height * 0.5
         half_t = self.thickness * 0.5
         inset = min(0.05, half_t * 0.25)
-        center = self.position + self.depth_axis * (face_sign * max(0.0, half_t - inset))
+        center = self.position + self.depth_axis * (
+            face_sign * max(0.0, half_t - inset)
+        )
         up = Vector3(0.0, 1.0, 0.0)
         quads: list[tuple[Vector3, ...]] = []
 
@@ -348,16 +356,22 @@ class Window(TexturedSlabMixin, Entity):
             else:
                 r, g, b = WINDOW_CORNER_BACKING_COLOR
                 color = (r * shade, g * shade, b * shade)
-            normal = self._face_normal(face_idx) if include_normals and textured else None
+            normal = (
+                self._face_normal(face_idx) if include_normals and textured else None
+            )
 
             for quad in self._corner_backing_quads(face_sign):
-                vertices = quad if as_quads else (
-                    quad[0],
-                    quad[1],
-                    quad[2],
-                    quad[0],
-                    quad[2],
-                    quad[3],
+                vertices = (
+                    quad
+                    if as_quads
+                    else (
+                        quad[0],
+                        quad[1],
+                        quad[2],
+                        quad[0],
+                        quad[2],
+                        quad[3],
+                    )
                 )
                 for vertex in vertices:
                     if textured:
@@ -495,7 +509,9 @@ class WindowRenderBatch:
         )
 
     @staticmethod
-    def _make_meshes(groups, *, alpha_test: bool, draw_mode=GL_QUADS) -> list[BatchedMesh]:
+    def _make_meshes(
+        groups, *, alpha_test: bool, draw_mode=GL_QUADS
+    ) -> list[BatchedMesh]:
         meshes = []
         for (texture, _columns), chunks in groups.items():
             if not chunks:
@@ -564,7 +580,9 @@ class WindowRenderBatch:
         self._backing_meshes = self._make_meshes(backing_groups, alpha_test=False)
         self._slab_meshes = self._make_meshes(slab_groups, alpha_test=True)
 
-    def draw(self, camera=None, *, view_distance: float | None = None) -> None:  # pragma: no cover - visual
+    def draw(
+        self, camera=None, *, view_distance: float | None = None
+    ) -> None:  # pragma: no cover - visual
         cache_key = self._current_cache_key()
         if cache_key != self._cache_key:
             self._rebuild()

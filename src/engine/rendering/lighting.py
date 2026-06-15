@@ -14,7 +14,6 @@ from typing import Any, Sequence
 import numpy as np
 from pygame.math import Vector3
 
-
 _EPSILON = 1e-8
 INDOOR_LIGHT_FACTOR = 0.34
 INDOOR_NORMAL = (0.0, -1.0, 0.0)

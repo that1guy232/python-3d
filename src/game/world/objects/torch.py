@@ -14,8 +14,11 @@ from engine.rendering.lighting import (
 )
 from engine.rendering.sprite import AnimatedWorldSprite
 from game.resources.paths import TORCH_FRAME_TEXTURE_PATHS, TORCH_TEXTURE_PATH
-from engine.textures.texture_utils import get_texture_size, load_texture, load_texture_atlas
-
+from engine.textures.texture_utils import (
+    get_texture_size,
+    load_texture,
+    load_texture_atlas,
+)
 
 TORCH_LIGHT_VALUE = 3.4
 TORCH_LIGHT_FALLOFF = 2.2
@@ -187,7 +190,9 @@ class Torch(AnimatedWorldSprite):
         texture: Any, *, sprite_height: float = TORCH_SPRITE_HEIGHT
     ) -> tuple[float, float]:
         tex_size = get_texture_size(texture)
-        aspect = (tex_size[0] / tex_size[1]) if tex_size and tex_size[1] else (7.0 / 15.0)
+        aspect = (
+            (tex_size[0] / tex_size[1]) if tex_size and tex_size[1] else (7.0 / 15.0)
+        )
         return (sprite_height * aspect, sprite_height)
 
     @classmethod

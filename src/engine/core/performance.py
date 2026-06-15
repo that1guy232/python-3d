@@ -27,7 +27,13 @@ class _TimingStat:
 class PerformanceLogger:
     """Collect and periodically print frame-time section costs."""
 
-    diagnostic_prefixes = ("hud.", "hud_text.", "minimap.", "render.hud_text", "render.minimap")
+    diagnostic_prefixes = (
+        "hud.",
+        "hud_text.",
+        "minimap.",
+        "render.hud_text",
+        "render.minimap",
+    )
 
     def __init__(
         self,
@@ -126,7 +132,9 @@ class PerformanceLogger:
         if not self.enabled or self._frame_count <= 0:
             return
 
-        elapsed_s = (now_s if now_s is not None else time.perf_counter()) - self._interval_start_s
+        elapsed_s = (
+            now_s if now_s is not None else time.perf_counter()
+        ) - self._interval_start_s
         total_frame_s = sum(self._frame_times_s)
         avg_frame_s = total_frame_s / self._frame_count if self._frame_count else 0.0
         max_frame_s = max(self._frame_times_s) if self._frame_times_s else 0.0
@@ -140,7 +148,9 @@ class PerformanceLogger:
             f"p95 {p95_frame_s * 1000.0:.2f} ms | "
             f"max {max_frame_s * 1000.0:.2f} ms"
         )
-        print("[perf] section                         avg/frame  avg/hit      max  hits/frame")
+        print(
+            "[perf] section                         avg/frame  avg/hit      max  hits/frame"
+        )
 
         rows = []
         for name, stat in self._stats.items():
@@ -149,7 +159,9 @@ class PerformanceLogger:
             avg_per_frame_s = stat.total_s / self._frame_count
             avg_per_hit_s = stat.total_s / stat.count if stat.count else 0.0
             hits_per_frame = stat.count / self._frame_count
-            rows.append((avg_per_frame_s, name, avg_per_hit_s, stat.max_s, hits_per_frame))
+            rows.append(
+                (avg_per_frame_s, name, avg_per_hit_s, stat.max_s, hits_per_frame)
+            )
 
         rows.sort(reverse=True)
         shown_names = set()
@@ -167,8 +179,7 @@ class PerformanceLogger:
         diagnostic_rows = [
             row
             for row in rows
-            if row[1] not in shown_names
-            and row[1].startswith(self.diagnostic_prefixes)
+            if row[1] not in shown_names and row[1].startswith(self.diagnostic_prefixes)
         ][: self.top_n]
         if diagnostic_rows:
             print("[perf] diagnostics")
@@ -217,5 +228,7 @@ class PerformanceLogger:
         if not values:
             return 0.0
         ordered = sorted(values)
-        index = int(round((len(ordered) - 1) * max(0.0, min(100.0, percentile)) / 100.0))
+        index = int(
+            round((len(ordered) - 1) * max(0.0, min(100.0, percentile)) / 100.0)
+        )
         return ordered[index]

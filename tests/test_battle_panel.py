@@ -5,7 +5,6 @@ from types import SimpleNamespace
 import sys
 import unittest
 
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from game.world.ui.battle_panel import BattlePanel
@@ -13,8 +12,12 @@ from game.world.ui.battle_panel import BattlePanel
 
 class BattlePanelTests(unittest.TestCase):
     def test_goblin_hp_clamps_to_valid_range(self) -> None:
-        self.assertEqual(BattlePanel.goblin_hp(SimpleNamespace(max_hp=5, hp=12)), (5, 5))
-        self.assertEqual(BattlePanel.goblin_hp(SimpleNamespace(max_hp=0, hp=-3)), (0, 1))
+        self.assertEqual(
+            BattlePanel.goblin_hp(SimpleNamespace(max_hp=5, hp=12)), (5, 5)
+        )
+        self.assertEqual(
+            BattlePanel.goblin_hp(SimpleNamespace(max_hp=0, hp=-3)), (0, 1)
+        )
 
     def test_hp_plate_rect_stays_inside_screen(self) -> None:
         self.assertEqual(

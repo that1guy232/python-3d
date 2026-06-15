@@ -83,7 +83,9 @@ class Engine:
 
         if initial_scene is None:
             if initial_scene_factory is None:
-                raise ValueError("Engine requires an initial_scene or initial_scene_factory")
+                raise ValueError(
+                    "Engine requires an initial_scene or initial_scene_factory"
+                )
             initial_scene = initial_scene_factory()
 
         # Active scene (owns camera & input)
@@ -92,7 +94,9 @@ class Engine:
         self._apply_scene_mouse_state(self.scene)
 
     @staticmethod
-    def _handle_scene_exception(exc: Exception, *, scene, hook: str, event=None) -> None:
+    def _handle_scene_exception(
+        exc: Exception, *, scene, hook: str, event=None
+    ) -> None:
         scene_name = type(scene).__name__ if scene is not None else "<none>"
         details = f"scene={scene_name} hook={hook}"
         if event is not None:

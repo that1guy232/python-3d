@@ -45,10 +45,12 @@ from OpenGL.GL import (
     GL_MODULATE,
     GL_TEXTURE_ENV,
     GL_STATIC_DRAW,
-    )
+)
 
-from engine.core.compat_shader import get_texture_color_exposure_shader, use_fixed_pipeline
-
+from engine.core.compat_shader import (
+    get_texture_color_exposure_shader,
+    use_fixed_pipeline,
+)
 
 
 @dataclass
@@ -93,7 +95,11 @@ class BatchedMesh:
     def _bounds_from_vertex_data(
         vertex_data: np.ndarray,
     ) -> tuple[tuple[float, float, float] | None, float]:
-        if vertex_data.ndim != 2 or vertex_data.shape[0] == 0 or vertex_data.shape[1] < 3:
+        if (
+            vertex_data.ndim != 2
+            or vertex_data.shape[0] == 0
+            or vertex_data.shape[1] < 3
+        ):
             return None, 0.0
 
         positions = np.asarray(vertex_data[:, 0:3], dtype=np.float32)
@@ -291,7 +297,7 @@ class BatchedMesh:
             return
 
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo_vertices)
-    
+
         if self.texture is not None:
             shader = get_texture_color_exposure_shader()
             if shader is not None:
@@ -305,18 +311,20 @@ class BatchedMesh:
             has_normals = self._has_normals
             shader_lighting_enabled = has_normals and self.shader_lighting
             stride = self._vertex_stride
-            
+
             # Enable vertex arrays
             glEnableClientState(GL_VERTEX_ARRAY)
             glVertexPointer(3, GL_FLOAT, stride, None)  # Position at offset 0
-            
+
             glEnableClientState(GL_COLOR_ARRAY)
-            glColorPointer(3, GL_FLOAT, stride, self._color_offset_ptr)  # Color at offset 3 floats (12 bytes)
+            glColorPointer(
+                3, GL_FLOAT, stride, self._color_offset_ptr
+            )  # Color at offset 3 floats (12 bytes)
 
             if has_normals:
                 glEnableClientState(GL_NORMAL_ARRAY)
                 glNormalPointer(GL_FLOAT, stride, self._normal_offset_ptr)
-            
+
             glEnableClientState(GL_TEXTURE_COORD_ARRAY)
             glTexCoordPointer(2, GL_FLOAT, stride, self._uv_offset_ptr)
 
@@ -359,18 +367,18 @@ class BatchedMesh:
         else:
             # Handle non-textured case (if needed)
             stride = self._vertex_stride  # Position (3) + Color (3) = 6 floats
-            
+
             glEnableClientState(GL_VERTEX_ARRAY)
             glVertexPointer(3, GL_FLOAT, stride, None)
-            
+
             glEnableClientState(GL_COLOR_ARRAY)
             glColorPointer(3, GL_FLOAT, stride, self._color_offset_ptr)
-            
+
             glEnable(GL_BLEND)
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-            
+
             glDrawArrays(self.draw_mode, 0, self.vertex_count)
-            
+
             glDisable(GL_BLEND)
             glDisableClientState(GL_COLOR_ARRAY)
             glDisableClientState(GL_VERTEX_ARRAY)
@@ -517,6 +525,7 @@ class BatchedMesh:
 
         flush_run()
 
+
 class GroundHeightSampler:
     __slots__ = ("_count", "_spacing", "_w", "_heights", "_height_adjustments")
 
@@ -598,7 +607,14 @@ class GroundHeightSampler:
         adjusted = float(height)
         px = float(x)
         pz = float(z)
-        for min_x, max_x, min_z, max_z, target_y, blend_margin in self._height_adjustments:
+        for (
+            min_x,
+            max_x,
+            min_z,
+            max_z,
+            target_y,
+            blend_margin,
+        ) in self._height_adjustments:
             influence = self._rect_blend_influence(
                 px,
                 pz,

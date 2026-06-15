@@ -26,13 +26,12 @@ from .slab import (
 from game.resources.paths import DOOR_TEXTURE_PATH
 from engine.textures.texture_utils import load_texture
 
-
 DOOR_INTERACTION_DISTANCE = 95.0
 DOOR_SWING_RADIANS = math.radians(90.0)
 DOOR_SWING_SPEED = 3.8
 DOOR_THICKNESS = 4.0
 DOOR_EDGE_UV_FRACTION = 0.08
-DOOR_FRAME_OVERLAP = .5
+DOOR_FRAME_OVERLAP = 0.5
 DOOR_TEXTURE_WIDTH = 32.0
 DOOR_TEXTURE_HEIGHT = 48.0
 DOOR_TEXTURE_ASPECT = DOOR_TEXTURE_WIDTH / DOOR_TEXTURE_HEIGHT
@@ -353,9 +352,9 @@ class Door(TexturedSlabMixin, Entity):
             else self._doorway_light_closed_factor
         )
         amount = _smooth01(self.open_amount)
-        edge_factor = closed_factor + (
-            self._doorway_light_open_factor - closed_factor
-        ) * amount
+        edge_factor = (
+            closed_factor + (self._doorway_light_open_factor - closed_factor) * amount
+        )
         light_changed = (
             force
             or self._last_doorway_light_factor is None
@@ -377,10 +376,14 @@ class Door(TexturedSlabMixin, Entity):
         if not isinstance(modifier, dict):
             return
 
-        radius = self._doorway_brightness_closed_radius + (
-            self._doorway_brightness_open_radius
-            - self._doorway_brightness_closed_radius
-        ) * amount
+        radius = (
+            self._doorway_brightness_closed_radius
+            + (
+                self._doorway_brightness_open_radius
+                - self._doorway_brightness_closed_radius
+            )
+            * amount
+        )
         value = self._doorway_brightness_open_value
         if (
             not force
@@ -540,7 +543,9 @@ class DoorRenderBatch:
                 )
             )
 
-    def draw(self, camera=None, *, view_distance: float | None = None) -> None:  # pragma: no cover - visual
+    def draw(
+        self, camera=None, *, view_distance: float | None = None
+    ) -> None:  # pragma: no cover - visual
         cache_key = self._current_cache_key()
         if cache_key != self._cache_key:
             self._rebuild()

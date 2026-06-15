@@ -30,7 +30,6 @@ from pygame.math import Vector3
 from engine.core.mesh import BatchedMesh
 from engine.rendering.lighting import sunlight_factor_for_normal
 
-
 SLAB_BOX_FACES = [
     (0, 1, 2, 3),  # front
     (5, 4, 7, 6),  # back

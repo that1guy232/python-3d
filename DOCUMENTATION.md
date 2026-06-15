@@ -30,7 +30,7 @@ The package boundary is intentional:
    `WorldScene.initialize_steps()` over multiple frames so world construction can
    show progress instead of blocking on a blank screen.
 6. `game.world.worldscene.WorldScene` owns the world state, but delegates most work:
-   setup to `world_setup.py`, object construction to `world_builder.py`,
+   setup to `world_setup.py`, object construction orchestration to `world_builder.py`,
    runtime behavior to `world_runtime.py`, combat to `combat.py`, entity
    registration to `entity_registry.py`, collision indexing to
    `collision_index.py`, static lighting refresh to `lighting_controller.py`,
@@ -49,7 +49,8 @@ The package boundary is intentional:
 - Configure fog and scene lighting through `world_setup.setup_graphics()`.
 - Load textures, sounds, sky, HUD, and menus through `world_setup.load_assets()`.
 - Build terrain, buildings, roads, sprites, fences, decals, doors, windows, and
-  other world objects through `world_builder.create_world_objects_steps()`.
+  other world objects through `world_builder.create_world_objects_steps()`,
+  which delegates to focused construction pipeline modules.
 
 ### Updating
 
@@ -150,9 +151,15 @@ cached collision data while the GL context still exists.
 | File | Quick docs |
 | --- | --- |
 | `src/game/world/__init__.py` | Lazy public exports for world objects, `WorldScene`, `WorldContent`, and content helpers. |
-| `src/game/world/worldscene.py` | Central scene state owner. Delegates setup/build/runtime/rendering/combat/entity registration/collision indexing/static lighting/resource cleanup while keeping batches and compatibility aliases. |
+| `src/game/world/worldscene.py` | Central scene state owner. Delegates setup/build/runtime/rendering/combat/entity registration/collision indexing/static lighting/resource cleanup while keeping compatibility aliases. |
 | `src/game/world/world_setup.py` | Bootstrap helpers for brightness, controllers, fog/lighting, texture/sound loading, sky, HUD, menus, and tunable scene flags. |
-| `src/game/world/world_builder.py` | World construction pipeline: content, terrain, buildings, lighting, roads, sprites, goblins, fences, decals, doors, windows, and render batches. |
+| `src/game/world/world_builder.py` | World construction orchestration: build-step metadata, incremental progress, and compatibility exports for construction helpers. |
+| `src/game/world/builder_support.py` | Shared construction-step and disposal helpers used by the construction pipeline modules. |
+| `src/game/world/building_pipeline.py` | Building/showcase construction: authored/generated building specs, walls, torches, doors, windows, showcase polygons, and showcase chest setup. |
+| `src/game/world/terrain_pipeline.py` | Terrain and boundary construction: ground mesh generation and fence ring rebuilding. |
+| `src/game/world/road_pipeline.py` | Road construction and batching for the main road plus building access roads. |
+| `src/game/world/spawn_pipeline.py` | Tree/grass/rock sprite spawning and goblin placement/registration. |
+| `src/game/world/detail_pipeline.py` | Ground-detail and contact-shadow decal creation and batching. |
 | `src/game/world/world_runtime.py` | Per-frame runtime helpers: bounds checks, road checks, height queries, entity updates, interaction, pause/inventory input, and mouse delta forwarding. |
 | `src/game/world/world_renderer.py` | World render pipeline: fog/projection/camera setup, sky, terrain, object passes, and HUD text/panel delegation. |
 | `src/game/world/combat.py` | Battle-mode controller for entering/leaving combat, player damage rolls, active enemy damage, and battle mouse state. |
@@ -216,8 +223,10 @@ cached collision data while the GL context still exists.
 
 - Add authored buildings through `WorldContent.with_buildings()` and pass the
   result to `WorldScene(world_content=...)`.
-- Add new world object construction in `world_builder.py` when the object is
-  static or created during loading.
+- Add new loading-time world construction in the matching pipeline module:
+  buildings/showcase in `building_pipeline.py`, terrain/fences in
+  `terrain_pipeline.py`, roads in `road_pipeline.py`, sprites/enemies in
+  `spawn_pipeline.py`, and decals/details in `detail_pipeline.py`.
 - Add per-frame behavior as an `Entity` when it needs update, interaction, or
   collision hooks.
 - Add player movement changes in `game.world.player_controller` when they affect

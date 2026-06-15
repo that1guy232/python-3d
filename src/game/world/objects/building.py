@@ -19,7 +19,9 @@ class Building:
 
     def __init__(
         self,
-        position: Vector3 | tuple[float, float] | tuple[float, float, float] | None = None,
+        position: (
+            Vector3 | tuple[float, float] | tuple[float, float, float] | None
+        ) = None,
         *,
         target_height: float | None = None,
     ) -> None:
@@ -169,18 +171,28 @@ class Building:
 
         return walls
 
-    def _get_dimensions(self, width: Optional[float], depth: Optional[float]) -> tuple[float, float]:
+    def _get_dimensions(
+        self, width: Optional[float], depth: Optional[float]
+    ) -> tuple[float, float]:
         """Get building dimensions, using defaults if not specified."""
         return (
             float(width) if width is not None else self.DEFAULT_SIDE,
-            float(depth) if depth is not None else self.DEFAULT_SIDE
+            float(depth) if depth is not None else self.DEFAULT_SIDE,
         )
 
     def _create_all_walls(
-        self, dimensions: tuple[float, float], wall_height: float, wall_thickness: float,
-        texture: Optional[int], uv_repeat: tuple[float, float], base_y: float,
-        max_tile_width: float, doorway: bool, doorway_side: str,
-        doorway_width: Optional[float], doorway_height: Optional[float],
+        self,
+        dimensions: tuple[float, float],
+        wall_height: float,
+        wall_thickness: float,
+        texture: Optional[int],
+        uv_repeat: tuple[float, float],
+        base_y: float,
+        max_tile_width: float,
+        doorway: bool,
+        doorway_side: str,
+        doorway_width: Optional[float],
+        doorway_height: Optional[float],
         windows: Optional[list[dict]],
         terrain_height_at: Optional[Callable[[float, float], float]],
         terrain_embed_depth: float,
@@ -190,7 +202,7 @@ class Building:
         outer_x, outer_z = dimensions
         door_normal = self._normal_from_side(doorway_side)
         walls: list[WallTile] = []
-        
+
         for nx, nz in self.WALL_NORMALS:
             openings: list[dict[str, float]] = []
             if doorway and self._normals_match((nx, nz), door_normal):
@@ -221,10 +233,19 @@ class Building:
             if openings:
                 walls.extend(
                     self._create_wall_side_with_openings(
-                        nx, nz, outer_x, outer_z, wall_height, wall_thickness,
-                        texture, uv_repeat, base_y, max_tile_width,
+                        nx,
+                        nz,
+                        outer_x,
+                        outer_z,
+                        wall_height,
+                        wall_thickness,
+                        texture,
+                        uv_repeat,
+                        base_y,
+                        max_tile_width,
                         openings,
-                        terrain_height_at, terrain_embed_depth,
+                        terrain_height_at,
+                        terrain_embed_depth,
                         terrain_sample_spacing,
                     )
                 )
@@ -232,13 +253,22 @@ class Building:
 
             walls.extend(
                 self._create_wall_side(
-                    nx, nz, outer_x, outer_z, wall_height, wall_thickness,
-                    texture, uv_repeat, base_y, max_tile_width,
-                    terrain_height_at, terrain_embed_depth,
+                    nx,
+                    nz,
+                    outer_x,
+                    outer_z,
+                    wall_height,
+                    wall_thickness,
+                    texture,
+                    uv_repeat,
+                    base_y,
+                    max_tile_width,
+                    terrain_height_at,
+                    terrain_embed_depth,
                     terrain_sample_spacing,
                 )
             )
-            
+
         return walls
 
     def _get_base_y(self, base_y: Optional[float]) -> float:
@@ -250,20 +280,39 @@ class Building:
         return float(self.position.y)
 
     def _create_wall_side(
-        self, nx: float, nz: float, outer_x: float, outer_z: float,
-        wall_height: float, wall_thickness: float, texture: Optional[int],
-        uv_repeat: tuple[float, float], base_y: float, max_tile_width: float,
+        self,
+        nx: float,
+        nz: float,
+        outer_x: float,
+        outer_z: float,
+        wall_height: float,
+        wall_thickness: float,
+        texture: Optional[int],
+        uv_repeat: tuple[float, float],
+        base_y: float,
+        max_tile_width: float,
         terrain_height_at: Optional[Callable[[float, float], float]],
-        terrain_embed_depth: float, terrain_sample_spacing: float,
+        terrain_embed_depth: float,
+        terrain_sample_spacing: float,
     ) -> List[WallTile]:
         """Create tiles for one wall side."""
         _, _, span_half, _ = self._get_side_geometry(
             nx, nz, outer_x, outer_z, wall_thickness
         )
         return self._create_wall_segment(
-            nx, nz, outer_x, outer_z, wall_thickness,
-            texture, uv_repeat, base_y, max_tile_width,
-            -span_half, span_half, 0.0, wall_height,
+            nx,
+            nz,
+            outer_x,
+            outer_z,
+            wall_thickness,
+            texture,
+            uv_repeat,
+            base_y,
+            max_tile_width,
+            -span_half,
+            span_half,
+            0.0,
+            wall_height,
             terrain_height_at=terrain_height_at,
             terrain_embed_depth=terrain_embed_depth,
             terrain_sample_spacing=terrain_sample_spacing,
@@ -311,12 +360,21 @@ class Building:
         return openings
 
     def _create_wall_side_with_openings(
-        self, nx: float, nz: float, outer_x: float, outer_z: float,
-        wall_height: float, wall_thickness: float, texture: Optional[int],
-        uv_repeat: tuple[float, float], base_y: float, max_tile_width: float,
+        self,
+        nx: float,
+        nz: float,
+        outer_x: float,
+        outer_z: float,
+        wall_height: float,
+        wall_thickness: float,
+        texture: Optional[int],
+        uv_repeat: tuple[float, float],
+        base_y: float,
+        max_tile_width: float,
         openings: list[dict[str, float]],
         terrain_height_at: Optional[Callable[[float, float], float]],
-        terrain_embed_depth: float, terrain_sample_spacing: float,
+        terrain_embed_depth: float,
+        terrain_sample_spacing: float,
     ) -> List[WallTile]:
         """Create one wall side with rectangular openings cut out."""
         _, _, span_half, _ = self._get_side_geometry(
@@ -329,9 +387,18 @@ class Building:
         )
         if not clipped_openings:
             return self._create_wall_side(
-                nx, nz, outer_x, outer_z, wall_height, wall_thickness,
-                texture, uv_repeat, base_y, max_tile_width,
-                terrain_height_at, terrain_embed_depth,
+                nx,
+                nz,
+                outer_x,
+                outer_z,
+                wall_height,
+                wall_thickness,
+                texture,
+                uv_repeat,
+                base_y,
+                max_tile_width,
+                terrain_height_at,
+                terrain_embed_depth,
                 terrain_sample_spacing,
             )
 
@@ -364,9 +431,19 @@ class Building:
 
                 walls.extend(
                     self._create_wall_segment(
-                        nx, nz, outer_x, outer_z, wall_thickness,
-                        texture, uv_repeat, base_y, max_tile_width,
-                        span_min, span_max, y_min, y_max,
+                        nx,
+                        nz,
+                        outer_x,
+                        outer_z,
+                        wall_thickness,
+                        texture,
+                        uv_repeat,
+                        base_y,
+                        max_tile_width,
+                        span_min,
+                        span_max,
+                        y_min,
+                        y_max,
                         terrain_height_at=terrain_height_at,
                         terrain_embed_depth=terrain_embed_depth,
                         terrain_sample_spacing=terrain_sample_spacing,
@@ -551,12 +628,22 @@ class Building:
         return tiles
 
     def _create_doorway_wall_side(
-        self, nx: float, nz: float, outer_x: float, outer_z: float,
-        wall_height: float, wall_thickness: float, texture: Optional[int],
-        uv_repeat: tuple[float, float], base_y: float, max_tile_width: float,
-        doorway_width: Optional[float], doorway_height: Optional[float],
+        self,
+        nx: float,
+        nz: float,
+        outer_x: float,
+        outer_z: float,
+        wall_height: float,
+        wall_thickness: float,
+        texture: Optional[int],
+        uv_repeat: tuple[float, float],
+        base_y: float,
+        max_tile_width: float,
+        doorway_width: Optional[float],
+        doorway_height: Optional[float],
         terrain_height_at: Optional[Callable[[float, float], float]],
-        terrain_embed_depth: float, terrain_sample_spacing: float,
+        terrain_embed_depth: float,
+        terrain_sample_spacing: float,
     ) -> List[WallTile]:
         """Create one wall side with a centered doorway opening."""
         _, _, span_half, _ = self._get_side_geometry(
@@ -575,9 +662,19 @@ class Building:
         ):
             walls.extend(
                 self._create_wall_segment(
-                    nx, nz, outer_x, outer_z, wall_thickness,
-                    texture, uv_repeat, base_y, max_tile_width,
-                    span_min, span_max, y_min, y_max,
+                    nx,
+                    nz,
+                    outer_x,
+                    outer_z,
+                    wall_thickness,
+                    texture,
+                    uv_repeat,
+                    base_y,
+                    max_tile_width,
+                    span_min,
+                    span_max,
+                    y_min,
+                    y_max,
                     terrain_height_at=terrain_height_at,
                     terrain_embed_depth=terrain_embed_depth,
                     terrain_sample_spacing=terrain_sample_spacing,
@@ -587,10 +684,20 @@ class Building:
         return walls
 
     def _create_wall_segment(
-        self, nx: float, nz: float, outer_x: float, outer_z: float,
-        wall_thickness: float, texture: Optional[int],
-        uv_repeat: tuple[float, float], base_y: float, max_tile_width: float,
-        span_min: float, span_max: float, y_min: float, y_max: float,
+        self,
+        nx: float,
+        nz: float,
+        outer_x: float,
+        outer_z: float,
+        wall_thickness: float,
+        texture: Optional[int],
+        uv_repeat: tuple[float, float],
+        base_y: float,
+        max_tile_width: float,
+        span_min: float,
+        span_max: float,
+        y_min: float,
+        y_max: float,
         *,
         terrain_height_at: Optional[Callable[[float, float], float]] = None,
         terrain_embed_depth: float = 4.0,
@@ -615,10 +722,10 @@ class Building:
 
         tiles = []
         span_start = (center_x if span_axis == "x" else center_z) + span_min
-        
+
         for i in range(num_tiles):
             center_along = span_start + (i + 0.5) * tile_width
-            
+
             if span_axis == "x":
                 tx, tz, w, d = center_along, center_z, half_width, tile_half
             else:
@@ -646,15 +753,19 @@ class Building:
 
             tile = WallTile(
                 position=Vector3(tx, (bottom_y + top_y) * 0.5, tz),
-                width=w, height=tile_height, depth=d,
-                texture=texture, uv_repeat=uv_repeat, thickness=wall_thickness,
+                width=w,
+                height=tile_height,
+                depth=d,
+                texture=texture,
+                uv_repeat=uv_repeat,
+                thickness=wall_thickness,
             )
             tile.rotation = Vector3(0.0, theta, 0.0)
             tile.indoor_face_indices = (1,)
             tile.indoor_light_factor = INDOOR_LIGHT_FACTOR
             tile.indoor_normal_override = INDOOR_NORMAL
             tiles.append(tile)
-            
+
         self.attach_shapes(tiles)
         return tiles
 
@@ -779,7 +890,12 @@ class Building:
         return [roof]
 
     def _get_side_geometry(
-        self, nx: float, nz: float, outer_x: float, outer_z: float, wall_thickness: float
+        self,
+        nx: float,
+        nz: float,
+        outer_x: float,
+        outer_z: float,
+        wall_thickness: float,
     ) -> tuple[float, float, float, str]:
         """Return side center and span axis for a wall normal."""
         cx, cz = float(self.position.x), float(self.position.z)
@@ -798,7 +914,9 @@ class Building:
         center_z -= nz * eps
         return center_x, center_z, span_half, span_axis
 
-    def _resolve_doorway_width(self, span: float, doorway_width: Optional[float]) -> float:
+    def _resolve_doorway_width(
+        self, span: float, doorway_width: Optional[float]
+    ) -> float:
         """Clamp doorway width so both side jambs remain visible."""
         if doorway_width is None:
             doorway_width = min(80.0, max(28.0, span * 0.22))
@@ -847,8 +965,13 @@ class Building:
             self._bbox = None
             return
 
-        bounds = [float("inf"), float("-inf"), float("inf"), float("-inf")]  # min_x, max_x, min_z, max_z
-        
+        bounds = [
+            float("inf"),
+            float("-inf"),
+            float("inf"),
+            float("-inf"),
+        ]  # min_x, max_x, min_z, max_z
+
         for shape in self.shapes:
             try:
                 verts = shape.get_world_vertices() or []
@@ -867,12 +990,14 @@ class Building:
         """Get bounding box, computing default if needed."""
         if self._bbox is not None:
             return self._bbox
-            
+
         # Default bounds
         half = self.DEFAULT_SIDE / 2.0
         return (
-            self.position.x - half, self.position.x + half,
-            self.position.z - half, self.position.z + half
+            self.position.x - half,
+            self.position.x + half,
+            self.position.z - half,
+            self.position.z + half,
         )
 
     def get_bounding_box(self) -> Optional[tuple[float, float, float, float]]:
@@ -882,8 +1007,10 @@ class Building:
     def contains_point(self, x: float, z: float, margin: float = 0.0) -> bool:
         """Check if point is within building footprint."""
         min_x, max_x, min_z, max_z = self.bounds
-        return (min_x - margin <= x <= max_x + margin and 
-                min_z - margin <= z <= max_z + margin)
+        return (
+            min_x - margin <= x <= max_x + margin
+            and min_z - margin <= z <= max_z + margin
+        )
 
     def get_floor_level(self) -> float:
         """Get building floor level."""
@@ -929,12 +1056,12 @@ class Building:
         """Get building corner positions and floor level."""
         min_x, max_x, min_z, max_z = self.bounds
         floor_y = self.get_floor_level()
-        
+
         corners = [
             Vector3(min_x, floor_y, min_z),
-            Vector3(max_x, floor_y, min_z), 
+            Vector3(max_x, floor_y, min_z),
             Vector3(max_x, floor_y, max_z),
             Vector3(min_x, floor_y, max_z),
         ]
-        
+
         return corners, float(floor_y)

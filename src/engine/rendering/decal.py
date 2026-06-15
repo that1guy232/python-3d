@@ -28,7 +28,6 @@ from OpenGL.GL import (
 
 from engine.core.mesh import BatchedMesh
 
-
 HeightFn = Callable[[float, float], float]
 ReceiverFn = Callable[[float, float], bool]
 

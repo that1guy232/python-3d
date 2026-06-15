@@ -354,14 +354,10 @@ class RoadMeshBuilder:
     def _column_y(self, x: float, z: float, column: int) -> float:
         center_column = (_ROAD_COLUMNS - 1) * 0.5
         distance_from_center = abs(float(column) - center_column)
-        elevation_fraction = 1.0 - (
-            distance_from_center / max(center_column, 1.0)
-        )
+        elevation_fraction = 1.0 - (distance_from_center / max(center_column, 1.0))
         elevation_fraction = max(0.0, min(1.0, elevation_fraction))
         base_y = (
-            float(self.height_fn(x, z))
-            if self.height_fn is not None
-            else self.ground_y
+            float(self.height_fn(x, z)) if self.height_fn is not None else self.ground_y
         )
         return base_y + self.elevation * elevation_fraction
 
@@ -447,9 +443,7 @@ class Road:
         self.segment_length = max(1.0, float(segment_length))
         self._mesh = None
 
-        self._set_centerline(
-            self._resolve_points(start=start, end=end, points=points)
-        )
+        self._set_centerline(self._resolve_points(start=start, end=end, points=points))
         _ensure_texture_repeat(self.texture)
         self._rebuild()
 
@@ -640,7 +634,12 @@ class RoadRenderBatch:
             key = (texture, columns, baseline, environment_lighting)
             groups.setdefault(key, []).append(vertex_data)
 
-        for (texture, _columns, baseline, environment_lighting), chunks in groups.items():
+        for (
+            texture,
+            _columns,
+            baseline,
+            environment_lighting,
+        ), chunks in groups.items():
             vertex_data = np.ascontiguousarray(
                 np.concatenate(chunks, axis=0),
                 dtype=np.float32,
@@ -658,7 +657,9 @@ class RoadRenderBatch:
         for mesh in self._meshes:
             mesh.set_exposure(exposure)
 
-    def draw(self, camera=None, *, view_distance: float | None = None) -> None:  # pragma: no cover - visual
+    def draw(
+        self, camera=None, *, view_distance: float | None = None
+    ) -> None:  # pragma: no cover - visual
         BatchedMesh.draw_many(
             self._meshes,
             camera=camera,

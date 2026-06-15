@@ -162,4 +162,3 @@ def load_world_textures() -> Dict[str, object]:
         "window_tex": window_tex,
         "goblin_tex": goblin_tex,
     }
-

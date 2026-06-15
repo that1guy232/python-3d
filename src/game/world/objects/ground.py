@@ -68,28 +68,28 @@ class TexturedGroundGridBuilder:
         self.lighting = lighting
         self.sun_direction = sun_direction
         self.covered_regions = covered_regions or []
-        
+
         tile = GroundTile(
-            position=Vector3(0, 0, 0),
-            width=self.w,
-            height=self.h,
-            depth=self.d
+            position=Vector3(0, 0, 0), width=self.w, height=self.h, depth=self.d
         )
         self.base = tile.local_vertices
         self.faces = tile.faces
         self.face_colors = tile.face_colors
         self.uv_top = [(0, 0), (1, 0), (1, 1), (0, 1)]
         self.uv_dummy = [(0, 0)] * 4
-        
+
         if len(self.faces) == 1:
             self.face_uvs = [self.uv_top]
         else:
             self.face_uvs = [
-                self.uv_dummy, self.uv_dummy, self.uv_dummy,
+                self.uv_dummy,
+                self.uv_dummy,
+                self.uv_dummy,
                 self.uv_top,
-                self.uv_dummy, self.uv_dummy,
+                self.uv_dummy,
+                self.uv_dummy,
             ]
-        
+
         self.heightmap_path = os.path.join(TEXTURES_PATH, "heightmap.png")
         self.heightmap_amp = 80.0
         self.terrain_pad_min_blend = 96.0
@@ -104,8 +104,12 @@ class TexturedGroundGridBuilder:
             face_uv = self.face_uvs[face_idx]
             tri_indices = [a, b, c, a, c, d_idx]
             tri_uvs = [
-                face_uv[0], face_uv[1], face_uv[2],
-                face_uv[0], face_uv[2], face_uv[3],
+                face_uv[0],
+                face_uv[1],
+                face_uv[2],
+                face_uv[0],
+                face_uv[2],
+                face_uv[3],
             ]
             for idx, uv in zip(tri_indices, tri_uvs):
                 v = self.base[idx]
@@ -121,6 +125,7 @@ class TexturedGroundGridBuilder:
             surf = pygame.image.load(self.heightmap_path)
             surf = surf.convert()
             import pygame.surfarray as surfarray
+
             hm = surfarray.array3d(surf).astype(np.float32) / 255.0
             hm_w, hm_h = hm.shape[0], hm.shape[1]
             world_min_x = -self.w
@@ -222,9 +227,9 @@ class TexturedGroundGridBuilder:
             affected = influence > 0.0
             if not np.any(affected):
                 continue
-            adjusted[affected] += (
-                (float(pad.height) - adjusted[affected]) * influence[affected]
-            )
+            adjusted[affected] += (float(pad.height) - adjusted[affected]) * influence[
+                affected
+            ]
 
         return adjusted.astype(np.float32)
 
@@ -232,7 +237,9 @@ class TexturedGroundGridBuilder:
         self,
         world_coords,
         heightmap_data,
-        terrain_pads: list[TerrainFlattenPad] | tuple[TerrainFlattenPad, ...] | None = None,
+        terrain_pads: (
+            list[TerrainFlattenPad] | tuple[TerrainFlattenPad, ...] | None
+        ) = None,
     ):
         """Sample terrain heights after building-pad flattening."""
         heights = self._sample_base_heights_vectorized(world_coords, heightmap_data)
@@ -328,7 +335,9 @@ class TexturedGroundGridBuilder:
                 [[(min_x + max_x) * 0.5, (min_z + max_z) * 0.5]],
                 dtype=np.float32,
             )
-            return float(self._sample_base_heights_vectorized(coords, heightmap_data)[0])
+            return float(
+                self._sample_base_heights_vectorized(coords, heightmap_data)[0]
+            )
 
         spacing = max(4.0, float(self.terrain_pad_sample_spacing))
         x_count = max(2, int(math.ceil(width / spacing)) + 1)
@@ -659,14 +668,14 @@ class TexturedGroundGridBuilder:
         heightmap_data = self._load_heightmap()
         terrain_pads = self._build_terrain_flatten_pads(heightmap_data)
         self.terrain_flatten_pads = terrain_pads
-        
+
         # Pre-allocate final vertex array
         vertices_per_tile = len(tile_vertex_array)
         total_vertices = vertices_per_tile * self.count * self.count
         vertex_data = np.zeros((total_vertices, 8), dtype=np.float32)
         corner_heights = np.zeros((self.count, self.count, 4), dtype=np.float32)
         shader_lighting = texture_color_exposure_shader_available()
-        
+
         if total_vertices == 0:
             empty = np.zeros((0, 8), dtype=np.float32)
             return BatchedMesh.from_vertex_data(
@@ -674,7 +683,7 @@ class TexturedGroundGridBuilder:
                 texture=self.texture,
                 exposure_baseline=self.default_brightness,
             )
-        
+
         split_covered_regions = bool(self.covered_regions) and not shader_lighting
         split_terrain_pads = bool(terrain_pads)
         if split_covered_regions or split_terrain_pads:
@@ -689,17 +698,21 @@ class TexturedGroundGridBuilder:
                 for gz in range(self.count):
                     tx = gx * self.spacing
                     tz = gz * self.spacing
-                    vertex_data[vertex_idx:vertex_idx + vertices_per_tile] = tile_vertex_array
-                    vertex_data[vertex_idx:vertex_idx + vertices_per_tile, 0] += tx
-                    vertex_data[vertex_idx:vertex_idx + vertices_per_tile, 2] += tz
-                    corner_coords_list.extend([
-                        (gx, gz, 0, tx - self.w, tz - self.d),
-                        (gx, gz, 1, tx + self.w, tz - self.d),
-                        (gx, gz, 2, tx + self.w, tz + self.d),
-                        (gx, gz, 3, tx - self.w, tz + self.d)
-                    ])
+                    vertex_data[vertex_idx : vertex_idx + vertices_per_tile] = (
+                        tile_vertex_array
+                    )
+                    vertex_data[vertex_idx : vertex_idx + vertices_per_tile, 0] += tx
+                    vertex_data[vertex_idx : vertex_idx + vertices_per_tile, 2] += tz
+                    corner_coords_list.extend(
+                        [
+                            (gx, gz, 0, tx - self.w, tz - self.d),
+                            (gx, gz, 1, tx + self.w, tz - self.d),
+                            (gx, gz, 2, tx + self.w, tz + self.d),
+                            (gx, gz, 3, tx - self.w, tz + self.d),
+                        ]
+                    )
                     vertex_idx += vertices_per_tile
-        
+
         # Batch process all vertex heights
         vertex_world_coords = vertex_data[:, [0, 2]]  # Extract x, z coordinates
         vertex_heights = self._sample_heights_vectorized(
@@ -717,7 +730,7 @@ class TexturedGroundGridBuilder:
             if terrain_pads
             else None
         )
-        
+
         if shader_lighting:
             vertex_data = with_textured_normals(
                 vertex_data,
@@ -763,9 +776,11 @@ class TexturedGroundGridBuilder:
                 receiver_factors=receiver_factors,
                 surface_floor_mask=np.ones(len(vertex_data), dtype=bool),
             )
-        
+
         # Batch process all corner heights (unchanged)
-        corner_world_coords = np.array([[coord[3], coord[4]] for coord in corner_coords_list])
+        corner_world_coords = np.array(
+            [[coord[3], coord[4]] for coord in corner_coords_list]
+        )
         corner_heights_flat = self._sample_base_heights_vectorized(
             corner_world_coords,
             heightmap_data,
@@ -773,7 +788,7 @@ class TexturedGroundGridBuilder:
         # Assign corner heights to the corner_heights array
         for i, (gx, gz, corner_idx, _, _) in enumerate(corner_coords_list):
             corner_heights[gx, gz, corner_idx] = corner_heights_flat[i]
-        
+
         mesh = BatchedMesh.from_vertex_data(
             vertex_data,
             texture=self.texture,

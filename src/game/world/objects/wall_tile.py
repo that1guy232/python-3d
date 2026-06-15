@@ -31,13 +31,12 @@ from engine.core.mesh import BatchedMesh
 from engine.textures.texture_utils import get_texture_size
 from engine.rendering.lighting import INDOOR_LIGHT_FACTOR, sunlight_factor_for_normal
 
-
 _LOCAL_FACE_NORMALS = (
-    (1.0, 0.0, 0.0),   # front
+    (1.0, 0.0, 0.0),  # front
     (-1.0, 0.0, 0.0),  # back
-    (0.0, 0.0, 1.0),   # right
+    (0.0, 0.0, 1.0),  # right
     (0.0, 0.0, -1.0),  # left
-    (0.0, 1.0, 0.0),   # top
+    (0.0, 1.0, 0.0),  # top
     (0.0, -1.0, 0.0),  # bottom
 )
 
@@ -205,7 +204,6 @@ class WallTile(Object3D):
             # Order: front(0..3), back(4..7)
             self.local_vertices = [f0, f1, f2, f3, b0, b1, b2, b3]
 
-
     def draw(self, camera=None):
         """Immediate-mode draw. If self.texture is set, render textured; otherwise
         render a flat colored quad using face_colors.
@@ -213,7 +211,7 @@ class WallTile(Object3D):
         world_verts = self.get_world_vertices()
         if not world_verts:
             return
-        
+
         default_brightness = (
             getattr(camera, "brightness_default", 0.0) if camera else 0.0
         )
@@ -268,7 +266,7 @@ class WallTile(Object3D):
                     glTexCoord2f(uv[0], uv[1])
                     glVertex3f(v.x, v.y, v.z)
                 glEnd()
-      
+
             glDisable(GL_BLEND)
             glDisable(GL_ALPHA_TEST)
             glDisable(GL_TEXTURE_2D)
@@ -410,9 +408,11 @@ def _tile_vertex_data(
             if shader_lighting:
                 normal = _rotate_local_direction(
                     tile,
-                    _LOCAL_FACE_NORMALS[face_idx]
-                    if face_idx < len(_LOCAL_FACE_NORMALS)
-                    else (0.0, 1.0, 0.0),
+                    (
+                        _LOCAL_FACE_NORMALS[face_idx]
+                        if face_idx < len(_LOCAL_FACE_NORMALS)
+                        else (0.0, 1.0, 0.0)
+                    ),
                 )
                 normal = _normal_for_shader_face(tile, face_idx, normal)
                 for idx, uv in zip(tri_indices, tri_uvs):

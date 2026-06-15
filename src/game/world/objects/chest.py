@@ -25,7 +25,6 @@ from .slab import (
     xz_bounds_for_vertices,
 )
 
-
 CHEST_INTERACTION_DISTANCE = 95.0
 CHEST_OPEN_RADIANS = math.radians(82.0)
 CHEST_OPEN_SPEED = 3.6
@@ -410,8 +409,10 @@ class Chest(Entity):
         )
         depth_axis = _rotate_around_axis(self.front_axis, self.width_axis, angle)
         height_axis = _rotate_around_axis(self.up_axis, self.width_axis, angle)
-        center = hinge + depth_axis * (lid_depth * 0.5) + height_axis * (
-            self.lid_height * 0.5
+        center = (
+            hinge
+            + depth_axis * (lid_depth * 0.5)
+            + height_axis * (self.lid_height * 0.5)
         )
 
         return (
@@ -429,9 +430,15 @@ class Chest(Entity):
 
     def _visual_vertices(self) -> list[Vector3]:
         verts: list[Vector3] = []
-        for center, width_axis, height_axis, depth_axis, width, height, depth in (
-            self._visual_box_specs()
-        ):
+        for (
+            center,
+            width_axis,
+            height_axis,
+            depth_axis,
+            width,
+            height,
+            depth,
+        ) in self._visual_box_specs():
             verts.extend(
                 _oriented_box_vertices(
                     center,
@@ -447,9 +454,15 @@ class Chest(Entity):
 
     def _vertex_data(self) -> np.ndarray:
         rows: list[tuple[float, float, float, float, float, float, float, float]] = []
-        for center, width_axis, height_axis, depth_axis, width, height, depth in (
-            self._visual_box_specs()
-        ):
+        for (
+            center,
+            width_axis,
+            height_axis,
+            depth_axis,
+            width,
+            height,
+            depth,
+        ) in self._visual_box_specs():
             verts = _oriented_box_vertices(
                 center,
                 width_axis,

@@ -16,10 +16,10 @@ from game.resources.paths import (
     COMPASS_BASE_TEXTURE_PATH,
     COMPASS_NEEDLE_TEXTURE_PATH,
     SWORD_TEXTURE_PATH,
-    LIGHT_TEXTURE_PATH
+    LIGHT_TEXTURE_PATH,
 )
 from game.config import HEADBOB_ENABLED
-from engine.core.consts import *
+
 
 class WorldHUD:
     def __init__(self, scene) -> None:
@@ -91,7 +91,7 @@ class WorldHUD:
             self.sword.position += Vector3(+off_x, +off_y, 0)
             self._compass.position += Vector3(+off_x * 1, +off_y * 1, 0)
             self.minimap.position += Vector3(+off_x * 1, +off_y * 1, 0)
-       
+
         # Apply mouse-look sway from scene's sway controller (if present)
         try:
             sc = getattr(self.scene, "_sway_controller", None)
@@ -121,7 +121,7 @@ class WorldHUD:
         except Exception:
             # If camera axes or sway not present, skip sway
             pass
-        
+
         cam_pos = self.scene.camera.position
         ground_y = self.scene.ground_height_at(cam_pos.x, cam_pos.z)
         cx = cam_pos.x

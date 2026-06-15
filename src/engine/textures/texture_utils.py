@@ -68,7 +68,9 @@ def get_texture_aspect(tex_id: int, default: float = 1.0) -> float:
     return (w / h) if h else default
 
 
-def _upload_texture_surface(surface, *, nearest: bool = True, repeat: bool = False) -> int:
+def _upload_texture_surface(
+    surface, *, nearest: bool = True, repeat: bool = False
+) -> int:
     texture_data = pygame.image.tostring(surface, "RGBA", True)
     width, height = surface.get_size()
 
@@ -501,7 +503,9 @@ def create_pixel_cloud_atlas(
                 if edge <= 0.15:
                     continue
 
-                alpha = 255 if edge > 0.32 else int(255 * _smooth01((edge - 0.15) / 0.17))
+                alpha = (
+                    255 if edge > 0.32 else int(255 * _smooth01((edge - 0.15) / 0.17))
+                )
                 bottom_mix = _smooth01((ny - 0.45) / 0.38)
                 top_mix = 1.0 - _smooth01((ny - 0.18) / 0.36)
                 r = int(218 + 31 * top_mix - 16 * bottom_mix)
@@ -580,7 +584,7 @@ def _segment_shadow_alpha(
 
     edge = 1.0 - distance / max(1e-6, radius)
     end_taper = _smooth01(t / 0.12) * _smooth01((1.0 - t) / 0.18)
-    return strength * (edge ** 1.35) * end_taper
+    return strength * (edge**1.35) * end_taper
 
 
 def _blend_rgba(
@@ -900,7 +904,7 @@ def create_tree_shadow_texture(
             if length_fade > 0.0:
                 bell = max(0.0, math.sin(math.pi * u))
                 radius_noise = _value_noise(u * 5.0 + phase_a, phase_b, salt)
-                radius = 0.028 + 0.325 * (bell ** 0.62)
+                radius = 0.028 + 0.325 * (bell**0.62)
                 radius *= 0.98 - 0.16 * _smooth01(u)
                 radius *= 0.96 + 0.08 * radius_noise
 
@@ -935,7 +939,7 @@ def create_tree_shadow_texture(
                     alpha = (
                         max_alpha
                         * length_fade
-                        * (edge_fade ** 0.82)
+                        * (edge_fade**0.82)
                         * density
                         * (0.95 + 0.08 * fine)
                         * gap_soften
@@ -1019,14 +1023,33 @@ def create_polygon_shadow_texture(
 
     # Simple cache keyed by point tuple and texture params to avoid re-upload
     pts_key = tuple((float(x), float(y)) for x, y in points_2d)
-    cache_key = (pts_key, width_px, height_px, max_alpha, inner_ratio, outer_ratio, falloff_exp, pixelated, pixel_scale)
+    cache_key = (
+        pts_key,
+        width_px,
+        height_px,
+        max_alpha,
+        inner_ratio,
+        outer_ratio,
+        falloff_exp,
+        pixelated,
+        pixel_scale,
+    )
     cached = _POLY_SHADOW_CACHE.get(cache_key)
     if cached:
         return cached
 
     # Degenerate fallback
     if not points_2d or len(points_2d) < 3:
-        return create_shadow_texture(width_px=width_px, height_px=height_px, max_alpha=max_alpha, inner_ratio=inner_ratio, outer_ratio=outer_ratio, falloff_exp=falloff_exp, pixelated=pixelated, pixel_scale=pixel_scale)
+        return create_shadow_texture(
+            width_px=width_px,
+            height_px=height_px,
+            max_alpha=max_alpha,
+            inner_ratio=inner_ratio,
+            outer_ratio=outer_ratio,
+            falloff_exp=falloff_exp,
+            pixelated=pixelated,
+            pixel_scale=pixel_scale,
+        )
 
     # Compute polygon bbox in input space
     xs = [p[0] for p in points_2d]
@@ -1080,7 +1103,9 @@ def create_polygon_shadow_texture(
         for i in range(n):
             xi, yi = poly[i]
             xj, yj = poly[j]
-            intersect = ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi + 1e-12) + xi)
+            intersect = ((yi > y) != (yj > y)) and (
+                x < (xj - xi) * (y - yi) / (yj - yi + 1e-12) + xi
+            )
             if intersect:
                 inside = not inside
             j = i
@@ -1118,8 +1143,8 @@ def create_polygon_shadow_texture(
                 a = 0
             else:
                 # find min distance to boundary
-                min_d = float('inf')
-                for (x1, y1, x2, y2) in edges:
+                min_d = float("inf")
+                for x1, y1, x2, y2 in edges:
                     d = dist_point_segment(px, py, x1, y1, x2, y2)
                     if d < min_d:
                         min_d = d

@@ -99,7 +99,9 @@ class InventoryPanel:
             ("Card Draw", str(card_draw)),
         ]
 
-    def draw(self, text, fps_label: str, *, profile=None) -> None:  # pragma: no cover - visual
+    def draw(
+        self, text, fps_label: str, *, profile=None
+    ) -> None:  # pragma: no cover - visual
         import pygame
 
         text.begin()
@@ -124,7 +126,9 @@ class InventoryPanel:
                         color=[255, 0, 0, 0],
                     )
 
-            outer_x, outer_y, outer_w, outer_h = WorldUIInteractions.inventory_panel_rect()
+            outer_x, outer_y, outer_w, outer_h = (
+                WorldUIInteractions.inventory_panel_rect()
+            )
             padding = 24.0
             gap = 22.0
             stats_w = min(280.0, max(230.0, outer_w * 0.31))
@@ -152,9 +156,14 @@ class InventoryPanel:
             )
             grid_h = visible_rows * slot_size + (visible_rows - 1) * slot_gap
             slot_count = cols * visible_rows
-            close_x, close_y, close_w, close_h = WorldUIInteractions.inventory_close_rect()
+            close_x, close_y, close_w, close_h = (
+                WorldUIInteractions.inventory_close_rect()
+            )
             mx, my = pygame.mouse.get_pos()
-            close_hovered = close_x <= mx <= close_x + close_w and close_y <= my <= close_y + close_h
+            close_hovered = (
+                close_x <= mx <= close_x + close_w
+                and close_y <= my <= close_y + close_h
+            )
 
             glDisable(GL_TEXTURE_2D)
             self._draw_overlay_rect(0, 0, WIDTH, HEIGHT, (0.0, 0.0, 0.0, 0.55))
@@ -191,7 +200,11 @@ class InventoryPanel:
                 close_y,
                 close_w,
                 close_h,
-                (0.30, 0.12, 0.10, 0.96) if close_hovered else (0.12, 0.08, 0.075, 0.92),
+                (
+                    (0.30, 0.12, 0.10, 0.96)
+                    if close_hovered
+                    else (0.12, 0.08, 0.075, 0.92)
+                ),
             )
             self._draw_overlay_rect(
                 close_x + 3.0,
@@ -223,11 +236,7 @@ class InventoryPanel:
                     y + 3.0,
                     slot_size - 6.0,
                     slot_size - 6.0,
-                    (
-                        (0.23, 0.18, 0.12, 0.54)
-                        if filled
-                        else (0.11, 0.105, 0.1, 0.5)
-                    ),
+                    ((0.23, 0.18, 0.12, 0.54) if filled else (0.11, 0.105, 0.1, 0.5)),
                 )
 
             glEnable(GL_TEXTURE_2D)

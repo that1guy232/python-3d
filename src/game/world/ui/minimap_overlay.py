@@ -51,7 +51,6 @@ from OpenGL.GL import (
 
 from engine.core.consts import FORWARD, RIGHT, WORLD_UP
 
-
 _EPS2 = 1e-12
 
 
@@ -430,12 +429,13 @@ class MiniMapOverlay:
                 2,
                 min(
                     8,
-                    int(round(context.world_length_to_map(getattr(road, "width", 1.0)))),
+                    int(
+                        round(context.world_length_to_map(getattr(road, "width", 1.0)))
+                    ),
                 ),
             )
             local_points = [
-                self._world_to_local(context, point.x, point.z)
-                for point in points
+                self._world_to_local(context, point.x, point.z) for point in points
             ]
             pygame.draw.lines(
                 surface,
@@ -476,7 +476,9 @@ class MiniMapOverlay:
         drawn = 0
         goblins = getattr(context.scene, "goblins", ()) or ()
         vertices = self._goblin_vertices_for_capacity(len(goblins))
-        radius_right = right * ((marker_radius / context.panel_size) * self.world_size[0])
+        radius_right = right * (
+            (marker_radius / context.panel_size) * self.world_size[0]
+        )
         radius_up = up * ((marker_radius / context.panel_size) * self.world_size[1])
 
         for goblin in goblins:
@@ -518,7 +520,9 @@ class MiniMapOverlay:
         if self._goblin_marker_vertices.shape[0] >= vertex_count:
             return self._goblin_marker_vertices
 
-        capacity = max(64, vertex_count, int(self._goblin_marker_vertices.shape[0] * 1.5))
+        capacity = max(
+            64, vertex_count, int(self._goblin_marker_vertices.shape[0] * 1.5)
+        )
         self._goblin_marker_vertices = np.empty((capacity, 3), dtype=np.float32)
         return self._goblin_marker_vertices
 
@@ -554,8 +558,12 @@ class MiniMapOverlay:
             y - fz * radius * 0.65 + right_y * radius * 0.55,
         )
         tip = self._panel_to_world(context, tip_2d[0], tip_2d[1], right_axis, up_axis)
-        left = self._panel_to_world(context, left_2d[0], left_2d[1], right_axis, up_axis)
-        right = self._panel_to_world(context, right_2d[0], right_2d[1], right_axis, up_axis)
+        left = self._panel_to_world(
+            context, left_2d[0], left_2d[1], right_axis, up_axis
+        )
+        right = self._panel_to_world(
+            context, right_2d[0], right_2d[1], right_axis, up_axis
+        )
         glColor4f(0.28, 0.76, 1.0, 0.98)
         glBegin(GL_TRIANGLES)
         try:

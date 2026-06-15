@@ -41,7 +41,7 @@ CAMERA_FOLLOW_SMOOTH_HZ = (
 # Head-bob settings
 HEADBOB_ENABLED = True
 # How fast the bobbing cycles when walking (in cycles/sec). Sprint scales this up.
-HEADBOB_FREQUENCY = .5
+HEADBOB_FREQUENCY = 0.5
 # Vertical bob amplitude in world units (tune to taste based on your world scale)
 HEADBOB_AMPLITUDE = 4
 # Side-to-side sway amplitude in world units

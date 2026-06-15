@@ -30,7 +30,6 @@ from typing import List
 # We use pygame to write PNG without new dependencies
 import pygame
 
-
 # --------------------------- Perlin noise core ---------------------------- #
 
 

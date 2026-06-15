@@ -5,7 +5,6 @@ from types import SimpleNamespace
 import sys
 import unittest
 
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from game.world.collision_index import SceneCollisionIndex
@@ -34,7 +33,9 @@ class SceneCollisionIndexTests(unittest.TestCase):
             _collision_spatial_index=None,
         )
 
-    def test_meshes_for_bounds_returns_static_dynamic_and_fallback_candidates(self) -> None:
+    def test_meshes_for_bounds_returns_static_dynamic_and_fallback_candidates(
+        self,
+    ) -> None:
         static = Mesh("static", bounds=(0, 5, 0, 5))
         far = Mesh("far", bounds=(50, 60, 50, 60))
         dynamic = Mesh("dynamic", bounds=(100, 110, 100, 110), open_amount=0.5)

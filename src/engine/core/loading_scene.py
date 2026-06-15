@@ -26,7 +26,9 @@ from engine.config import HEIGHT, WIDTH
 from engine.core.scene import Scene
 
 
-def _draw_rect(x: float, y: float, w: float, h: float, color: tuple[float, ...]) -> None:
+def _draw_rect(
+    x: float, y: float, w: float, h: float, color: tuple[float, ...]
+) -> None:
     glColor4f(*color)
     glBegin(GL_QUADS)
     glVertex2f(x, y)

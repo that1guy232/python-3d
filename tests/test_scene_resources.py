@@ -5,7 +5,6 @@ from types import SimpleNamespace
 import sys
 import unittest
 
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import game.world.scene_resources as resources_module
@@ -70,7 +69,9 @@ class SceneResourceDisposerTests(unittest.TestCase):
         self.assertEqual(scene.fence_meshes, [])
 
     def test_dispose_renderable_swallows_dispose_errors(self) -> None:
-        bad = SimpleNamespace(dispose=lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+        bad = SimpleNamespace(
+            dispose=lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+        )
 
         SceneResourceDisposer.dispose_renderable(bad)
 

@@ -5,7 +5,6 @@ from types import SimpleNamespace
 import sys
 import unittest
 
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from game.world.combat import BattleController
@@ -70,7 +69,9 @@ class CombatTests(unittest.TestCase):
     def test_roll_player_attack_damage_records_critical_result(self) -> None:
         scene = FakeScene()
         combat = BattleController(scene)
-        scene.player_stats = PlayerStats(strength=2, elemental_damage=3, crit_chance=100)
+        scene.player_stats = PlayerStats(
+            strength=2, elemental_damage=3, crit_chance=100
+        )
 
         damage, critical = combat.roll_player_attack_damage()
 

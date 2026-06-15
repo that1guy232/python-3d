@@ -96,8 +96,7 @@ class BuildingRoadPlanner:
     @staticmethod
     def _route_length(route: Route) -> float:
         return sum(
-            math.hypot(p1[0] - p0[0], p1[1] - p0[1])
-            for p0, p1 in zip(route, route[1:])
+            math.hypot(p1[0] - p0[0], p1[1] - p0[1]) for p0, p1 in zip(route, route[1:])
         )
 
     @staticmethod
@@ -126,9 +125,7 @@ class BuildingRoadPlanner:
         return count
 
     @classmethod
-    def _close_turn_penalty(
-        cls, route: Route, road_width: float
-    ) -> float:
+    def _close_turn_penalty(cls, route: Route, road_width: float) -> float:
         segments = cls._route_to_segments(route)
         if len(segments) < 3:
             return 0.0
@@ -226,9 +223,7 @@ class BuildingRoadPlanner:
         return clean
 
     @classmethod
-    def _soften_close_turns(
-        cls, route: Route, road_width: float
-    ) -> Route:
+    def _soften_close_turns(cls, route: Route, road_width: float) -> Route:
         """Remove tiny interior doglegs that make adjacent turns overlap."""
         clean = cls._prune_route(route)
         min_spacing = max(road_width * 0.55, 8.0)

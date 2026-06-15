@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 ASSETS_PATH: str = str(PROJECT_ROOT / "assets")
 TEXTURES_PATH: str = str(PROJECT_ROOT / "assets" / "textures")

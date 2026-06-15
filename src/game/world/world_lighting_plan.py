@@ -7,7 +7,6 @@ from pygame.math import Vector3
 from engine.rendering.lighting import INDOOR_LIGHT_FACTOR
 from game.world.objects import Torch, Window
 
-
 WINDOW_LIGHT_EDGE_FACTOR = 0.86
 DOORWAY_WALL_SPLASH_VALUE = 1.36
 DOORWAY_WALL_LIGHT_FALLOFF = 1.65

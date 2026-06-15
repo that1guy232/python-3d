@@ -23,8 +23,8 @@ from OpenGL.GL import (
     GL_DEPTH_TEST,
 )
 
+from engine.core.consts import RIGHT, WORLD_UP
 
-from engine.core.consts import *  # FORWARD, RIGHT, WORLD_UP
 
 class CompassOverlay(WorldSprite):
     def __init__(
@@ -44,10 +44,7 @@ class CompassOverlay(WorldSprite):
             position=position, size=size, camera=camera, texture=base_texture
         )
 
-
-
     def draw(self, pitch_effect: bool = False):  # pragma: no cover - visual
-
 
         axes = self._billboard_axes(self.camera, pitch_effect=pitch_effect)
         right, up = axes if axes else (RIGHT, WORLD_UP)

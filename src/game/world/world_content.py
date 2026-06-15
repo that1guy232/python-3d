@@ -16,7 +16,6 @@ from pygame.math import Vector3
 
 from game.world.objects import Door, Window
 
-
 DEFAULT_BUILDING_HEIGHT = 66.0
 
 _BUILDING_FEATURE_SIDES = ("north", "east", "south", "west")
@@ -275,7 +274,9 @@ def _pick_feature_offset(
     rng: random.Random,
     segments: list[tuple[float, float]],
 ) -> float | None:
-    total = sum(max(0.0, segment_max - segment_min) for segment_min, segment_max in segments)
+    total = sum(
+        max(0.0, segment_max - segment_min) for segment_min, segment_max in segments
+    )
     if total <= 0.0:
         return None
 

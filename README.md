@@ -37,6 +37,12 @@ Run the headless unit tests with:
 py -m unittest discover -s tests
 ```
 
+Run the lightweight architecture gate with:
+
+```powershell
+py scripts/check_architecture.py
+```
+
 ## Declaring world content
 
 Game code can now declare content before the build pipeline turns it into

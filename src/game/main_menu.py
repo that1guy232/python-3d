@@ -29,7 +29,9 @@ from engine.ui.menu import ButtonMenu, MenuOption
 from game.world.worldscene import WorldScene
 
 
-def _draw_rect(x: float, y: float, w: float, h: float, color: tuple[float, ...]) -> None:
+def _draw_rect(
+    x: float, y: float, w: float, h: float, color: tuple[float, ...]
+) -> None:
     glColor4f(*color)
     glBegin(GL_QUADS)
     glVertex2f(x, y)

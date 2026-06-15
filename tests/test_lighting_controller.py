@@ -5,7 +5,6 @@ from types import SimpleNamespace
 import sys
 import unittest
 
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import game.world.lighting_controller as lighting_module
@@ -68,7 +67,9 @@ class StaticLightingControllerTests(unittest.TestCase):
         self.assertEqual(calls[0]["base_brightness"], 0.9)
         self.assertFalse(calls[0]["compile_shader"])
 
-    def test_untextured_exposure_skips_textured_meshes_and_deduplicates_roads(self) -> None:
+    def test_untextured_exposure_skips_textured_meshes_and_deduplicates_roads(
+        self,
+    ) -> None:
         calls = []
 
         def exposed(name, *, texture=None):
