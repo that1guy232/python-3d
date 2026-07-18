@@ -37,9 +37,104 @@ from game.world.ui.interactions import WorldUIInteractions
 from game.world.world_content import WorldContent
 from game.world.world_renderer import WorldRenderer
 from game.world.world_road_planner import create_building_access_roads
+from game.world.world_state import (
+    WorldBuildState,
+    WorldRenderResources,
+    WorldUIState,
+    state_alias,
+)
 
 
 class WorldScene(Scene):
+    # Temporary source-compatible aliases. New subsystem code should use the
+    # explicit owner (`build_state`, `render_resources`, or `ui_state`).
+    sprite_items = state_alias("render_resources", "sprite_items")
+    entities = state_alias("render_resources", "entities")
+    immediate_entities = state_alias("render_resources", "immediate_entities")
+    decals = state_alias("render_resources", "decals")
+    decal_batches = state_alias("render_resources", "decal_batches")
+    wall_tiles = state_alias("render_resources", "wall_tiles")
+    wall_tile_batches = state_alias("render_resources", "wall_tile_batches")
+    road_batches = state_alias("render_resources", "road_batches")
+    door_batches = state_alias("render_resources", "door_batches")
+    window_batches = state_alias("render_resources", "window_batches")
+    polygons = state_alias("render_resources", "polygons")
+    polygon_batches = state_alias("render_resources", "polygon_batches")
+    others = state_alias("render_resources", "others")
+    fence_meshes = state_alias("render_resources", "fence_meshes")
+    ground_mesh = state_alias("render_resources", "ground_mesh")
+    sky = state_alias("render_resources", "sky")
+    road = state_alias("render_resources", "road")
+    decal_batch = state_alias("render_resources", "decal_batch")
+    _ground_height_sampler = state_alias("render_resources", "ground_height_sampler")
+    _collision_spatial_index = state_alias(
+        "render_resources", "collision_spatial_index"
+    )
+    _sprite_update_cache = state_alias("render_resources", "sprite_update_cache")
+    ground_tex = state_alias("render_resources", "ground_tex")
+    road_tex = state_alias("render_resources", "road_tex")
+    tree_textures = state_alias("render_resources", "tree_textures")
+    grasses_textures = state_alias("render_resources", "grasses_textures")
+    rock_textures = state_alias("render_resources", "rock_textures")
+    fence_textures = state_alias("render_resources", "fence_textures")
+    wall_tex = state_alias("render_resources", "wall_tex")
+    torch_tex = state_alias("render_resources", "torch_tex")
+    door_tex = state_alias("render_resources", "door_tex")
+    window_tex = state_alias("render_resources", "window_tex")
+    goblin_tex = state_alias("render_resources", "goblin_tex")
+
+    building_specs = state_alias("build_state", "building_specs")
+    buildings = state_alias("build_state", "buildings")
+    roads = state_alias("build_state", "roads")
+    building_roads = state_alias("build_state", "building_roads")
+    doors = state_alias("build_state", "doors")
+    windows = state_alias("build_state", "windows")
+    walls = state_alias("build_state", "walls")
+    torches = state_alias("build_state", "torches")
+    goblins = state_alias("build_state", "goblins")
+    chests = state_alias("build_state", "chests")
+    showcase_chests = state_alias("build_state", "showcase_chests")
+    showcase_polygons = state_alias("build_state", "showcase_polygons")
+    inventory_items = state_alias("build_state", "inventory_items")
+    building_road_routes = state_alias("build_state", "building_road_routes")
+    building_road_segments = state_alias("build_state", "building_road_segments")
+    builder = state_alias("build_state", "builder")
+
+    _hud = state_alias("ui_state", "hud")
+    battle_cards = state_alias("ui_state", "battle_cards")
+    battle_overlay = state_alias("ui_state", "battle_overlay")
+    battle_menu = state_alias("ui_state", "battle_menu")
+    pause_menu = state_alias("ui_state", "pause_menu")
+    setting_menu = state_alias("ui_state", "setting_menu")
+    paused = state_alias("ui_state", "paused")
+    inventory_open = state_alias("ui_state", "inventory_open")
+    showing_settings_menu = state_alias("ui_state", "showing_settings_menu")
+    battle_mode = state_alias("ui_state", "battle_mode")
+    active_battle_goblin = state_alias("ui_state", "active_battle_goblin")
+    hud_visible = state_alias("ui_state", "hud_visible")
+    compass_visible = state_alias("ui_state", "compass_visible")
+    minimap_visible = state_alias("ui_state", "minimap_visible")
+    held_item_visible = state_alias("ui_state", "held_item_visible")
+    test_light_visible = state_alias("ui_state", "test_light_visible")
+    controls_text_visible = state_alias("ui_state", "controls_text_visible")
+    debug_text_visible = state_alias("ui_state", "debug_text_visible")
+    _last_mouse_pos = state_alias("ui_state", "last_mouse_pos")
+    fov = state_alias("ui_state", "fov")
+    fog_enabled = state_alias("ui_state", "fog_enabled")
+    fog_density = state_alias("ui_state", "fog_density")
+    clouds_enabled = state_alias("ui_state", "clouds_enabled")
+    cloud_density = state_alias("ui_state", "cloud_density")
+    cloud_speed = state_alias("ui_state", "cloud_speed")
+    cloud_opacity = state_alias("ui_state", "cloud_opacity")
+    vibrance = state_alias("ui_state", "vibrance")
+    mouse_sensitivity = state_alias("ui_state", "mouse_sensitivity")
+    walk_speed = state_alias("ui_state", "walk_speed")
+    sprint_speed = state_alias("ui_state", "sprint_speed")
+    road_speed_multiplier = state_alias("ui_state", "road_speed_multiplier")
+    jump_speed = state_alias("ui_state", "jump_speed")
+    gravity = state_alias("ui_state", "gravity")
+    camera_follow_smooth_hz = state_alias("ui_state", "camera_follow_smooth_hz")
+
     def __init__(
         self,
         camera: Optional[Camera] = None,
@@ -55,43 +150,36 @@ class WorldScene(Scene):
         defer_setup: bool = False,
     ) -> None:
         super().__init__()
-        self.sprite_items: list[object] = []
-        self.entities: list[Entity] = []
-        self.immediate_entities: list[Entity] = []
-        self.decals: list[object] = []
-        self.decal_batches: list[object] = []
-        self.wall_tiles: list[object] = []
-        self.wall_tile_batches: list[object] = []
-        self.road_batches: list[object] = []
-        self.door_batches: list[object] = []
-        self.window_batches: list[object] = []
-        self.polygons: list[object] = []
-        self.polygon_batches: list[object] = []
-        self.chests: list[object] = []
-        self.showcase_chests: list[object] = []
-        self.inventory_items: list[object] = []
-        self.others: list[object] = []
-        self.roads: list[object] = []
-        self.building_roads: list[object] = []
-        self.doors: list[object] = []
-        self.windows: list[object] = []
-        self.buildings: list[object] = []
-        self.walls: list[object] = []
-        self.goblins: list[object] = []
-        self.showcase_polygons: list[object] = []
-        self.building_road_routes: list[object] = []
-        self.building_road_segments: list[object] = []
+        self.build_state = WorldBuildState()
+        self.render_resources = WorldRenderResources()
+        self.ui_state = WorldUIState()
         self._texture_lighting_sync_key = None
         self._texture_lighting_sync_result = False
-        self._collision_spatial_index = None
-        self.collision_index = SceneCollisionIndex(self)
-        self.entity_registry = SceneEntityRegistry(self)
+        self.collision_index = SceneCollisionIndex(self.render_resources)
+        self.entity_registry = SceneEntityRegistry(
+            self.render_resources,
+            self.build_state,
+            invalidate_collision_index=self.collision_index.invalidate,
+        )
         self.combat = BattleController(self)
         self.ui_interactions = WorldUIInteractions(self)
-        self.lighting_controller = StaticLightingController(self)
-        self.resource_disposer = SceneResourceDisposer(self)
+        self.lighting_controller = StaticLightingController(
+            self,
+            resources=self.render_resources,
+            build_state=self.build_state,
+        )
+        self.resource_disposer = SceneResourceDisposer(
+            self.render_resources,
+            self.ui_state,
+            self.build_state,
+        )
 
-        self.renderer = WorldRenderer(self)
+        self.renderer = WorldRenderer(
+            self,
+            resources=self.render_resources,
+            ui_state=self.ui_state,
+            lighting_controller=self.lighting_controller,
+        )
         self._initialized = False
         self._grid_count = grid_count
         self._grid_tile_size = grid_tile_size
@@ -192,7 +280,7 @@ class WorldScene(Scene):
         self._last_static_lighting_brightness = float(
             getattr(self.camera, "brightness_default", 1.0)
         )
-        self._sync_lighting_uniforms(compile_shader=False)
+        self.lighting_controller.sync_uniforms(compile_shader=False)
         print("World scene initialization complete.")
         yield ("Ready", 1.0)
 
@@ -317,9 +405,6 @@ class WorldScene(Scene):
     def refresh_immediate_entities(self) -> None:
         return self.entity_registry.refresh_immediate()
 
-    def _sync_lighting_aliases(self):
-        return self.lighting_controller.sync_aliases()
-
     def invalidate_texture_lighting_cache(self) -> None:
         return self.lighting_controller.invalidate_texture_lighting_cache()
 
@@ -438,117 +523,11 @@ class WorldScene(Scene):
     def set_brightness(self, value: float) -> float:
         return self.lighting_controller.set_brightness(value)
 
-    def _sync_brightness_modifiers_from_camera(self) -> None:
-        return self.lighting_controller.sync_brightness_modifiers_from_camera()
-
-    @staticmethod
-    def _dispose_renderable(obj) -> None:
-        return SceneResourceDisposer.dispose_renderable(obj)
-
     def refresh_static_lighting(self) -> None:
         return self.lighting_controller.refresh_static()
 
     def apply_static_exposure(self, brightness: float) -> None:
         return self.lighting_controller.apply_static_exposure(brightness)
-
-    def _sync_lighting_uniforms(
-        self,
-        *,
-        base_brightness: float | None = None,
-        compile_shader: bool = True,
-    ) -> bool:
-        return self.lighting_controller.sync_uniforms(
-            base_brightness=base_brightness,
-            compile_shader=compile_shader,
-        )
-
-    def _texture_lighting_fast_key(
-        self,
-        *,
-        brightness: float,
-        lighting,
-        sun_direction,
-        brightness_areas,
-        covered_regions,
-        compile_shader: bool,
-    ):
-        return self.lighting_controller.texture_lighting_fast_key(
-            brightness=brightness,
-            lighting=lighting,
-            sun_direction=sun_direction,
-            brightness_areas=brightness_areas,
-            covered_regions=covered_regions,
-            compile_shader=compile_shader,
-        )
-
-    @staticmethod
-    def _collection_identity_key(values):
-        return StaticLightingController.collection_identity_key(values)
-
-    @classmethod
-    def _texture_lighting_key(
-        cls,
-        *,
-        brightness: float,
-        lighting,
-        sun_direction,
-        brightness_areas,
-        covered_regions,
-        compile_shader: bool,
-    ):
-        return StaticLightingController.texture_lighting_key(
-            brightness=brightness,
-            lighting=lighting,
-            sun_direction=sun_direction,
-            brightness_areas=brightness_areas,
-            covered_regions=covered_regions,
-            compile_shader=compile_shader,
-        )
-
-    @staticmethod
-    def _rounded(value, digits: int = 5):
-        return StaticLightingController.rounded(value, digits=digits)
-
-    @classmethod
-    def _vector_key(cls, value):
-        return StaticLightingController.vector_key(value)
-
-    @classmethod
-    def _brightness_areas_key(cls, areas):
-        return StaticLightingController.brightness_areas_key(areas)
-
-    @classmethod
-    def _covered_regions_key(cls, regions):
-        return StaticLightingController.covered_regions_key(regions)
-
-    @classmethod
-    def _opening_key(cls, opening):
-        return StaticLightingController.opening_key(opening)
-
-    @classmethod
-    def _bounds_key(cls, bounds):
-        return StaticLightingController.bounds_key(bounds)
-
-    @staticmethod
-    def _uses_texture_shader(obj) -> bool:
-        return StaticLightingController.uses_texture_shader(obj)
-
-    @staticmethod
-    def _set_exposure_cpu(obj, exposure: float) -> None:
-        return StaticLightingController.set_exposure_cpu(obj, exposure)
-
-    def _apply_untextured_static_exposure_cpu(self, exposure: float) -> None:
-        return self.lighting_controller.apply_untextured_static_exposure_cpu(exposure)
-
-    def _apply_static_exposure_cpu(self, exposure: float) -> None:
-        return self.lighting_controller.apply_static_exposure_cpu(exposure)
-
-    def _road_lighting_candidates(self):
-        return self.lighting_controller.road_lighting_candidates()
-
-    @staticmethod
-    def _dispose_renderable_batches(values) -> None:
-        return SceneResourceDisposer.dispose_renderable_batches(values)
 
     def dispose(self) -> None:
         return self.resource_disposer.dispose()

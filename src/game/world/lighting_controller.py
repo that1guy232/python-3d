@@ -5,13 +5,22 @@ from __future__ import annotations
 from engine.core.compat_shader import set_texture_lighting_state
 from game.world import world_builder
 from game.world.objects.wall_tile import build_wall_tile_batches
+from game.world.world_state import WorldBuildState, WorldRenderResources
 
 
 class StaticLightingController:
     """Own lighting rebuilds that still operate on scene-owned resources."""
 
-    def __init__(self, scene) -> None:
+    def __init__(
+        self,
+        scene,
+        *,
+        resources: WorldRenderResources | None = None,
+        build_state: WorldBuildState | None = None,
+    ) -> None:
         self.scene = scene
+        self.resources = resources or getattr(scene, "render_resources", scene)
+        self.build_state = build_state or getattr(scene, "build_state", scene)
 
     def sync_aliases(self):
         """Keep older scene attributes pointing at the shared lighting model."""
@@ -118,22 +127,24 @@ class StaticLightingController:
         )
         scene.sun_direction = sun_direction
 
-        builder = getattr(scene, "builder", None)
+        resources = self.resources
+        build_state = self.build_state
+        builder = getattr(build_state, "builder", None)
         if builder is not None:
             builder.brightness_modifiers = scene.brightness_modifiers
             builder.default_brightness = brightness
             builder.lighting = lighting
             builder.sun_direction = sun_direction
             builder.covered_regions = getattr(scene, "covered_regions", ())
-            self.dispose_renderable(getattr(scene, "ground_mesh", None))
-            scene.ground_mesh = builder.build()
-            scene._ground_height_sampler = getattr(
-                scene.ground_mesh,
+            self.dispose_renderable(getattr(resources, "ground_mesh", None))
+            resources.ground_mesh = builder.build()
+            resources.ground_height_sampler = getattr(
+                resources.ground_mesh,
                 "height_sampler",
                 None,
             )
 
-        height_sampler = getattr(scene, "_ground_height_sampler", None)
+        height_sampler = getattr(resources, "ground_height_sampler", None)
         refreshed_roads: set[int] = set()
         for road in self.road_lighting_candidates():
             if road is None:
@@ -152,20 +163,20 @@ class StaticLightingController:
                 )
         world_builder._build_road_batches(scene)
 
-        for wall in getattr(scene, "walls", ()) or ():
+        for wall in getattr(build_state, "walls", ()) or ():
             wall.sun_direction = sun_direction
             wall.lighting = lighting
 
-        self.dispose_renderable_batches(getattr(scene, "wall_tile_batches", ()))
-        scene.wall_tile_batches = build_wall_tile_batches(
-            getattr(scene, "walls", []),
+        self.dispose_renderable_batches(getattr(resources, "wall_tile_batches", ()))
+        resources.wall_tile_batches = build_wall_tile_batches(
+            getattr(build_state, "walls", []),
             camera=camera,
             default_brightness=brightness,
             sun_direction=sun_direction,
             lighting=lighting,
         )
 
-        if getattr(scene, "ground_mesh", None) is not None:
+        if getattr(resources, "ground_mesh", None) is not None:
             world_builder._build_fences(scene)
 
         self.sync_uniforms(compile_shader=False)
@@ -257,7 +268,7 @@ class StaticLightingController:
             self.collection_identity_key(covered_regions),
             tuple(
                 self.rounded(getattr(door, "open_amount", 0.0), digits=4)
-                for door in getattr(self.scene, "doors", ()) or ()
+                for door in getattr(self.build_state, "doors", ()) or ()
                 if getattr(door, "_doorway_light_region", None) is not None
                 or getattr(door, "_doorway_brightness_modifier", None) is not None
             ),
@@ -418,20 +429,20 @@ class StaticLightingController:
             setter(exposure)
 
     def apply_untextured_static_exposure_cpu(self, exposure: float) -> None:
-        scene = self.scene
-        mesh = getattr(scene, "ground_mesh", None)
+        resources = self.resources
+        mesh = getattr(resources, "ground_mesh", None)
         if mesh is not None and not self.uses_texture_shader(mesh):
             self.set_exposure_cpu(mesh, exposure)
 
-        for mesh in getattr(scene, "fence_meshes", ()) or ():
+        for mesh in getattr(resources, "fence_meshes", ()) or ():
             if not self.uses_texture_shader(mesh):
                 self.set_exposure_cpu(mesh, exposure)
 
-        for batch in getattr(scene, "road_batches", ()) or ():
+        for batch in getattr(resources, "road_batches", ()) or ():
             if not self.uses_texture_shader(batch):
                 self.set_exposure_cpu(batch, exposure)
 
-        for mesh in getattr(scene, "wall_tile_batches", ()) or ():
+        for mesh in getattr(resources, "wall_tile_batches", ()) or ():
             if not self.uses_texture_shader(mesh):
                 self.set_exposure_cpu(mesh, exposure)
 
@@ -444,18 +455,18 @@ class StaticLightingController:
                 self.set_exposure_cpu(road, exposure)
 
     def apply_static_exposure_cpu(self, exposure: float) -> None:
-        scene = self.scene
-        mesh = getattr(scene, "ground_mesh", None)
+        resources = self.resources
+        mesh = getattr(resources, "ground_mesh", None)
         if mesh is not None:
             self.set_exposure_cpu(mesh, exposure)
 
-        for mesh in getattr(scene, "fence_meshes", ()) or ():
+        for mesh in getattr(resources, "fence_meshes", ()) or ():
             self.set_exposure_cpu(mesh, exposure)
 
-        for batch in getattr(scene, "road_batches", ()) or ():
+        for batch in getattr(resources, "road_batches", ()) or ():
             self.set_exposure_cpu(batch, exposure)
 
-        for mesh in getattr(scene, "wall_tile_batches", ()) or ():
+        for mesh in getattr(resources, "wall_tile_batches", ()) or ():
             self.set_exposure_cpu(mesh, exposure)
 
         refreshed_roads: set[int] = set()
@@ -466,13 +477,12 @@ class StaticLightingController:
             self.set_exposure_cpu(road, exposure)
 
     def road_lighting_candidates(self):
-        scene = self.scene
         return [
-            getattr(scene, "road", None),
-            *(getattr(scene, "roads", ()) or ()),
+            getattr(self.resources, "road", None),
+            *(getattr(self.build_state, "roads", ()) or ()),
             *(
                 obj
-                for obj in (getattr(scene, "others", ()) or ())
+                for obj in (getattr(self.resources, "others", ()) or ())
                 if hasattr(obj, "refresh_lighting") or hasattr(obj, "set_exposure")
             ),
         ]

@@ -177,9 +177,9 @@ def setup_graphics(scene) -> None:
         getattr(scene, "brightness_modifiers", ()),
     )
     scene.lighting.set_covered_regions(getattr(scene, "covered_regions", ()))
-    sync_aliases = getattr(scene, "_sync_lighting_aliases", None)
-    if callable(sync_aliases):
-        sync_aliases()
+    lighting_controller = getattr(scene, "lighting_controller", None)
+    if lighting_controller is not None:
+        lighting_controller.sync_aliases()
     else:
         scene.sun_pos = scene.lighting.sun_position
         scene.sun_direction = scene.lighting.sun_direction
@@ -187,18 +187,20 @@ def setup_graphics(scene) -> None:
 
 def load_assets(scene) -> None:
     print("Beginning asset loading...")
+    resources = scene.render_resources
+    ui_state = scene.ui_state
     tex = load_world_textures()
-    scene.ground_tex = tex.get("ground_tex")
-    scene.road_tex = tex.get("road_tex")
-    scene.tree_textures = tex.get("tree_textures", [])
-    scene.grasses_textures = tex.get("grasses_textures", [])
-    scene.rock_textures = tex.get("rock_textures", [])
-    scene.fence_textures = tex.get("fence_textures", [])
-    scene.wall_tex = tex.get("wall_tex")
-    scene.torch_tex = tex.get("torch_tex")
-    scene.door_tex = tex.get("door_tex")
-    scene.window_tex = tex.get("window_tex")
-    scene.goblin_tex = tex.get("goblin_tex", {})
+    resources.ground_tex = tex.get("ground_tex")
+    resources.road_tex = tex.get("road_tex")
+    resources.tree_textures = tex.get("tree_textures", [])
+    resources.grasses_textures = tex.get("grasses_textures", [])
+    resources.rock_textures = tex.get("rock_textures", [])
+    resources.fence_textures = tex.get("fence_textures", [])
+    resources.wall_tex = tex.get("wall_tex")
+    resources.torch_tex = tex.get("torch_tex")
+    resources.door_tex = tex.get("door_tex")
+    resources.window_tex = tex.get("window_tex")
+    resources.goblin_tex = tex.get("goblin_tex", {})
 
     Sounds.ensure_init()
     Sounds.load_optional("footstep", LEAVES02_SOUND_PATH)
@@ -214,44 +216,44 @@ def load_assets(scene) -> None:
     print("Asset loading complete.")
 
     start_time = time.perf_counter()
-    scene.sky = SkyRenderer(
+    resources.sky = SkyRenderer(
         sun_texture_path=STAR_TEXTURE_PATH,
         moon_texture_path=MOON_TEXTURE_PATH,
     )
-    scene._hud = WorldHUD(scene)
-    scene.battle_cards = BattleCardLoadout(scene)
-    scene.battle_overlay = BattleResourceOverlay(scene)
-    scene.battle_menu = BattleMenu(scene)
-    scene.pause_menu = PauseMenu(scene)
-    scene.setting_menu = SettingMenu(scene)
-    scene.fov = FOV
-    scene.fog_enabled = True
-    scene.fog_density = FOGDENSITY
-    scene.clouds_enabled = CLOUDS_ENABLED
-    scene.cloud_density = CLOUD_DENSITY
-    scene.cloud_speed = CLOUD_SPEED
-    scene.cloud_opacity = CLOUD_OPACITY
-    scene.vibrance = 1.15
-    scene.hud_visible = True
-    scene.compass_visible = True
-    scene.minimap_visible = True
-    scene.held_item_visible = True
-    scene.test_light_visible = True
-    scene.controls_text_visible = True
-    scene.debug_text_visible = scene.controls_text_visible
-    scene.mouse_sensitivity = MOUSE_SENSITIVITY
-    scene.walk_speed = BASE_SPEED
-    scene.sprint_speed = SPRINT_SPEED
-    scene.road_speed_multiplier = 1.5
-    scene.jump_speed = JUMP_SPEED
-    scene.gravity = GRAVITY
-    scene.camera_follow_smooth_hz = CAMERA_FOLLOW_SMOOTH_HZ
+    ui_state.hud = WorldHUD(scene)
+    ui_state.battle_cards = BattleCardLoadout(scene)
+    ui_state.battle_overlay = BattleResourceOverlay(scene)
+    ui_state.battle_menu = BattleMenu(scene)
+    ui_state.pause_menu = PauseMenu(scene)
+    ui_state.setting_menu = SettingMenu(scene)
+    ui_state.fov = FOV
+    ui_state.fog_enabled = True
+    ui_state.fog_density = FOGDENSITY
+    ui_state.clouds_enabled = CLOUDS_ENABLED
+    ui_state.cloud_density = CLOUD_DENSITY
+    ui_state.cloud_speed = CLOUD_SPEED
+    ui_state.cloud_opacity = CLOUD_OPACITY
+    ui_state.vibrance = 1.15
+    ui_state.hud_visible = True
+    ui_state.compass_visible = True
+    ui_state.minimap_visible = True
+    ui_state.held_item_visible = True
+    ui_state.test_light_visible = True
+    ui_state.controls_text_visible = True
+    ui_state.debug_text_visible = ui_state.controls_text_visible
+    ui_state.mouse_sensitivity = MOUSE_SENSITIVITY
+    ui_state.walk_speed = BASE_SPEED
+    ui_state.sprint_speed = SPRINT_SPEED
+    ui_state.road_speed_multiplier = 1.5
+    ui_state.jump_speed = JUMP_SPEED
+    ui_state.gravity = GRAVITY
+    ui_state.camera_follow_smooth_hz = CAMERA_FOLLOW_SMOOTH_HZ
     scene.goblin_battle_trigger_distance = GOBLIN_BATTLE_TRIGGER_DISTANCE
     scene.goblin_battle_look_smooth_hz = GOBLIN_BATTLE_LOOK_SMOOTH_HZ
-    scene.battle_mode = False
-    scene.active_battle_goblin = None
-    scene.paused = False
-    scene.inventory_open = False
-    scene.showing_settings_menu = False
-    scene._last_mouse_pos = (0, 0)
+    ui_state.battle_mode = False
+    ui_state.active_battle_goblin = None
+    ui_state.paused = False
+    ui_state.inventory_open = False
+    ui_state.showing_settings_menu = False
+    ui_state.last_mouse_pos = (0, 0)
     scene.log_timing("Initializing sky and HUD", start_time, time.perf_counter())

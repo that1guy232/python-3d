@@ -58,20 +58,30 @@ _WINDOW_SIDE_BY_DOORWAY = {
 }
 
 
+def _ensure_state_owners(scene) -> None:
+    """Allow focused legacy fakes while production uses explicit owners."""
+    if not hasattr(scene, "build_state"):
+        scene.build_state = scene
+    if not hasattr(scene, "render_resources"):
+        scene.render_resources = scene
+
+
 def _build_building_torches(scene) -> None:
+
+    _ensure_state_owners(scene)
 
     torch_tex = Torch.texture_or_load(getattr(scene, "torch_tex", None))
 
-    scene.torch_tex = torch_tex
+    scene.render_resources.torch_tex = torch_tex
 
-    scene.torches = Torch.build_for_brightness_modifiers(
+    scene.build_state.torches = Torch.build_for_brightness_modifiers(
         getattr(scene, "torch_light_modifiers", ()) or (),
         texture=torch_tex,
         camera=scene.camera,
         ground_height_at=scene.ground_height_at,
     )
 
-    scene.sprite_items.extend(scene.torches)
+    scene.render_resources.sprite_items.extend(scene.build_state.torches)
 
 
 def _interior_door_from_spec(
@@ -151,6 +161,8 @@ def _interior_door_from_spec(
 
 def _build_building_doors(scene) -> None:
 
+    _ensure_state_owners(scene)
+
     for batch in getattr(scene, "door_batches", ()) or ():
 
         try:
@@ -161,27 +173,27 @@ def _build_building_doors(scene) -> None:
 
             pass
 
-    scene.door_batches = []
+    scene.render_resources.door_batches = []
 
     for door in getattr(scene, "doors", ()) or ():
 
         try:
 
-            if door in scene.entities:
+            if door in scene.render_resources.entities:
 
-                scene.entities.remove(door)
+                scene.render_resources.entities.remove(door)
 
             for sprite in door.get_sprites() or ():
 
-                if sprite in scene.sprite_items:
+                if sprite in scene.render_resources.sprite_items:
 
-                    scene.sprite_items.remove(sprite)
+                    scene.render_resources.sprite_items.remove(sprite)
 
             for mesh in door.get_collision_meshes() or ():
 
-                if mesh in scene.wall_tiles:
+                if mesh in scene.render_resources.wall_tiles:
 
-                    scene.wall_tiles.remove(mesh)
+                    scene.render_resources.wall_tiles.remove(mesh)
 
         except Exception:
 
@@ -189,9 +201,9 @@ def _build_building_doors(scene) -> None:
 
     door_tex = Door.texture_or_load(getattr(scene, "door_tex", None))
 
-    scene.door_tex = door_tex
+    scene.render_resources.door_tex = door_tex
 
-    scene.doors = []
+    scene.build_state.doors = []
 
     add_entity = getattr(scene, "add_entity", None)
 
@@ -211,7 +223,7 @@ def _build_building_doors(scene) -> None:
 
     def add_door(door: Door) -> None:
 
-        scene.doors.append(door)
+        scene.build_state.doors.append(door)
 
         if callable(add_entity):
 
@@ -219,11 +231,11 @@ def _build_building_doors(scene) -> None:
 
         else:
 
-            scene.entities.append(door)
+            scene.render_resources.entities.append(door)
 
-            scene.sprite_items.extend(door.get_sprites())
+            scene.render_resources.sprite_items.extend(door.get_sprites())
 
-            scene.wall_tiles.extend(door.get_collision_meshes())
+            scene.render_resources.wall_tiles.extend(door.get_collision_meshes())
 
     for spec_index, spec in enumerate(getattr(scene, "building_specs", ()) or ()):
 
@@ -283,9 +295,11 @@ def _build_building_doors(scene) -> None:
 
             add_door(interior_door)
 
-    door_batch = build_door_render_batch(scene.doors)
+    door_batch = build_door_render_batch(scene.build_state.doors)
 
-    scene.door_batches = [door_batch] if door_batch is not None else []
+    scene.render_resources.door_batches = (
+        [door_batch] if door_batch is not None else []
+    )
 
     refresh_draw_entities = getattr(scene, "refresh_immediate_entities", None)
 
@@ -393,6 +407,8 @@ def _normalize_window_specs_for_building(spec: dict) -> list[dict]:
 
 def _build_building_windows(scene) -> None:
 
+    _ensure_state_owners(scene)
+
     for batch in getattr(scene, "window_batches", ()) or ():
 
         try:
@@ -403,27 +419,27 @@ def _build_building_windows(scene) -> None:
 
             pass
 
-    scene.window_batches = []
+    scene.render_resources.window_batches = []
 
     for window in getattr(scene, "windows", ()) or ():
 
         try:
 
-            if window in scene.entities:
+            if window in scene.render_resources.entities:
 
-                scene.entities.remove(window)
+                scene.render_resources.entities.remove(window)
 
             for sprite in window.get_sprites() or ():
 
-                if sprite in scene.sprite_items:
+                if sprite in scene.render_resources.sprite_items:
 
-                    scene.sprite_items.remove(sprite)
+                    scene.render_resources.sprite_items.remove(sprite)
 
             for mesh in window.get_collision_meshes() or ():
 
-                if mesh in scene.wall_tiles:
+                if mesh in scene.render_resources.wall_tiles:
 
-                    scene.wall_tiles.remove(mesh)
+                    scene.render_resources.wall_tiles.remove(mesh)
 
         except Exception:
 
@@ -431,9 +447,9 @@ def _build_building_windows(scene) -> None:
 
     window_tex = Window.texture_or_load(getattr(scene, "window_tex", None))
 
-    scene.window_tex = window_tex
+    scene.render_resources.window_tex = window_tex
 
-    scene.windows = []
+    scene.build_state.windows = []
 
     add_entity = getattr(scene, "add_entity", None)
 
@@ -466,7 +482,7 @@ def _build_building_windows(scene) -> None:
 
                 continue
 
-            scene.windows.append(window)
+            scene.build_state.windows.append(window)
 
             if callable(add_entity):
 
@@ -474,15 +490,17 @@ def _build_building_windows(scene) -> None:
 
             else:
 
-                scene.entities.append(window)
+                scene.render_resources.entities.append(window)
 
-                scene.sprite_items.extend(window.get_sprites())
+                scene.render_resources.sprite_items.extend(window.get_sprites())
 
-                scene.wall_tiles.extend(window.get_collision_meshes())
+                scene.render_resources.wall_tiles.extend(window.get_collision_meshes())
 
-    window_batch = build_window_render_batch(scene.windows)
+    window_batch = build_window_render_batch(scene.build_state.windows)
 
-    scene.window_batches = [window_batch] if window_batch is not None else []
+    scene.render_resources.window_batches = (
+        [window_batch] if window_batch is not None else []
+    )
 
     refresh_draw_entities = getattr(scene, "refresh_immediate_entities", None)
 
@@ -503,14 +521,16 @@ def _prepare_buildings(
     grid_gap: int,
 ) -> None:
 
-    scene.buildings: list[Building] = []
+    _ensure_state_owners(scene)
+
+    scene.build_state.buildings = []
 
     content = resolve_world_content(
         scene,
         building_count=int(getattr(scene, "building_count", 10)),
     )
 
-    scene.building_specs = content.to_building_specs()
+    scene.build_state.building_specs = content.to_building_specs()
 
     for spec in scene.building_specs:
 
@@ -518,11 +538,11 @@ def _prepare_buildings(
 
     for spec in scene.building_specs:
 
-        scene.buildings.append(Building(position=spec["position"]))
+        scene.build_state.buildings.append(Building(position=spec["position"]))
 
     apply_building_lighting(scene, scene.building_specs)
 
-    scene.builder = TexturedGroundGridBuilder(
+    scene.build_state.builder = TexturedGroundGridBuilder(
         count=grid_count,
         tile_size=grid_tile_size,
         gap=grid_gap,
@@ -548,13 +568,15 @@ def _build_showcase_polygons_and_collision(scene) -> None:
 
 def _build_buildings(scene) -> None:
 
+    _ensure_state_owners(scene)
+
     start_time = time.perf_counter()
 
     wall_tex = scene.wall_tex or load_texture(WALL1_TEXTURE_PATH)
 
-    scene.wall_tex = wall_tex
+    scene.render_resources.wall_tex = wall_tex
 
-    scene.walls = []
+    scene.build_state.walls = []
 
     lighting = getattr(scene, "lighting", None)
 
@@ -562,7 +584,10 @@ def _build_buildings(scene) -> None:
         lighting, "sun_direction", getattr(scene, "sun_direction", None)
     )
 
-    for building, spec in zip(scene.buildings, scene.building_specs):
+    for building, spec in zip(
+        scene.build_state.buildings,
+        scene.build_state.building_specs,
+    ):
 
         if building.target_height is None:
 
@@ -648,14 +673,14 @@ def _build_buildings(scene) -> None:
 
             piece.lighting = lighting
 
-        scene.walls.extend(pieces)
+        scene.build_state.walls.extend(pieces)
 
-    print(f"Built {len(scene.walls)} building pieces.")
+    print(f"Built {len(scene.build_state.walls)} building pieces.")
 
     _dispose_values(getattr(scene, "wall_tile_batches", ()))
 
-    scene.wall_tile_batches = build_wall_tile_batches(
-        scene.walls,
+    scene.render_resources.wall_tile_batches = build_wall_tile_batches(
+        scene.build_state.walls,
         camera=scene.camera,
         default_brightness=scene.camera.brightness_default,
         sun_direction=sun_direction,
@@ -664,7 +689,7 @@ def _build_buildings(scene) -> None:
 
     scene.log_timing("Building pieces", start_time, time.perf_counter())
 
-    scene.wall_tiles.extend(scene.walls)
+    scene.render_resources.wall_tiles.extend(scene.build_state.walls)
 
     _build_building_torches(scene)
 
@@ -674,6 +699,8 @@ def _build_buildings(scene) -> None:
 
 
 def _build_showcase_polygons(scene) -> None:
+
+    _ensure_state_owners(scene)
 
     start_time = time.perf_counter()
 
@@ -687,17 +714,17 @@ def _build_showcase_polygons(scene) -> None:
 
             pass
 
-    scene.polygon_batches = []
+    scene.render_resources.polygon_batches = []
 
     _remove_showcase_chests(scene)
 
     wall_tex = scene.wall_tex or load_texture(WALL1_TEXTURE_PATH)
 
-    scene.wall_tex = wall_tex
+    scene.render_resources.wall_tex = wall_tex
 
     tri_thickness = 5
 
-    scene.showcase_polygons: list[Polygon] = []
+    scene.build_state.showcase_polygons = []
 
     off_ground = 40
 
@@ -721,7 +748,7 @@ def _build_showcase_polygons(scene) -> None:
 
     triangle_points = [(0, 0), (60, 0), (30, 50)]
 
-    scene.showcase_polygons.append(
+    scene.build_state.showcase_polygons.append(
         Polygon(
             position=Vector3(
                 scene.world_center.x,
@@ -737,7 +764,7 @@ def _build_showcase_polygons(scene) -> None:
 
     square_points = [(0, 0), (40, 0), (40, 40), (0, 40)]
 
-    scene.showcase_polygons.append(
+    scene.build_state.showcase_polygons.append(
         Polygon(
             position=Vector3(
                 scene.world_center.x - 100,
@@ -753,7 +780,7 @@ def _build_showcase_polygons(scene) -> None:
 
     pent_points = regular_polygon(0.0, 0.0, 30.0, 5)
 
-    scene.showcase_polygons.append(
+    scene.build_state.showcase_polygons.append(
         Polygon(
             position=Vector3(
                 scene.world_center.x + 100,
@@ -777,7 +804,7 @@ def _build_showcase_polygons(scene) -> None:
         (0, 30),
     ]
 
-    scene.showcase_polygons.append(
+    scene.build_state.showcase_polygons.append(
         Polygon(
             position=Vector3(
                 scene.world_center.x - 200,
@@ -793,7 +820,7 @@ def _build_showcase_polygons(scene) -> None:
 
     l_points = [(0, 0), (60, 0), (60, 20), (20, 20), (20, 80), (0, 80)]
 
-    scene.showcase_polygons.append(
+    scene.build_state.showcase_polygons.append(
         Polygon(
             position=Vector3(
                 scene.world_center.x + 230,
@@ -815,22 +842,26 @@ def _build_showcase_polygons(scene) -> None:
         lighting, "sun_direction", getattr(scene, "sun_direction", None)
     )
 
-    for polygon in scene.showcase_polygons:
+    for polygon in scene.build_state.showcase_polygons:
 
         polygon.lighting = lighting
 
         polygon.sun_direction = sun_direction
 
-    scene.polygons.extend(scene.showcase_polygons)
+    scene.render_resources.polygons.extend(scene.build_state.showcase_polygons)
 
-    polygon_batch = build_polygon_render_batch(scene.showcase_polygons)
+    polygon_batch = build_polygon_render_batch(scene.build_state.showcase_polygons)
 
-    scene.polygon_batches = [polygon_batch] if polygon_batch is not None else []
+    scene.render_resources.polygon_batches = (
+        [polygon_batch] if polygon_batch is not None else []
+    )
 
     _build_showcase_chest(scene, wall_tex)
 
 
 def _remove_showcase_chests(scene) -> None:
+
+    _ensure_state_owners(scene)
 
     for chest in getattr(scene, "showcase_chests", ()) or ():
 
@@ -848,10 +879,12 @@ def _remove_showcase_chests(scene) -> None:
 
                 values.remove(chest)
 
-    scene.showcase_chests = []
+    scene.build_state.showcase_chests = []
 
 
 def _build_showcase_chest(scene, texture) -> None:
+
+    _ensure_state_owners(scene)
 
     lighting = getattr(scene, "lighting", None)
 
@@ -873,13 +906,13 @@ def _build_showcase_chest(scene, texture) -> None:
         side="south",
     )
 
-    scene.showcase_chests = [chest]
+    scene.build_state.showcase_chests = [chest]
 
     if not isinstance(getattr(scene, "chests", None), list):
 
-        scene.chests = []
+        scene.build_state.chests = []
 
-    scene.chests.append(chest)
+    scene.build_state.chests.append(chest)
 
     add_entity = getattr(scene, "add_entity", None)
 
@@ -889,8 +922,8 @@ def _build_showcase_chest(scene, texture) -> None:
 
         return
 
-    scene.entities.append(chest)
+    scene.render_resources.entities.append(chest)
 
-    scene.immediate_entities.append(chest)
+    scene.render_resources.immediate_entities.append(chest)
 
-    scene.wall_tiles.extend(chest.get_collision_meshes())
+    scene.render_resources.wall_tiles.extend(chest.get_collision_meshes())

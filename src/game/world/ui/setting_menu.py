@@ -477,6 +477,11 @@ class SettingMenu(ButtonMenu):
         return value
 
     @staticmethod
+    def _ui(scene):
+        """Return the narrow UI owner, with legacy fake-scene compatibility."""
+        return getattr(scene, "ui_state", scene)
+
+    @staticmethod
     def _camera(scene):
         return getattr(scene, "camera", None)
 
@@ -538,58 +543,66 @@ class SettingMenu(ButtonMenu):
             Sounds.toggle_muted()
 
     def hud_label(self, scene) -> str:
-        return self._bool_label("HUD", getattr(scene, "hud_visible", True))
+        return self._bool_label("HUD", getattr(self._ui(scene), "hud_visible", True))
 
     def toggle_hud(self, scene) -> None:
-        self._toggle_scene_flag(scene, "hud_visible", True)
+        self._toggle_scene_flag(self._ui(scene), "hud_visible", True)
 
     def compass_label(self, scene) -> str:
-        return self._bool_label("Compass", getattr(scene, "compass_visible", True))
+        return self._bool_label(
+            "Compass", getattr(self._ui(scene), "compass_visible", True)
+        )
 
     def toggle_compass(self, scene) -> None:
-        self._toggle_scene_flag(scene, "compass_visible", True)
+        self._toggle_scene_flag(self._ui(scene), "compass_visible", True)
 
     def minimap_label(self, scene) -> str:
-        return self._bool_label("Minimap", getattr(scene, "minimap_visible", True))
+        return self._bool_label(
+            "Minimap", getattr(self._ui(scene), "minimap_visible", True)
+        )
 
     def toggle_minimap(self, scene) -> None:
-        self._toggle_scene_flag(scene, "minimap_visible", True)
+        self._toggle_scene_flag(self._ui(scene), "minimap_visible", True)
 
     def held_item_label(self, scene) -> str:
-        return self._bool_label("Held Item", getattr(scene, "held_item_visible", True))
+        return self._bool_label(
+            "Held Item", getattr(self._ui(scene), "held_item_visible", True)
+        )
 
     def toggle_held_item(self, scene) -> None:
-        self._toggle_scene_flag(scene, "held_item_visible", True)
+        self._toggle_scene_flag(self._ui(scene), "held_item_visible", True)
 
     def test_light_label(self, scene) -> str:
         return self._bool_label(
-            "Test Light", getattr(scene, "test_light_visible", True)
+            "Test Light", getattr(self._ui(scene), "test_light_visible", True)
         )
 
     def toggle_test_light(self, scene) -> None:
-        self._toggle_scene_flag(scene, "test_light_visible", True)
+        self._toggle_scene_flag(self._ui(scene), "test_light_visible", True)
 
     def controls_text_label(self, scene) -> str:
+        ui = self._ui(scene)
         return self._bool_label(
             "Controls Text",
             getattr(
-                scene,
+                ui,
                 "controls_text_visible",
-                getattr(scene, "debug_text_visible", True),
+                getattr(ui, "debug_text_visible", True),
             ),
         )
 
     def toggle_controls_text(self, scene) -> None:
+        ui = self._ui(scene)
         current = bool(
             getattr(
-                scene,
+                ui,
                 "controls_text_visible",
-                getattr(scene, "debug_text_visible", True),
+                getattr(ui, "debug_text_visible", True),
             )
         )
         value = not current
-        setattr(scene, "controls_text_visible", value)
-        setattr(scene, "debug_text_visible", value)
+        setattr(ui, "controls_text_visible", value)
+        setattr(ui, "debug_text_visible", value)
 
     def fog_label(self, scene) -> str:
         return self._bool_label("Fog", getattr(scene, "fog_enabled", True))
@@ -894,4 +907,4 @@ class SettingMenu(ButtonMenu):
         set_texture_vibrance_state(1.0)
 
     def back(self, scene) -> None:
-        scene.showing_settings_menu = False
+        self._ui(scene).showing_settings_menu = False

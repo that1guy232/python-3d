@@ -3,21 +3,45 @@
 from __future__ import annotations
 
 import math
+from typing import Protocol
+
+from game.world.world_state import CollisionMesh, WorldRenderResources
 
 DEFAULT_COLLISION_CELL_SIZE = 128.0
 COLLISION_FALLBACK_CELL_LIMIT = 256
 
 
+class CollisionSourceProvider(Protocol):
+    """Narrow collection contract required by the spatial index."""
+
+    wall_tiles: list[CollisionMesh]
+    polygons: list[CollisionMesh]
+    collision_spatial_index: dict | None
+
+
 class SceneCollisionIndex:
     """Build and query a coarse collision mesh spatial index."""
 
-    def __init__(self, scene) -> None:
-        self.scene = scene
+    def __init__(self, sources: CollisionSourceProvider | WorldRenderResources) -> None:
+        self.config = sources
+        self.sources = getattr(sources, "render_resources", sources)
+
+    def _cached_index(self):
+        return getattr(
+            self.sources,
+            "collision_spatial_index",
+            getattr(self.sources, "_collision_spatial_index", None),
+        )
+
+    def _set_cached_index(self, value) -> None:
+        if hasattr(self.sources, "collision_spatial_index"):
+            self.sources.collision_spatial_index = value
+        else:
+            self.sources._collision_spatial_index = value
 
     def iter_sources(self):
-        scene = self.scene
         seen: set[int] = set()
-        for mesh in getattr(scene, "wall_tiles", ()) or ():
+        for mesh in getattr(self.sources, "wall_tiles", ()) or ():
             if mesh is None:
                 continue
             mesh_id = id(mesh)
@@ -25,7 +49,7 @@ class SceneCollisionIndex:
                 continue
             seen.add(mesh_id)
             yield mesh, False
-        for mesh in getattr(scene, "polygons", ()) or ():
+        for mesh in getattr(self.sources, "polygons", ()) or ():
             if mesh is None:
                 continue
             mesh_id = id(mesh)
@@ -35,9 +59,8 @@ class SceneCollisionIndex:
             yield mesh, True
 
     def source_key(self):
-        scene = self.scene
-        wall_tiles = getattr(scene, "wall_tiles", ()) or ()
-        polygons = getattr(scene, "polygons", ()) or ()
+        wall_tiles = getattr(self.sources, "wall_tiles", ()) or ()
+        polygons = getattr(self.sources, "polygons", ()) or ()
 
         def edge_ids(values):
             if not values:
@@ -79,9 +102,8 @@ class SceneCollisionIndex:
             return None
 
     def rebuild(self) -> dict:
-        scene = self.scene
         cell_size = float(
-            getattr(scene, "collision_cell_size", DEFAULT_COLLISION_CELL_SIZE)
+            getattr(self.config, "collision_cell_size", DEFAULT_COLLISION_CELL_SIZE)
         )
         if cell_size <= 1.0:
             cell_size = DEFAULT_COLLISION_CELL_SIZE
@@ -137,15 +159,14 @@ class SceneCollisionIndex:
             "fallback": tuple(fallback),
             "wall_fallback": tuple(wall_fallback),
         }
-        scene._collision_spatial_index = index
+        self._set_cached_index(index)
         return index
 
     def invalidate(self) -> None:
-        self.scene._collision_spatial_index = None
+        self._set_cached_index(None)
 
     def index(self) -> dict:
-        scene = self.scene
-        index = getattr(scene, "_collision_spatial_index", None)
+        index = self._cached_index()
         key = self.source_key()
         if not isinstance(index, dict) or index.get("key") != key:
             index = self.rebuild()

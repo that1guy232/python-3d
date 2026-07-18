@@ -46,13 +46,26 @@ from game.world.objects.goblin import draw_goblin_shadows_batched
 from game.world.ui.battle_panel import BattlePanel
 from game.world.ui.inventory_panel import InventoryPanel
 from game.world.ui.pause_panel import PauseMenuPanel
+from game.world.world_state import WorldRenderResources, WorldUIState
 
 
 class WorldRenderer:
     """Render a WorldScene without making the world package own render systems."""
 
-    def __init__(self, scene) -> None:
+    def __init__(
+        self,
+        scene,
+        *,
+        resources: WorldRenderResources | None = None,
+        ui_state: WorldUIState | None = None,
+        lighting_controller=None,
+    ) -> None:
         self.scene = scene
+        self.resources = resources or getattr(scene, "render_resources", scene)
+        self.ui_state = ui_state or getattr(scene, "ui_state", scene)
+        self.lighting_controller = lighting_controller or getattr(
+            scene, "lighting_controller", None
+        )
         self.battle_panel = BattlePanel(scene)
         self.inventory_panel = InventoryPanel(scene)
         self.pause_panel = PauseMenuPanel(scene)
@@ -69,6 +82,11 @@ class WorldRenderer:
         profiler = getattr(self.scene, "profiler", None)
         if profiler is not None and getattr(profiler, "enabled", False):
             profiler.count(name, amount)
+
+    def _ui_value(self, name: str, default=None, *, legacy_name: str | None = None):
+        if hasattr(self.ui_state, name):
+            return getattr(self.ui_state, name)
+        return getattr(self.scene, legacy_name or name, default)
 
     @staticmethod
     def _clamp01(value: float) -> float:
@@ -97,7 +115,7 @@ class WorldRenderer:
         scene = self.scene
         with self._profile("render.sky"):
             lighting = getattr(scene, "lighting", None)
-            scene.sky.draw(
+            self.resources.sky.draw(
                 scene.camera,
                 sun_direction=getattr(
                     lighting,
@@ -116,17 +134,18 @@ class WorldRenderer:
     def draw(self, enable_timing: bool = False) -> None:  # pragma: no cover - visual
         scene = self.scene
         with self._profile("draw.lighting_sync"):
-            sync_lighting = getattr(scene, "_sync_lighting_uniforms", None)
-            if callable(sync_lighting):
-                sync_lighting()
+            if self.lighting_controller is not None:
+                self.lighting_controller.sync_uniforms()
             self._apply_fog_state()
 
         with self._profile("draw.ground"):
-            scene.ground_mesh.draw(camera=scene.camera, view_distance=VIEWDISTANCE)
+            self.resources.ground_mesh.draw(
+                camera=scene.camera, view_distance=VIEWDISTANCE
+            )
 
         with self._profile("draw.fences"):
             BatchedMesh.draw_many(
-                getattr(scene, "fence_meshes", ()),
+                self.resources.fence_meshes,
                 camera=scene.camera,
                 view_distance=VIEWDISTANCE,
             )
@@ -136,8 +155,9 @@ class WorldRenderer:
 
         with self._profile("draw.world_hud"):
             try:
-                if getattr(scene, "hud_visible", True):
-                    scene._hud.draw()
+                hud = self._ui_value("hud", legacy_name="_hud")
+                if self._ui_value("hud_visible", True) and hud is not None:
+                    hud.draw()
             except Exception:
                 pass
 
@@ -145,7 +165,7 @@ class WorldRenderer:
         self, *, show_hud: bool = True, text=None, fps: float | None = None
     ) -> None:  # pragma: no cover - visual
         scene = self.scene
-        battle_overlay = getattr(scene, "battle_overlay", None)
+        battle_overlay = self._ui_value("battle_overlay")
         if battle_overlay is not None:
             battle_overlay.sync_state()
         rgba = self._sky_rgba()
@@ -204,7 +224,8 @@ class WorldRenderer:
         if profiler is not None and getattr(profiler, "enabled", False):
             profiler.count("render.hud_text.enabled", float(self._hud_text_will_draw()))
             profiler.count(
-                "render.minimap.visible", float(getattr(scene, "minimap_visible", True))
+                "render.minimap.visible",
+                float(self._ui_value("minimap_visible", True)),
             )
 
         if (
@@ -217,21 +238,18 @@ class WorldRenderer:
                 self.draw_hud(text, fps)
 
     def _hud_text_will_draw(self) -> bool:
-        scene = self.scene
         return bool(
-            getattr(scene, "battle_mode", False)
-            or getattr(scene, "inventory_open", False)
-            or getattr(scene, "paused", False)
+            self._ui_value("battle_mode", False)
+            or self._ui_value("inventory_open", False)
+            or self._ui_value("paused", False)
             or self._controls_text_visible()
         )
 
     def _controls_text_visible(self) -> bool:
-        scene = self.scene
         return bool(
-            getattr(
-                scene,
+            self._ui_value(
                 "controls_text_visible",
-                getattr(scene, "debug_text_visible", True),
+                self._ui_value("debug_text_visible", True),
             )
         )
 
@@ -251,17 +269,16 @@ class WorldRenderer:
         return "\n".join(lines)
 
     def draw_hud(self, text, fps: float) -> None:  # pragma: no cover - visual
-        scene = self.scene
         fps_label = self._fps_text(fps)
-        if getattr(scene, "battle_mode", False):
+        if self._ui_value("battle_mode", False):
             self._count("hud_text.battle_frames")
             with self._profile("hud_text.battle_menu"):
                 self.draw_battle_menu(text)
-        elif getattr(scene, "inventory_open", False):
+        elif self._ui_value("inventory_open", False):
             self._count("hud_text.inventory_frames")
             with self._profile("hud_text.inventory_menu"):
                 self.draw_inventory(text, fps_label)
-        elif getattr(scene, "paused", False):
+        elif self._ui_value("paused", False):
             self._count("hud_text.pause_frames")
             with self._profile("hud_text.pause_menu"):
                 self.draw_pause_menu(text)
@@ -465,11 +482,12 @@ class WorldRenderer:
         self, enable_timing: bool = False
     ) -> None:  # pragma: no cover - visual
         scene = self.scene
+        resources = self.resources
 
         start_draw_decal_batches_time = time.perf_counter()
         with self._profile("objects.decal_batches"):
             profiler = getattr(scene, "profiler", None)
-            for batch in scene.decal_batches:
+            for batch in resources.decal_batches:
                 batch.draw(camera=scene.camera, profiler=profiler)
         end_draw_decal_batches_time = time.perf_counter()
         if enable_timing:
@@ -480,15 +498,15 @@ class WorldRenderer:
 
         start_draw_wall_tiles_time = time.perf_counter()
         with self._profile("objects.wall_tiles"):
-            if scene.wall_tile_batches:
+            if resources.wall_tile_batches:
                 BatchedMesh.draw_many(
-                    scene.wall_tile_batches,
+                    resources.wall_tile_batches,
                     camera=scene.camera,
                     view_distance=VIEWDISTANCE,
                 )
             else:
-                entity_ids = {id(entity) for entity in scene.entities}
-                for wall in scene.wall_tiles:
+                entity_ids = {id(entity) for entity in resources.entities}
+                for wall in resources.wall_tiles:
                     if id(wall) in entity_ids:
                         continue
                     if not self._object_visible(wall):
@@ -503,10 +521,10 @@ class WorldRenderer:
 
         start_draw_polygons_time = time.perf_counter()
         with self._profile("objects.polygon_batches"):
-            for batch in getattr(scene, "polygon_batches", ()) or ():
+            for batch in resources.polygon_batches:
                 batch.draw(camera=scene.camera, view_distance=VIEWDISTANCE)
         with self._profile("objects.polygons"):
-            for polygon in scene.polygons:
+            for polygon in resources.polygons:
                 if getattr(polygon, "render_batched", False):
                     continue
                 if not self._object_visible(polygon):
@@ -521,11 +539,11 @@ class WorldRenderer:
 
         starting_draw_other_time = time.perf_counter()
         with self._profile("objects.road_batches"):
-            for batch in getattr(scene, "road_batches", ()) or ():
+            for batch in resources.road_batches:
                 batch.draw(camera=scene.camera, view_distance=VIEWDISTANCE)
 
         with self._profile("objects.others"):
-            for obj in scene.others:
+            for obj in resources.others:
                 if getattr(obj, "render_batched", False):
                     continue
                 if not self._object_visible(obj):
@@ -542,15 +560,16 @@ class WorldRenderer:
         start_draw_entities_time = time.perf_counter()
 
         with self._profile("objects.door_batches"):
-            for batch in getattr(scene, "door_batches", ()) or ():
+            for batch in resources.door_batches:
                 batch.draw(camera=scene.camera, view_distance=VIEWDISTANCE)
 
         with self._profile("objects.window_batches"):
-            for batch in getattr(scene, "window_batches", ()) or ():
+            for batch in resources.window_batches:
                 batch.draw(camera=scene.camera, view_distance=VIEWDISTANCE)
 
         with self._profile("objects.goblin_shadows"):
-            goblins = getattr(scene, "goblins", None) or scene.entities
+            build_state = getattr(scene, "build_state", scene)
+            goblins = getattr(build_state, "goblins", None) or resources.entities
             draw_goblin_shadows_batched(
                 goblins,
                 camera=scene.camera,
@@ -558,7 +577,7 @@ class WorldRenderer:
             )
 
         with self._profile("objects.entities"):
-            for entity in getattr(scene, "immediate_entities", ()) or ():
+            for entity in resources.immediate_entities:
                 if not getattr(entity, "enabled", True) or not getattr(
                     entity,
                     "visible",
@@ -585,9 +604,9 @@ class WorldRenderer:
 
         start_draw_sprites_time = time.perf_counter()
         with self._profile("objects.sprites"):
-            if scene.sprite_items and scene.camera is not None:
+            if resources.sprite_items and scene.camera is not None:
                 draw_sprites_batched(
-                    scene.sprite_items,
+                    resources.sprite_items,
                     scene.camera,
                     scene.ground_height_at,
                     lighting=getattr(scene, "lighting", None),

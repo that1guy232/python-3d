@@ -139,7 +139,8 @@ def _update_entities(scene, dt: float) -> None:
 
 
 def _update_sprites(scene, dt: float) -> None:
-    sprites = getattr(scene, "sprite_items", ()) or ()
+    resources = getattr(scene, "render_resources", scene)
+    sprites = getattr(resources, "sprite_items", ()) or ()
     if not sprites:
         return
 
@@ -148,10 +149,15 @@ def _update_sprites(scene, dt: float) -> None:
 
 
 def _sprite_update_callables(scene, sprites) -> tuple:
+    resources = getattr(scene, "render_resources", scene)
     sprite_count = len(sprites)
     first = sprites[0] if sprite_count else None
     last = sprites[-1] if sprite_count else None
-    cache = getattr(scene, "_sprite_update_cache", None)
+    cache = getattr(
+        resources,
+        "sprite_update_cache",
+        getattr(resources, "_sprite_update_cache", None),
+    )
     if (
         cache is not None
         and cache.get("sprites") is sprites
@@ -168,13 +174,17 @@ def _sprite_update_callables(scene, sprites) -> tuple:
             updates.append(update_sprite)
 
     updates = tuple(updates)
-    scene._sprite_update_cache = {
+    cache_value = {
         "sprites": sprites,
         "count": sprite_count,
         "first": first,
         "last": last,
         "updates": updates,
     }
+    if hasattr(resources, "sprite_update_cache"):
+        resources.sprite_update_cache = cache_value
+    else:
+        resources._sprite_update_cache = cache_value
     return updates
 
 
@@ -515,20 +525,22 @@ def view_space_position(
 
 
 def update(scene, dt: float) -> None:
-    if getattr(scene, "battle_mode", False):
+    ui = getattr(scene, "ui_state", scene)
+    hud = getattr(ui, "hud", getattr(scene, "_hud", None))
+    if getattr(ui, "battle_mode", False):
         with _profile(scene, "update.battle_camera"):
             _update_battle_camera(scene, dt)
         with _profile(scene, "update.battle_hud"):
             try:
-                scene._hud.update(dt)
+                hud.update(dt)
             except Exception:
                 pass
         return
 
-    if getattr(scene, "paused", False) or getattr(scene, "inventory_open", False):
+    if getattr(ui, "paused", False) or getattr(ui, "inventory_open", False):
         with _profile(scene, "update.paused_hud"):
             try:
-                scene._hud.update(dt)
+                hud.update(dt)
             except Exception:
                 pass
         return
@@ -547,7 +559,7 @@ def update(scene, dt: float) -> None:
         if _start_battle_if_goblin_close(scene):
             _update_battle_camera(scene, dt)
             try:
-                scene._hud.update(dt)
+                hud.update(dt)
             except Exception:
                 pass
             return
@@ -620,12 +632,20 @@ def update(scene, dt: float) -> None:
                 scene.camera.position.y += (target_cam_y - scene.camera.position.y) * a
 
     with _profile(scene, "update.hud_headbob"):
-        scene._hud.update(dt)
+        hud.update(dt)
         scene._headbob.update(moving=moving, sprinting=sprinting, dt=dt)
 
 
 def handle_event(scene, event) -> None:
-    if getattr(scene, "battle_mode", False):
+    ui = getattr(scene, "ui_state", scene)
+
+    def remember_mouse(pos) -> None:
+        if ui is scene:
+            scene._last_mouse_pos = pos
+        else:
+            ui.last_mouse_pos = pos
+
+    if getattr(ui, "battle_mode", False):
         if event.type == pygame.MOUSEBUTTONDOWN and getattr(event, "button", None) == 1:
             pos = getattr(event, "pos", pygame.mouse.get_pos())
             scene._handle_battle_click(pos)
@@ -636,49 +656,49 @@ def handle_event(scene, event) -> None:
             return
         if event.type == pygame.MOUSEMOTION:
             pos = getattr(event, "pos", pygame.mouse.get_pos())
-            scene._last_mouse_pos = pos
+            remember_mouse(pos)
             scene._handle_battle_motion(pos)
             return
         return
 
     if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-        if getattr(scene, "inventory_open", False):
-            scene.inventory_open = False
-            scene.paused = False
-            scene.showing_settings_menu = False
+        if getattr(ui, "inventory_open", False):
+            ui.inventory_open = False
+            ui.paused = False
+            ui.showing_settings_menu = False
             pygame.mouse.set_visible(False)
             pygame.event.set_grab(True)
         else:
-            scene.paused = not getattr(scene, "paused", False)
-            if not scene.paused:
-                scene.showing_settings_menu = False
-            pygame.mouse.set_visible(scene.paused)
-            pygame.event.set_grab(not scene.paused)
+            ui.paused = not getattr(ui, "paused", False)
+            if not ui.paused:
+                ui.showing_settings_menu = False
+            pygame.mouse.set_visible(ui.paused)
+            pygame.event.set_grab(not ui.paused)
         return
 
     if event.type == pygame.KEYDOWN and event.key in (pygame.K_i, pygame.K_TAB):
-        scene.inventory_open = not getattr(scene, "inventory_open", False)
-        scene.paused = scene.inventory_open
-        scene.showing_settings_menu = False
-        pygame.mouse.set_visible(scene.paused)
-        pygame.event.set_grab(not scene.paused)
+        ui.inventory_open = not getattr(ui, "inventory_open", False)
+        ui.paused = ui.inventory_open
+        ui.showing_settings_menu = False
+        pygame.mouse.set_visible(ui.paused)
+        pygame.event.set_grab(not ui.paused)
         return
 
     if event.type == pygame.KEYDOWN and event.key == pygame.K_m:
-        scene.minimap_visible = not getattr(scene, "minimap_visible", True)
+        ui.minimap_visible = not getattr(ui, "minimap_visible", True)
         return
 
-    if getattr(scene, "inventory_open", False):
+    if getattr(ui, "inventory_open", False):
         if event.type == pygame.MOUSEBUTTONDOWN and getattr(event, "button", None) == 1:
             pos = getattr(event, "pos", pygame.mouse.get_pos())
             scene._handle_inventory_click(pos)
             return
         if event.type == pygame.MOUSEMOTION:
-            scene._last_mouse_pos = getattr(event, "pos", pygame.mouse.get_pos())
+            remember_mouse(getattr(event, "pos", pygame.mouse.get_pos()))
             return
         return
 
-    if getattr(scene, "paused", False) and not getattr(scene, "inventory_open", False):
+    if getattr(ui, "paused", False) and not getattr(ui, "inventory_open", False):
         if event.type == pygame.MOUSEBUTTONDOWN and getattr(event, "button", None) == 1:
             pos = getattr(event, "pos", pygame.mouse.get_pos())
             scene._handle_pause_click(pos)
@@ -689,7 +709,7 @@ def handle_event(scene, event) -> None:
             return
         if event.type == pygame.MOUSEMOTION:
             pos = getattr(event, "pos", pygame.mouse.get_pos())
-            scene._last_mouse_pos = pos
+            remember_mouse(pos)
             scene._handle_pause_motion(pos)
             return
         return
@@ -708,10 +728,11 @@ def handle_event(scene, event) -> None:
 
 
 def apply_mouse_delta(scene, dx: float, dy: float, dt: float | None = None) -> None:
+    ui = getattr(scene, "ui_state", scene)
     if (
-        getattr(scene, "battle_mode", False)
-        or getattr(scene, "paused", False)
-        or getattr(scene, "inventory_open", False)
+        getattr(ui, "battle_mode", False)
+        or getattr(ui, "paused", False)
+        or getattr(ui, "inventory_open", False)
     ):
         return
     try:

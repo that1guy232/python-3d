@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pygame.math import Vector3
 
 from engine.rendering.lighting import INDOOR_LIGHT_FACTOR
@@ -59,8 +61,8 @@ def _window_light_opening(spec: dict, window: dict) -> dict | None:
     }
 
 
-def building_covered_regions(building_specs) -> list[object]:
-    regions: list[dict] = []
+def building_covered_regions(building_specs) -> list[dict[str, Any]]:
+    regions: list[dict[str, Any]] = []
     for spec in building_specs or ():
         try:
             position = spec["position"]
@@ -378,14 +380,14 @@ def install_building_lights(scene, building_specs=None) -> None:
 
     lighting = getattr(scene, "lighting", None)
     if lighting is not None:
-        sync_aliases = getattr(scene, "_sync_lighting_aliases", None)
-        if callable(sync_aliases):
-            sync_aliases()
+        lighting_controller = getattr(scene, "lighting_controller", None)
+        if lighting_controller is not None:
+            lighting_controller.sync_aliases()
         else:
             scene.brightness_modifiers = lighting.brightness_modifiers
 
 
-def apply_building_lighting(scene, building_specs=None) -> list[object]:
+def apply_building_lighting(scene, building_specs=None) -> list[dict[str, Any]]:
     specs = (
         building_specs
         if building_specs is not None
@@ -396,8 +398,8 @@ def apply_building_lighting(scene, building_specs=None) -> list[object]:
     lighting = getattr(scene, "lighting", None)
     if lighting is not None:
         lighting.set_covered_regions(regions)
-        sync_aliases = getattr(scene, "_sync_lighting_aliases", None)
-        if callable(sync_aliases):
-            sync_aliases()
+        lighting_controller = getattr(scene, "lighting_controller", None)
+        if lighting_controller is not None:
+            lighting_controller.sync_aliases()
     install_building_lights(scene, specs)
     return regions
