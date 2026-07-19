@@ -82,5 +82,4 @@ SWORD_TEXTURE_PATH: str = _asset("textures", "items", "sword.png")
 COMPASS_BASE_TEXTURE_PATH: str = _asset("textures", "items", "compass_base.png")
 COMPASS_NEEDLE_TEXTURE_PATH: str = _asset("textures", "items", "compass_needle.png")
 
-SHADOW_TEXTURE_PATH: str = _asset("textures", "shadow.png")
 LIGHT_TEXTURE_PATH: str = _asset("textures", "light.png")
