@@ -30,9 +30,11 @@ from OpenGL.GL import (
     glGetIntegerv,
     glTexImage2D,
     glTexParameteri,
+    glTexSubImage2D,
 )
 
 from engine.rendering.lighting_adapter import ReceiverLightingPacket
+from engine.rendering.render_environment import RenderEnvironmentSnapshot
 
 
 LOCAL_LIGHT_TEXELS = 3
@@ -157,15 +159,21 @@ def _texture_ids() -> tuple[int, int, int]:
 
 @dataclass(slots=True)
 class PacketGpuStorage:
-    """Own and bind variable-length float textures for one packet program."""
+    """Own persistent float record textures for one packet program."""
 
     limits: PacketGpuStorageLimits
     texture_ids: tuple[int, int, int] = field(default_factory=_texture_ids)
-    _uploaded_packet: ReceiverLightingPacket | None = field(
+    _uploaded_local_lights: tuple | None = field(
         default=None,
         init=False,
         repr=False,
     )
+    _uploaded_environment: RenderEnvironmentSnapshot | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+    _allocated: bool = field(default=False, init=False, repr=False)
     widths: tuple[int, int, int] = field(
         default=(1, 1, 1),
         init=False,
@@ -191,8 +199,7 @@ class PacketGpuStorage:
             )
         storage = cls(limits=limits)
         try:
-            empty = np.zeros((1, 4), dtype=np.float32)
-            storage._upload_arrays((empty, empty, empty))
+            storage._allocate_textures()
         except Exception as exc:
             storage.dispose()
             raise RuntimeError(
@@ -200,10 +207,17 @@ class PacketGpuStorage:
             ) from exc
         return storage
 
-    def _upload_arrays(self, arrays: tuple[np.ndarray, np.ndarray, np.ndarray]) -> None:
+    def _allocate_textures(self) -> None:
+        """Allocate fixed-capacity record textures once for this GL context."""
+
+        if self._allocated:
+            return
+        width = int(self.limits.max_texture_size)
+        if width <= 0:
+            raise RuntimeError("packet lighting texture capacity must be positive")
         units = (GL_TEXTURE1, GL_TEXTURE2, GL_TEXTURE3)
         try:
-            for unit, texture, data in zip(units, self.texture_ids, arrays):
+            for unit, texture in zip(units, self.texture_ids):
                 glActiveTexture(unit)
                 glBindTexture(GL_TEXTURE_2D, texture)
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
@@ -214,34 +228,87 @@ class PacketGpuStorage:
                     GL_TEXTURE_2D,
                     0,
                     GL_RGBA32F,
-                    int(data.shape[0]),
+                    width,
                     1,
                     0,
                     GL_RGBA,
                     GL_FLOAT,
-                    np.ascontiguousarray(data),
+                    None,
                 )
         finally:
             glActiveTexture(GL_TEXTURE0)
-        self.widths = tuple(int(data.shape[0]) for data in arrays)
+        self.widths = (width, width, width)
+        self._allocated = True
+
+    def _upload_array(self, index: int, data: np.ndarray) -> None:
+        self._allocate_textures()
+        width = int(data.shape[0])
+        if width > int(self.limits.max_texture_size):
+            raise ValueError(
+                "packet lighting record texture capacity exceeded; "
+                f"limit={self.limits.max_texture_size}, received={width}"
+            )
+        units = (GL_TEXTURE1, GL_TEXTURE2, GL_TEXTURE3)
+        unit = units[index]
+        texture = self.texture_ids[index]
+        try:
+            glActiveTexture(unit)
+            glBindTexture(GL_TEXTURE_2D, texture)
+            glTexSubImage2D(
+                GL_TEXTURE_2D,
+                0,
+                0,
+                0,
+                width,
+                1,
+                GL_RGBA,
+                GL_FLOAT,
+                np.ascontiguousarray(data),
+            )
+        finally:
+            glActiveTexture(GL_TEXTURE0)
+
+    def _upload_arrays(
+        self,
+        arrays: tuple[np.ndarray, np.ndarray, np.ndarray],
+    ) -> None:
+        for index, data in enumerate(arrays):
+            self._upload_array(index, data)
+        # Raw uploads do not carry record identities, so force the next packet
+        # bind to re-establish both semantic cache keys.
+        self._uploaded_local_lights = None
+        self._uploaded_environment = None
+
+    def _bind_textures(self) -> None:
+        try:
+            for unit, texture in zip(
+                (GL_TEXTURE1, GL_TEXTURE2, GL_TEXTURE3),
+                self.texture_ids,
+            ):
+                glActiveTexture(unit)
+                glBindTexture(GL_TEXTURE_2D, texture)
+        finally:
+            glActiveTexture(GL_TEXTURE0)
 
     def upload_and_bind(self, packet: ReceiverLightingPacket) -> None:
-        if self._uploaded_packet != packet:
-            local = pack_local_light_texels(packet)
+        self._allocate_textures()
+        # A receiver that disables a channel sets its record count to zero in
+        # PacketTextureLightingShader. Keep the last scene-global records in
+        # place so alternating receiver policies do not upload empty arrays.
+        local_lights = tuple(packet.local_lights)
+        if local_lights and self._uploaded_local_lights != local_lights:
+            self._upload_array(0, pack_local_light_texels(packet))
+            self._uploaded_local_lights = local_lights
+
+        environment = packet.environment
+        regions = environment.regions if environment is not None else ()
+        if regions and self._uploaded_environment != environment:
             regions, portals = pack_environment_texels(packet)
-            arrays = (local, regions, portals)
-            self._upload_arrays(arrays)
-            self._uploaded_packet = packet
-        else:
-            try:
-                for unit, texture in zip(
-                    (GL_TEXTURE1, GL_TEXTURE2, GL_TEXTURE3),
-                    self.texture_ids,
-                ):
-                    glActiveTexture(unit)
-                    glBindTexture(GL_TEXTURE_2D, texture)
-            finally:
-                glActiveTexture(GL_TEXTURE0)
+            self._upload_array(1, regions)
+            self._upload_array(2, portals)
+            self._uploaded_environment = environment
+
+        self._bind_textures()
 
     def dispose(self) -> None:
         textures = tuple(texture for texture in self.texture_ids if texture)
@@ -251,4 +318,7 @@ class PacketGpuStorage:
             except TypeError:
                 glDeleteTextures(len(textures), list(textures))
         self.texture_ids = (0, 0, 0)
-        self._uploaded_packet = None
+        self._uploaded_local_lights = None
+        self._uploaded_environment = None
+        self._allocated = False
+        self.widths = (1, 1, 1)

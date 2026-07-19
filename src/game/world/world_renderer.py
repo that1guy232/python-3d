@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+from dataclasses import dataclass
 import math
 import time
 
@@ -48,12 +49,14 @@ from engine.rendering.packet_shader import (
     get_packet_texture_lighting_shader,
 )
 from engine.rendering.directional_shadow import (
+    DirectionalShadowBinding,
     DirectionalShadowMap,
     ShadowCasterShader,
     directional_light_matrix,
     directional_shadow_bias,
 )
 from engine.rendering.point_shadow import (
+    PointShadowBinding,
     PointShadowCasterShader,
     PointShadowMap,
     point_light_face_matrices,
@@ -72,6 +75,22 @@ from game.world.ui.battle_panel import BattlePanel
 from game.world.ui.inventory_panel import InventoryPanel
 from game.world.ui.pause_panel import PauseMenuPanel
 from game.world.world_state import WorldRenderResources, WorldUIState
+
+
+@dataclass(slots=True)
+class _SunShadowCache:
+    caster_revision: tuple
+    center: tuple[float, float, float]
+    direction: tuple[float, float, float]
+    binding: DirectionalShadowBinding
+
+
+@dataclass(slots=True)
+class _PointShadowCache:
+    light_id: str
+    light_revision: tuple
+    caster_revision: tuple
+    binding: PointShadowBinding
 
 
 class WorldRenderer:
@@ -98,12 +117,18 @@ class WorldRenderer:
         self._fps_label_update_s = 0.0
         self._sun_shadow_map: DirectionalShadowMap | None = None
         self._shadow_caster_shader: ShadowCasterShader | None = None
+        self._sun_shadow_cache: _SunShadowCache | None = None
         self._point_shadow_maps: list[PointShadowMap] = []
         self._point_shadow_caster_shader: PointShadowCasterShader | None = None
+        self._point_shadow_cache: list[_PointShadowCache | None] = []
+        self._point_shadow_update_cursor = 0
         self.sun_shadow_map_size = 2048
         self.sun_shadow_extent = min(float(VIEWDISTANCE), 1000.0)
+        self.sun_shadow_camera_threshold = 4.0
+        self.sun_shadow_direction_threshold_degrees = 0.25
         self.point_shadow_map_size = 256
         self.max_point_shadows = 2
+        self.point_shadow_updates_per_frame = 1
 
     def _profile(self, name: str):
         profiler = getattr(self.scene, "profiler", None)
@@ -189,6 +214,70 @@ class WorldRenderer:
             return mesh.shadow_meshes()
         return ()
 
+    def _shadow_mesh_records(self):
+        """Yield meshes with the revision of the source that owns them."""
+
+        for source in self._shadow_sources():
+            source_revision = getattr(source, "shadow_revision", None)
+            for mesh in self._shadow_meshes_from(source):
+                yield mesh, (id(source), source_revision)
+
+    @staticmethod
+    def _shadow_mesh_revision(mesh, source_revision) -> tuple:
+        """Return a cheap geometry-only cache key for one shadow caster."""
+
+        center = getattr(mesh, "bounds_center", None)
+        return (
+            source_revision,
+            id(mesh),
+            getattr(mesh, "shadow_revision", None),
+            int(getattr(mesh, "vbo_vertices", 0) or 0),
+            int(getattr(mesh, "vertex_count", 0) or 0),
+            tuple(float(value) for value in center) if center is not None else None,
+            float(getattr(mesh, "bounds_radius", 0.0)),
+            bool(getattr(mesh, "casts_shadows", True)),
+            bool(getattr(mesh, "alpha_test", False)),
+            float(getattr(mesh, "alpha_cutoff", 0.0)),
+            int(getattr(mesh, "texture", 0) or 0),
+        )
+
+    @staticmethod
+    def _normalized_direction(direction) -> tuple[float, float, float]:
+        values = tuple(float(value) for value in direction)
+        length = math.sqrt(sum(value * value for value in values))
+        if length <= 1e-8:
+            return (0.0, 1.0, 0.0)
+        return tuple(value / length for value in values)
+
+    def _sun_shadow_needs_refresh(
+        self,
+        *,
+        caster_revision: tuple,
+        center: tuple[float, float, float],
+        direction: tuple[float, float, float],
+    ) -> bool:
+        cache = self._sun_shadow_cache
+        if cache is None or cache.caster_revision != caster_revision:
+            return True
+        camera_threshold = max(0.0, float(self.sun_shadow_camera_threshold))
+        if math.dist(cache.center, center) > camera_threshold:
+            return True
+        angle_threshold = max(
+            0.0,
+            float(self.sun_shadow_direction_threshold_degrees),
+        )
+        direction_dot = max(
+            -1.0,
+            min(
+                1.0,
+                sum(
+                    previous * current
+                    for previous, current in zip(cache.direction, direction)
+                ),
+            ),
+        )
+        return direction_dot < math.cos(math.radians(angle_threshold))
+
     def render_sun_shadow(self) -> None:
         """Render current world-space casters and bind their sun visibility."""
 
@@ -202,12 +291,33 @@ class WorldRenderer:
             packet_shader.set_directional_shadow(None)
             return
 
-        direction = getattr(lighting, "light_direction", (0.0, 1.0, 0.0))
+        direction = self._normalized_direction(
+            getattr(lighting, "light_direction", (0.0, 1.0, 0.0))
+        )
         center = (
             float(camera.position.x),
             float(camera.position.y),
             float(camera.position.z),
         )
+        shadow_records = tuple(self._shadow_mesh_records())
+        sun_casters = tuple(
+            (mesh, source_revision)
+            for mesh, source_revision in shadow_records
+            if getattr(mesh, "casts_sun_shadows", True)
+        )
+        caster_revision = tuple(
+            self._shadow_mesh_revision(mesh, source_revision)
+            for mesh, source_revision in sun_casters
+        )
+        if not self._sun_shadow_needs_refresh(
+            caster_revision=caster_revision,
+            center=center,
+            direction=direction,
+        ):
+            self._count("shadow.sun.cache_hits")
+            packet_shader.set_directional_shadow(self._sun_shadow_cache.binding)
+            return
+
         extent = max(50.0, float(self.sun_shadow_extent))
         shadow_near = 1.0
         shadow_far = extent * 4.0
@@ -220,20 +330,23 @@ class WorldRenderer:
         )
         shadow_map, caster_shader = self._ensure_sun_shadow_resources()
         with shadow_map.render_depth():
-            for source in self._shadow_sources():
-                for mesh in self._shadow_meshes_from(source):
-                    if not getattr(mesh, "casts_sun_shadows", True):
-                        continue
-                    mesh.draw_shadow(caster_shader, light_matrix)
-        packet_shader.set_directional_shadow(
-            shadow_map.binding(
-                light_matrix,
-                bias=directional_shadow_bias(
-                    near=shadow_near,
-                    far=shadow_far,
-                ),
-            )
+            for mesh, _source_revision in sun_casters:
+                mesh.draw_shadow(caster_shader, light_matrix)
+        binding = shadow_map.binding(
+            light_matrix,
+            bias=directional_shadow_bias(
+                near=shadow_near,
+                far=shadow_far,
+            ),
         )
+        self._sun_shadow_cache = _SunShadowCache(
+            caster_revision=caster_revision,
+            center=center,
+            direction=direction,
+            binding=binding,
+        )
+        self._count("shadow.sun.refreshes")
+        packet_shader.set_directional_shadow(binding)
 
     def _selected_point_lights(self, limit: int = MAX_PACKET_POINT_LIGHTS):
         lighting = getattr(self.scene, "lighting", None)
@@ -271,10 +384,11 @@ class WorldRenderer:
             self._point_shadow_maps.append(
                 PointShadowMap.create(self.point_shadow_map_size)
             )
+            self._point_shadow_cache.append(None)
         if self._point_shadow_caster_shader is None:
             self._point_shadow_caster_shader = PointShadowCasterShader.create()
         return (
-            tuple(self._point_shadow_maps[:count]),
+            tuple(self._point_shadow_maps),
             self._point_shadow_caster_shader,
         )
 
@@ -285,6 +399,74 @@ class WorldRenderer:
             return True
         radius = max(0.0, float(getattr(mesh, "bounds_radius", 0.0)))
         return math.dist(center, position) <= float(light_range) + radius
+
+    @staticmethod
+    def _point_light_revision(light) -> tuple:
+        return (
+            str(light.light_id),
+            tuple(float(value) for value in light.position),
+            float(light.range),
+        )
+
+    def _assign_point_shadow_maps(self, lights) -> tuple[tuple[object, int], ...]:
+        """Keep a light on its existing cube map when priority order changes."""
+
+        assignments: list[tuple[object, int] | None] = [None] * len(lights)
+        claimed: set[int] = set()
+        for light_index, light in enumerate(lights):
+            for map_index, cache in enumerate(self._point_shadow_cache):
+                if (
+                    map_index not in claimed
+                    and cache is not None
+                    and cache.light_id == str(light.light_id)
+                ):
+                    assignments[light_index] = (light, map_index)
+                    claimed.add(map_index)
+                    break
+        available = (
+            index
+            for index in range(len(self._point_shadow_maps))
+            if index not in claimed
+        )
+        for light_index, light in enumerate(lights):
+            if assignments[light_index] is None:
+                map_index = next(available)
+                assignments[light_index] = (light, map_index)
+                claimed.add(map_index)
+        return tuple(
+            assignment for assignment in assignments if assignment is not None
+        )
+
+    def _staggered_point_shadow_refreshes(
+        self,
+        assignments,
+        revisions,
+    ) -> set[int]:
+        """Choose new maps immediately and spread ordinary invalidations out."""
+
+        refreshes: set[int] = set()
+        pending: list[int] = []
+        for light, map_index in assignments:
+            light_revision, caster_revision = revisions[map_index]
+            cache = self._point_shadow_cache[map_index]
+            if cache is None or cache.light_id != str(light.light_id):
+                refreshes.add(map_index)
+            elif (
+                cache.light_revision != light_revision
+                or cache.caster_revision != caster_revision
+            ):
+                pending.append(map_index)
+
+        budget = max(0, int(self.point_shadow_updates_per_frame))
+        if pending and budget:
+            map_count = max(1, len(self._point_shadow_maps))
+            pending.sort(
+                key=lambda index: (index - self._point_shadow_update_cursor) % map_count
+            )
+            selected = pending[:budget]
+            refreshes.update(selected)
+            self._point_shadow_update_cursor = (selected[-1] + 1) % map_count
+        return refreshes
 
     def render_point_shadows(self) -> None:
         """Render radial depth cubes for the most relevant local lights."""
@@ -303,50 +485,75 @@ class WorldRenderer:
             packet_shader.set_point_shadows(())
             return
 
-        shadow_maps, caster_shader = self._ensure_point_shadow_resources(
+        _, caster_shader = self._ensure_point_shadow_resources(
             len(lights)
         )
-        shadow_meshes = tuple(
-            mesh
-            for source in self._shadow_sources()
-            for mesh in self._shadow_meshes_from(source)
-        )
-        bindings = []
-        for light, shadow_map in zip(lights, shadow_maps):
+        shadow_records = tuple(self._shadow_mesh_records())
+        assignments = self._assign_point_shadow_maps(lights)
+        revisions = {}
+        casters_by_map = {}
+        for light, map_index in assignments:
             light_range = max(0.1, float(light.range))
             position = tuple(float(value) for value in light.position)
-            near = max(0.1, min(1.0, light_range * 0.01))
-            matrices = point_light_face_matrices(
-                position,
-                near=near,
-                far=light_range,
+            caster_records = tuple(
+                (mesh, source_revision)
+                for mesh, source_revision in shadow_records
+                if self._mesh_intersects_point_light(mesh, position, light_range)
             )
-            casters = tuple(
-                mesh
-                for mesh in shadow_meshes
-                if self._mesh_intersects_point_light(
-                    mesh,
+            casters_by_map[map_index] = tuple(
+                mesh for mesh, _source_revision in caster_records
+            )
+            revisions[map_index] = (
+                self._point_light_revision(light),
+                tuple(
+                    self._shadow_mesh_revision(mesh, source_revision)
+                    for mesh, source_revision in caster_records
+                ),
+            )
+
+        refreshes = self._staggered_point_shadow_refreshes(
+            assignments,
+            revisions,
+        )
+        bindings = []
+        for light, map_index in assignments:
+            shadow_map = self._point_shadow_maps[map_index]
+            light_range = max(0.1, float(light.range))
+            position = tuple(float(value) for value in light.position)
+            if map_index in refreshes:
+                near = max(0.1, min(1.0, light_range * 0.01))
+                matrices = point_light_face_matrices(
                     position,
-                    light_range,
+                    near=near,
+                    far=light_range,
                 )
-            )
-            for face_index, matrix in enumerate(matrices):
-                with shadow_map.render_face(face_index):
-                    for mesh in casters:
-                        mesh.draw_point_shadow(
-                            caster_shader,
-                            matrix,
-                            position,
-                            light_range,
-                        )
-            bindings.append(
-                shadow_map.binding(
+                for face_index, matrix in enumerate(matrices):
+                    with shadow_map.render_face(face_index):
+                        for mesh in casters_by_map[map_index]:
+                            mesh.draw_point_shadow(
+                                caster_shader,
+                                matrix,
+                                position,
+                                light_range,
+                            )
+                binding = shadow_map.binding(
                     light.light_id,
                     position,
                     light_range,
                     bias=max(0.1, min(0.75, light_range * 0.003)),
                 )
-            )
+                light_revision, caster_revision = revisions[map_index]
+                self._point_shadow_cache[map_index] = _PointShadowCache(
+                    light_id=str(light.light_id),
+                    light_revision=light_revision,
+                    caster_revision=caster_revision,
+                    binding=binding,
+                )
+                self._count("shadow.point.refreshes")
+                self._count("shadow.point.faces", 6.0)
+            else:
+                self._count("shadow.point.cache_hits")
+            bindings.append(self._point_shadow_cache[map_index].binding)
         packet_shader.set_point_shadows(bindings)
 
     def dispose(self) -> None:
@@ -362,12 +569,15 @@ class WorldRenderer:
         if self._sun_shadow_map is not None:
             self._sun_shadow_map.dispose()
             self._sun_shadow_map = None
+        self._sun_shadow_cache = None
         if self._point_shadow_caster_shader is not None:
             self._point_shadow_caster_shader.dispose()
             self._point_shadow_caster_shader = None
         for shadow_map in self._point_shadow_maps:
             shadow_map.dispose()
         self._point_shadow_maps.clear()
+        self._point_shadow_cache.clear()
+        self._point_shadow_update_cursor = 0
 
     def _lighting_packet_for(self, mesh):
         if self.lighting_controller is None or mesh is None:

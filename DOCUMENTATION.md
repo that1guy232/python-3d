@@ -100,8 +100,10 @@ delegates to `world_runtime.update()`, which:
 Each frame, `Engine.render()` calls `scene.render(...)`. In the world scene this
 delegates to `WorldRenderer.render()`, which:
 
-- Builds the packet backend's directional shadow map and up to two relevant
-  point-light shadow cubemaps before the visible scene pass.
+- Reuses the packet backend's directional shadow map until meaningful
+  camera/sun or caster movement, and caches up to two point-light cubemaps by
+  light and spatially affected caster revision. Dynamic point-shadow refreshes
+  are staggered across frames.
 - Sets fog, clear color, projection, and camera transforms.
 - Draws sky/clouds before world geometry.
 - Draws terrain, fences, decals, walls, roads, doors, windows, polygons,
@@ -185,7 +187,7 @@ the lighting implementation is being changed.
 | `src/engine/rendering/directional_shadow.py` | Directional depth-map ownership, light-space matrices, and the shared opaque/alpha-cutout caster shader. |
 | `src/engine/rendering/point_shadow.py` | Point-light depth cubemaps, six face matrices, bindings, and radial-depth caster shader. |
 | `src/engine/rendering/gl_program.py` | Shared GLSL compile/link helper used by packet and shadow programs. |
-| `src/engine/rendering/packet_gpu_storage.py` | RGBA32F record textures plus fragment/vertex texture capability checks for local-light, region, and portal input. |
+| `src/engine/rendering/packet_gpu_storage.py` | Persistent RGBA32F record textures with revision-equivalent subimage updates plus fragment/vertex texture capability checks for local-light, region, and portal input. |
 | `src/engine/rendering/frame_comparison.py` | Stable-pixel masking and quantitative RGB parity metrics for renderer A/B gates. |
 | `src/engine/rendering/geometry_lighting.py` | Resolves explicit packet/legacy vertex representation, retaining lazy shader probing only for standalone compatibility callers. |
 | `src/engine/rendering/render_environment.py` | Immutable render-facing environment regions and portals. |
