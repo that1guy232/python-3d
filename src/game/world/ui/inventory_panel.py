@@ -126,39 +126,19 @@ class InventoryPanel:
                         color=[255, 0, 0, 0],
                     )
 
-            outer_x, outer_y, outer_w, outer_h = (
-                WorldUIInteractions.inventory_panel_rect()
-            )
+            layout = WorldUIInteractions.inventory_layout()
+            outer_x, outer_y, outer_w, outer_h = layout.outer_rect
             padding = 24.0
-            gap = 22.0
-            stats_w = min(280.0, max(230.0, outer_w * 0.31))
-            grid_x = outer_x + padding
-            grid_y = outer_y + 82.0
-            grid_w = outer_w - padding * 2.0 - stats_w - gap
-            stats_x = grid_x + grid_w + gap
+            grid_x, grid_y, grid_w, grid_h = layout.grid_rect
+            stats_x, _stats_panel_y, stats_w, _stats_panel_h = layout.stats_rect
             stats_y = grid_y
-            stats_h = outer_h - 108.0
 
             rows = self._player_stat_rows()
             items = list(getattr(self.scene, "inventory_items", ()) or ())
-            cols = 6
-            visible_rows = 4
-            slot_gap = 10.0
-            slot_size = min(
-                72.0,
-                max(
-                    44.0,
-                    min(
-                        (grid_w - slot_gap * (cols - 1)) / cols,
-                        (stats_h - slot_gap * (visible_rows - 1)) / visible_rows,
-                    ),
-                ),
-            )
-            grid_h = visible_rows * slot_size + (visible_rows - 1) * slot_gap
-            slot_count = cols * visible_rows
-            close_x, close_y, close_w, close_h = (
-                WorldUIInteractions.inventory_close_rect()
-            )
+            slot_rects = layout.slot_rects
+            slot_count = len(slot_rects)
+            close_x, close_y, close_w, close_h = layout.close_rect
+            selected_slot = getattr(self.scene, "inventory_selected_slot", None)
             mx, my = pygame.mouse.get_pos()
             close_hovered = (
                 close_x <= mx <= close_x + close_w
@@ -214,28 +194,29 @@ class InventoryPanel:
                 (0.48, 0.18, 0.14, 0.74) if close_hovered else (0.22, 0.13, 0.11, 0.64),
             )
 
-            for index in range(slot_count):
-                col = index % cols
-                row = index // cols
-                x = grid_x + col * (slot_size + slot_gap)
-                y = grid_y + row * (slot_size + slot_gap)
-                filled = index < len(items)
+            for index, (x, y, slot_w, slot_h) in enumerate(slot_rects):
+                filled = index < len(items) and items[index] is not None
+                selected = index == selected_slot
                 self._draw_overlay_rect(
                     x,
                     y,
-                    slot_size,
-                    slot_size,
+                    slot_w,
+                    slot_h,
                     (
-                        (0.12, 0.105, 0.09, 0.96)
-                        if filled
-                        else (0.06, 0.058, 0.055, 0.92)
+                        (0.55, 0.39, 0.12, 1.0)
+                        if selected
+                        else (
+                            (0.12, 0.105, 0.09, 0.96)
+                            if filled
+                            else (0.06, 0.058, 0.055, 0.92)
+                        )
                     ),
                 )
                 self._draw_overlay_rect(
                     x + 3.0,
                     y + 3.0,
-                    slot_size - 6.0,
-                    slot_size - 6.0,
+                    slot_w - 6.0,
+                    slot_h - 6.0,
                     ((0.23, 0.18, 0.12, 0.54) if filled else (0.11, 0.105, 0.1, 0.5)),
                 )
 
@@ -266,17 +247,14 @@ class InventoryPanel:
                 label = self._item_label(item)
                 if not label:
                     continue
-                col = index % cols
-                row = index // cols
-                x = grid_x + col * (slot_size + slot_gap)
-                y = grid_y + row * (slot_size + slot_gap)
-                label = self._fit_text_width(text, label, slot_size - 10.0)
+                x, y, slot_w, slot_h = slot_rects[index]
+                label = self._fit_text_width(text, label, slot_w - 10.0)
                 if not label:
                     continue
                 text.draw_text(
                     label,
-                    x + slot_size * 0.5,
-                    y + slot_size * 0.5,
+                    x + slot_w * 0.5,
+                    y + slot_h * 0.5,
                     color=(245, 235, 215, 255),
                     align="center",
                 )

@@ -9,6 +9,8 @@ import random
 
 import time
 
+from typing import Iterator
+
 
 from pygame.math import Vector3
 
@@ -80,7 +82,12 @@ def _outside_building_shadow_receiver(bounds: list[tuple[float, float, float, fl
     return receives_shadow
 
 
-def _build_shadow_decals(scene) -> None:
+def _build_shadow_decals(scene) -> Iterator[float]:
+    """Build ground details cooperatively, yielding phase completion.
+
+    Decal construction is CPU-heavy but does not need to monopolize one frame.
+    The yielded fractions let the loading scene repaint between small batches.
+    """
 
     tree_detail_subdiv = 4
 
@@ -96,16 +103,18 @@ def _build_shadow_decals(scene) -> None:
         pixelated=False,
     )
 
-    tree_detail_textures = [
-        create_forest_floor_texture(
+    yield 0.03
+
+    tree_detail_textures = []
+    for seed in range(4):
+        tree_detail_textures.append(create_forest_floor_texture(
             width_px=192,
             height_px=192,
             variant_seed=seed,
             alpha_scale=0.86,
             pixelated=False,
-        )
-        for seed in range(4)
-    ]
+        ))
+        yield 0.03 + 0.035 * (seed + 1)
 
     contact_shadow_texture = create_shadow_texture(
         width_px=128,
@@ -116,6 +125,8 @@ def _build_shadow_decals(scene) -> None:
         falloff_exp=1.55,
         pixelated=False,
     )
+
+    yield 0.20
 
     print("Created ground detail and contact shadow textures.")
 
@@ -232,13 +243,28 @@ def _build_shadow_decals(scene) -> None:
 
     start_time = time.perf_counter()
 
-    for sprite in scene.trees:
+    trees = list(scene.trees)
+    grasses = list(getattr(scene, "grasses", ()))
+    rocks = list(getattr(scene, "rocks", ()))
+    decal_count = len(trees) * 2 + len(grasses) + len(rocks)
+    completed_decals = 0
+
+    def batch_progress() -> float:
+        if decal_count <= 0:
+            return 0.90
+        return 0.20 + 0.70 * completed_decals / decal_count
+
+    for index, sprite in enumerate(trees, 1):
 
         decals.append(make_tree_shadow_decal_for_sprite(sprite))
 
         decals.append(make_tree_detail_decal_for_sprite(sprite))
 
-    for sprite in getattr(scene, "grasses", ()):
+        completed_decals += 2
+        if index % 100 == 0:
+            yield batch_progress()
+
+    for index, sprite in enumerate(grasses, 1):
 
         decals.append(
             make_contact_decal_for_sprite(
@@ -246,13 +272,23 @@ def _build_shadow_decals(scene) -> None:
             )
         )
 
-    for sprite in getattr(scene, "rocks", ()):
+        completed_decals += 1
+        if index % 200 == 0:
+            yield batch_progress()
+
+    for index, sprite in enumerate(rocks, 1):
 
         decals.append(
             make_contact_decal_for_sprite(
                 sprite, scale_min=1, scale_max=1.05, min_size=10.0, max_size=42.0
             )
         )
+
+        completed_decals += 1
+        if index % 100 == 0:
+            yield batch_progress()
+
+    yield 0.90
 
     print(
         f"Created {len(scene.trees)} tree shadow/detail pairs, "
@@ -271,6 +307,8 @@ def _build_shadow_decals(scene) -> None:
     scene.decal_batch = DecalBatch.build(decals)
 
     scene.decal_batches.append(scene.decal_batch)
+
+    yield 0.98
 
     start_time = time.perf_counter()
 

@@ -35,6 +35,7 @@ py src/main.py
 | Space | Jump |
 | `E` | Interact with the focused door or chest |
 | `I` or Tab | Toggle inventory |
+| Left mouse | Select/drag an inventory item and move it to another slot |
 | `M` | Toggle minimap |
 | Escape | Pause/resume; closes inventory first |
 | `F3` | Toggle performance logging |
@@ -260,6 +261,7 @@ the lighting implementation is being changed.
 
 | File | Quick docs |
 | --- | --- |
+| `src/game/world/inventory.py` | Fixed inventory slots, item movement/swapping, goblin test drops, and timed receipt state. |
 | `src/game/world/ui/__init__.py` | World UI package exports. |
 | `src/game/world/ui/world_hud.py` | World HUD owner for compass, minimap, held item, sway/headbob offsets, shade overlay, and HUD updates/drawing. |
 | `src/game/world/ui/compass_overlay.py` | Compass overlay using base/needle textures in screen space. |

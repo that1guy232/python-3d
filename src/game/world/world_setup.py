@@ -248,7 +248,6 @@ def load_assets(scene) -> None:
     ui_state.battle_overlay = BattleResourceOverlay(scene)
     ui_state.battle_menu = BattleMenu(scene)
     ui_state.pause_menu = PauseMenu(scene)
-    ui_state.setting_menu = SettingMenu(scene)
     ui_state.fov = FOV
     ui_state.fog_enabled = True
     ui_state.fog_density = FOGDENSITY
@@ -271,6 +270,8 @@ def load_assets(scene) -> None:
     ui_state.jump_speed = JUMP_SPEED
     ui_state.gravity = GRAVITY
     ui_state.camera_follow_smooth_hz = CAMERA_FOLLOW_SMOOTH_HZ
+    ui_state.setting_menu = SettingMenu(scene)
+    ui_state.setting_menu.apply_saved_settings(scene)
     scene.goblin_battle_trigger_distance = GOBLIN_BATTLE_TRIGGER_DISTANCE
     scene.goblin_battle_look_smooth_hz = GOBLIN_BATTLE_LOOK_SMOOTH_HZ
     ui_state.battle_mode = False

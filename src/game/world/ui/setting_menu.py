@@ -12,6 +12,7 @@ from game.config import (
     HEIGHT,
     WIDTH,
 )
+from game.settings import load_settings, save_settings
 from engine.render_style_state import update_render_vibrance_state
 from engine.sound.sound_utils import Sounds
 from engine.ui.menu import ButtonMenu, MenuItem, MenuOption, SliderOption
@@ -375,6 +376,7 @@ class SettingMenu(ButtonMenu):
             setattr(scene, attr, value)
             if on_change is not None:
                 on_change(scene, value)
+            self.save(scene)
 
         return SliderOption(
             action,
@@ -414,6 +416,7 @@ class SettingMenu(ButtonMenu):
             setattr(obj, attr, value)
             if on_change is not None:
                 on_change(scene, value)
+            self.save(scene)
 
         return SliderOption(
             action,
@@ -541,12 +544,14 @@ class SettingMenu(ButtonMenu):
     def toggle_audio(self, scene) -> None:
         if hasattr(Sounds, "toggle_muted"):
             Sounds.toggle_muted()
+            self.save(scene)
 
     def hud_label(self, scene) -> str:
         return self._bool_label("HUD", getattr(self._ui(scene), "hud_visible", True))
 
     def toggle_hud(self, scene) -> None:
         self._toggle_scene_flag(self._ui(scene), "hud_visible", True)
+        self.save(scene)
 
     def compass_label(self, scene) -> str:
         return self._bool_label(
@@ -555,6 +560,7 @@ class SettingMenu(ButtonMenu):
 
     def toggle_compass(self, scene) -> None:
         self._toggle_scene_flag(self._ui(scene), "compass_visible", True)
+        self.save(scene)
 
     def minimap_label(self, scene) -> str:
         return self._bool_label(
@@ -563,6 +569,7 @@ class SettingMenu(ButtonMenu):
 
     def toggle_minimap(self, scene) -> None:
         self._toggle_scene_flag(self._ui(scene), "minimap_visible", True)
+        self.save(scene)
 
     def held_item_label(self, scene) -> str:
         return self._bool_label(
@@ -571,6 +578,7 @@ class SettingMenu(ButtonMenu):
 
     def toggle_held_item(self, scene) -> None:
         self._toggle_scene_flag(self._ui(scene), "held_item_visible", True)
+        self.save(scene)
 
     def test_light_label(self, scene) -> str:
         return self._bool_label(
@@ -579,6 +587,7 @@ class SettingMenu(ButtonMenu):
 
     def toggle_test_light(self, scene) -> None:
         self._toggle_scene_flag(self._ui(scene), "test_light_visible", True)
+        self.save(scene)
 
     def controls_text_label(self, scene) -> str:
         ui = self._ui(scene)
@@ -603,12 +612,14 @@ class SettingMenu(ButtonMenu):
         value = not current
         setattr(ui, "controls_text_visible", value)
         setattr(ui, "debug_text_visible", value)
+        self.save(scene)
 
     def fog_label(self, scene) -> str:
         return self._bool_label("Fog", getattr(scene, "fog_enabled", True))
 
     def toggle_fog(self, scene) -> None:
         self._toggle_scene_flag(scene, "fog_enabled", True)
+        self.save(scene)
 
     def clouds_label(self, scene) -> str:
         return self._bool_label(
@@ -617,6 +628,7 @@ class SettingMenu(ButtonMenu):
 
     def toggle_clouds(self, scene) -> None:
         self._toggle_scene_flag(scene, "clouds_enabled", CLOUDS_ENABLED)
+        self.save(scene)
 
     def fog_density_label(self, scene) -> str:
         value = getattr(scene, "fog_density", 0.0005)
@@ -745,6 +757,7 @@ class SettingMenu(ButtonMenu):
         headbob = getattr(scene, "_headbob", None)
         if headbob is not None:
             headbob.enabled = not getattr(headbob, "enabled", True)
+            self.save(scene)
 
     def headbob_speed_label(self, scene) -> str:
         headbob = self._headbob(scene)
@@ -790,6 +803,7 @@ class SettingMenu(ButtonMenu):
         headbob = self._headbob(scene)
         if headbob is not None:
             headbob.idle_enabled = not getattr(headbob, "idle_enabled", True)
+            self.save(scene)
 
     def idle_delay_label(self, scene) -> str:
         headbob = self._headbob(scene)
@@ -832,6 +846,7 @@ class SettingMenu(ButtonMenu):
         sway = self._sway(scene)
         if sway is not None:
             sway.enabled = not getattr(sway, "enabled", True)
+            self.save(scene)
 
     def sway_scale_label(self, scene) -> str:
         sway = self._sway(scene)
@@ -866,6 +881,7 @@ class SettingMenu(ButtonMenu):
         )
         sway.max.x = x
         sway.max.y = y
+        self.save(scene)
 
     def reset_motion_values(self, scene) -> None:
         camera = self._camera(scene)
@@ -905,6 +921,145 @@ class SettingMenu(ButtonMenu):
         scene.cloud_opacity = CLOUD_OPACITY
         scene.vibrance = 1.0
         update_render_vibrance_state(1.0)
+        self.save(scene)
+
+    def values(self, scene) -> dict[str, bool | float]:
+        """Capture every user-adjustable menu value from the live scene."""
+
+        ui = self._ui(scene)
+        camera = self._camera(scene)
+        controller = self._controller(scene)
+        headbob = self._headbob(scene)
+        sway = self._sway(scene)
+        sway_limit = getattr(sway, "max", None)
+        return {
+            "audio_muted": bool(Sounds.is_muted()),
+            "hud_visible": bool(getattr(ui, "hud_visible", True)),
+            "compass_visible": bool(getattr(ui, "compass_visible", True)),
+            "minimap_visible": bool(getattr(ui, "minimap_visible", True)),
+            "held_item_visible": bool(getattr(ui, "held_item_visible", True)),
+            "test_light_visible": bool(getattr(ui, "test_light_visible", True)),
+            "controls_text_visible": bool(
+                getattr(ui, "controls_text_visible", True)
+            ),
+            "fog_enabled": bool(getattr(scene, "fog_enabled", True)),
+            "clouds_enabled": bool(
+                getattr(scene, "clouds_enabled", CLOUDS_ENABLED)
+            ),
+            "cloud_density": float(getattr(scene, "cloud_density", CLOUD_DENSITY)),
+            "cloud_speed": float(getattr(scene, "cloud_speed", CLOUD_SPEED)),
+            "cloud_opacity": float(getattr(scene, "cloud_opacity", CLOUD_OPACITY)),
+            "fog_density": float(getattr(scene, "fog_density", 0.0005)),
+            "fov": float(getattr(scene, "fov", 90.0)),
+            "brightness": float(getattr(camera, "brightness_default", 0.8)),
+            "vibrance": float(getattr(scene, "vibrance", 1.15)),
+            "mouse_sensitivity": float(
+                getattr(scene, "mouse_sensitivity", 0.0015)
+            ),
+            "look_smooth": float(getattr(controller, "rot_smooth_hz", 4.0)),
+            "walk_speed": float(getattr(scene, "walk_speed", 120.0)),
+            "sprint_speed": float(getattr(scene, "sprint_speed", 180.0)),
+            "road_speed_multiplier": float(
+                getattr(scene, "road_speed_multiplier", 1.5)
+            ),
+            "jump_speed": float(getattr(scene, "jump_speed", 250.0)),
+            "gravity": float(getattr(scene, "gravity", 800.0)),
+            "camera_follow_smooth_hz": float(
+                getattr(scene, "camera_follow_smooth_hz", 5.0)
+            ),
+            "eye_height": float(getattr(camera, "manual_height_offset", 0.0)),
+            "height_adjust_speed": float(
+                getattr(camera, "height_adjust_speed", 50.0)
+            ),
+            "headbob_enabled": bool(getattr(headbob, "enabled", True)),
+            "headbob_frequency": float(getattr(headbob, "frequency", 0.5)),
+            "headbob_amplitude_y": float(getattr(headbob, "amplitude_y", 4.0)),
+            "headbob_amplitude_x": float(getattr(headbob, "amplitude_x", 3.0)),
+            "headbob_damping": float(getattr(headbob, "damping", 2.0)),
+            "idle_sway_enabled": bool(getattr(headbob, "idle_enabled", True)),
+            "idle_delay": float(getattr(headbob, "_idle_threshold", 1.0)),
+            "idle_amount": float(getattr(headbob, "_idle_amplitude", 0.35)),
+            "breath_amount": float(
+                getattr(headbob, "_idle_breath_amplitude", 1.0)
+            ),
+            "mouse_sway_enabled": bool(getattr(sway, "enabled", True)),
+            "sway_scale": float(getattr(sway, "mouse_scale", 0.01)),
+            "sway_limit_x": float(getattr(sway_limit, "x", 1.25)),
+            "sway_limit_y": float(getattr(sway_limit, "y", 0.75)),
+        }
+
+    def save(self, scene) -> bool:
+        """Persist the current settings without interrupting gameplay on errors."""
+
+        return save_settings(self.values(scene))
+
+    def apply_saved_settings(self, scene) -> None:
+        """Restore saved values after all scene-side setting owners exist."""
+
+        values = load_settings()
+        ui = self._ui(scene)
+        for name in (
+            "hud_visible",
+            "compass_visible",
+            "minimap_visible",
+            "held_item_visible",
+            "test_light_visible",
+            "controls_text_visible",
+        ):
+            setattr(ui, name, values[name])
+        ui.debug_text_visible = values["controls_text_visible"]
+
+        Sounds.set_muted(values["audio_muted"])
+        for name in (
+            "fog_enabled",
+            "clouds_enabled",
+            "cloud_density",
+            "cloud_speed",
+            "cloud_opacity",
+            "fog_density",
+            "fov",
+            "vibrance",
+            "mouse_sensitivity",
+            "walk_speed",
+            "sprint_speed",
+            "road_speed_multiplier",
+            "jump_speed",
+            "gravity",
+            "camera_follow_smooth_hz",
+        ):
+            setattr(scene, name, values[name])
+
+        camera = self._camera(scene)
+        if camera is not None:
+            camera.manual_height_offset = values["eye_height"]
+            camera.height_adjust_speed = values["height_adjust_speed"]
+        controller = self._controller(scene)
+        if controller is not None:
+            controller.rot_smooth_hz = values["look_smooth"]
+        headbob = self._headbob(scene)
+        if headbob is not None:
+            headbob.enabled = values["headbob_enabled"]
+            headbob.frequency = values["headbob_frequency"]
+            headbob.amplitude_y = values["headbob_amplitude_y"]
+            headbob.amplitude_x = values["headbob_amplitude_x"]
+            headbob.damping = values["headbob_damping"]
+            headbob.idle_enabled = values["idle_sway_enabled"]
+            headbob._idle_threshold = values["idle_delay"]
+            headbob._idle_amplitude = values["idle_amount"]
+            headbob._idle_breath_amplitude = values["breath_amount"]
+        sway = self._sway(scene)
+        if sway is not None:
+            sway.enabled = values["mouse_sway_enabled"]
+            sway.mouse_scale = values["sway_scale"]
+            sway.max.x = values["sway_limit_x"]
+            sway.max.y = values["sway_limit_y"]
+
+        self._set_camera_fov(scene, values["fov"])
+        if camera is not None:
+            camera.brightness_default = values["brightness"]
+        self._set_brightness(scene, values["brightness"])
+        self._set_vibrance(scene, values["vibrance"])
 
     def back(self, scene) -> None:
+        self.save(scene)
         self._ui(scene).showing_settings_menu = False

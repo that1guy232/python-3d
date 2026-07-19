@@ -451,13 +451,84 @@ class TexturedGroundGridBuilder:
         min_z: float,
         max_z: float,
     ) -> None:
+        x_values, z_values = self._terrain_pad_breakpoint_values(pad)
+        for value in x_values:
+            self._append_breakpoint(x_breaks, value, min_x, max_x)
+        for value in z_values:
+            self._append_breakpoint(z_breaks, value, min_z, max_z)
+
+    @staticmethod
+    def _terrain_pad_breakpoint_values(
+        pad: TerrainFlattenPad,
+    ) -> tuple[list[float], list[float]]:
+        """Return the world-axis cuts needed to represent one flatten pad."""
         margin = max(0.0, float(pad.blend_margin))
+        x_values: list[float] = []
+        z_values: list[float] = []
         for fraction in (1.0, 0.875, 0.75, 0.625, 0.5, 0.375, 0.25, 0.125, 0.0):
             offset = margin * fraction
-            self._append_breakpoint(x_breaks, pad.min_x - offset, min_x, max_x)
-            self._append_breakpoint(x_breaks, pad.max_x + offset, min_x, max_x)
-            self._append_breakpoint(z_breaks, pad.min_z - offset, min_z, max_z)
-            self._append_breakpoint(z_breaks, pad.max_z + offset, min_z, max_z)
+            x_values.extend((pad.min_x - offset, pad.max_x + offset))
+            z_values.extend((pad.min_z - offset, pad.max_z + offset))
+        return x_values, z_values
+
+    @staticmethod
+    def _covered_region_breakpoint_values(
+        region,
+    ) -> tuple[list[float], list[float]]:
+        values = TexturedGroundGridBuilder._region_values(region)
+        if values is None:
+            return [], []
+
+        region_min_x, region_max_x, region_min_z, region_max_z = values
+        x_values = [region_min_x, region_max_x]
+        z_values = [region_min_z, region_max_z]
+
+        for opening in region_light_openings(region):
+            try:
+                side = str(opening.get("side", "")).lower()
+                width = float(opening.get("width", 48.0))
+                depth = float(opening.get("depth", 64.0))
+                side_fade = float(opening.get("side_fade", width * 0.25))
+                center_x = float(
+                    opening.get("center_x", (region_min_x + region_max_x) * 0.5)
+                )
+                center_z = float(
+                    opening.get("center_z", (region_min_z + region_max_z) * 0.5)
+                )
+            except (TypeError, ValueError):
+                continue
+
+            half = width * 0.5
+            if side in {"north", "south"}:
+                x_values.extend(
+                    (
+                        center_x - half - side_fade,
+                        center_x - half,
+                        center_x + half,
+                        center_x + half + side_fade,
+                    )
+                )
+                edge_z = region_max_z if side == "north" else region_min_z
+                step = -depth if side == "north" else depth
+                z_values.extend(
+                    (edge_z + step * 0.35, edge_z + step * 0.7, edge_z + step)
+                )
+            elif side in {"east", "west"}:
+                z_values.extend(
+                    (
+                        center_z - half - side_fade,
+                        center_z - half,
+                        center_z + half,
+                        center_z + half + side_fade,
+                    )
+                )
+                edge_x = region_max_x if side == "east" else region_min_x
+                step = -depth if side == "east" else depth
+                x_values.extend(
+                    (edge_x + step * 0.35, edge_x + step * 0.7, edge_x + step)
+                )
+
+        return x_values, z_values
 
     def _append_covered_region_breakpoints(
         self,
@@ -470,70 +541,11 @@ class TexturedGroundGridBuilder:
         min_z: float,
         max_z: float,
     ) -> None:
-        values = self._region_values(region)
-        if values is None:
-            return
-
-        region_min_x, region_max_x, region_min_z, region_max_z = values
-        self._append_breakpoint(x_breaks, region_min_x, min_x, max_x)
-        self._append_breakpoint(x_breaks, region_max_x, min_x, max_x)
-        self._append_breakpoint(z_breaks, region_min_z, min_z, max_z)
-        self._append_breakpoint(z_breaks, region_max_z, min_z, max_z)
-
-        for opening in region_light_openings(region):
-            try:
-                side = str(opening.get("side", "")).lower()
-                width = float(opening.get("width", 48.0))
-                depth = float(opening.get("depth", 64.0))
-                side_fade = float(opening.get("side_fade", width * 0.25))
-                center_x = float(
-                    opening.get(
-                        "center_x",
-                        (region_min_x + region_max_x) * 0.5,
-                    )
-                )
-                center_z = float(
-                    opening.get(
-                        "center_z",
-                        (region_min_z + region_max_z) * 0.5,
-                    )
-                )
-            except (TypeError, ValueError):
-                continue
-
-            half = width * 0.5
-            if side in {"north", "south"}:
-                for value in (
-                    center_x - half - side_fade,
-                    center_x - half,
-                    center_x + half,
-                    center_x + half + side_fade,
-                ):
-                    self._append_breakpoint(x_breaks, value, min_x, max_x)
-                edge_z = region_max_z if side == "north" else region_min_z
-                step = -depth if side == "north" else depth
-                for value in (
-                    edge_z + step * 0.35,
-                    edge_z + step * 0.7,
-                    edge_z + step,
-                ):
-                    self._append_breakpoint(z_breaks, value, min_z, max_z)
-            elif side in {"east", "west"}:
-                for value in (
-                    center_z - half - side_fade,
-                    center_z - half,
-                    center_z + half,
-                    center_z + half + side_fade,
-                ):
-                    self._append_breakpoint(z_breaks, value, min_z, max_z)
-                edge_x = region_max_x if side == "east" else region_min_x
-                step = -depth if side == "east" else depth
-                for value in (
-                    edge_x + step * 0.35,
-                    edge_x + step * 0.7,
-                    edge_x + step,
-                ):
-                    self._append_breakpoint(x_breaks, value, min_x, max_x)
+        x_values, z_values = self._covered_region_breakpoint_values(region)
+        for value in x_values:
+            self._append_breakpoint(x_breaks, value, min_x, max_x)
+        for value in z_values:
+            self._append_breakpoint(z_breaks, value, min_z, max_z)
 
     def _append_ground_quad(
         self,
@@ -594,6 +606,54 @@ class TexturedGroundGridBuilder:
         rows: list[tuple[float, ...]] = []
         corner_coords_list: list[tuple[int, int, int, float, float]] = []
 
+        # Axis cuts must be shared across an entire row/column of terrain
+        # tiles. Applying building-pad cuts only to nearby tiles creates
+        # T-junctions: one side samples the curved heightmap at extra points
+        # while its neighbor spans those points with one straight edge. The
+        # unmatched edges open into visible sky-colored wedges. Precomputing
+        # the cuts by axis keeps every shared edge identical and avoids the
+        # old pads-per-tile O(count**2 * pads) work.
+        x_breaks_by_grid: list[list[float]] = []
+        z_breaks_by_grid: list[list[float]] = []
+        for grid_index in range(self.count):
+            center = grid_index * self.spacing
+            x_breaks_by_grid.append([center - self.w, center + self.w])
+            z_breaks_by_grid.append([center - self.d, center + self.d])
+
+        terrain_x_values: list[float] = []
+        terrain_z_values: list[float] = []
+        for pad in terrain_pads:
+            x_values, z_values = self._terrain_pad_breakpoint_values(pad)
+            terrain_x_values.extend(x_values)
+            terrain_z_values.extend(z_values)
+
+        region_x_values: list[float] = []
+        region_z_values: list[float] = []
+        if apply_region_colors:
+            for region in self.covered_regions:
+                x_values, z_values = self._covered_region_breakpoint_values(region)
+                region_x_values.extend(x_values)
+                region_z_values.extend(z_values)
+
+        for grid_index in range(self.count):
+            center = grid_index * self.spacing
+            min_axis = center - self.w
+            max_axis = center + self.w
+            for value in (*terrain_x_values, *region_x_values):
+                self._append_breakpoint(
+                    x_breaks_by_grid[grid_index], value, min_axis, max_axis
+                )
+            for value in (*terrain_z_values, *region_z_values):
+                self._append_breakpoint(
+                    z_breaks_by_grid[grid_index], value, min_axis, max_axis
+                )
+            x_breaks_by_grid[grid_index] = sorted(
+                set(round(value, 6) for value in x_breaks_by_grid[grid_index])
+            )
+            z_breaks_by_grid[grid_index] = sorted(
+                set(round(value, 6) for value in z_breaks_by_grid[grid_index])
+            )
+
         for gx in range(self.count):
             for gz in range(self.count):
                 tx = gx * self.spacing
@@ -621,31 +681,8 @@ class TexturedGroundGridBuilder:
                     if apply_region_colors
                     else []
                 )
-                x_breaks = [min_x, max_x]
-                z_breaks = [min_z, max_z]
-
-                for pad in terrain_pads:
-                    self._append_terrain_pad_breakpoints(
-                        x_breaks,
-                        z_breaks,
-                        pad,
-                        min_x=min_x,
-                        max_x=max_x,
-                        min_z=min_z,
-                        max_z=max_z,
-                    )
-
-                if apply_region_colors:
-                    for region in self.covered_regions:
-                        self._append_covered_region_breakpoints(
-                            x_breaks,
-                            z_breaks,
-                            region,
-                            min_x=min_x,
-                            max_x=max_x,
-                            min_z=min_z,
-                            max_z=max_z,
-                        )
+                x_breaks = x_breaks_by_grid[gx]
+                z_breaks = z_breaks_by_grid[gz]
 
                 if not tile_regions and len(x_breaks) == 2 and len(z_breaks) == 2:
                     self._append_ground_quad(
@@ -660,8 +697,6 @@ class TexturedGroundGridBuilder:
                     )
                     continue
 
-                x_breaks = sorted(set(round(value, 6) for value in x_breaks))
-                z_breaks = sorted(set(round(value, 6) for value in z_breaks))
                 for ix in range(len(x_breaks) - 1):
                     x0 = x_breaks[ix]
                     x1 = x_breaks[ix + 1]

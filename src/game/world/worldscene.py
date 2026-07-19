@@ -112,6 +112,9 @@ class WorldScene(Scene):
     showing_settings_menu = state_alias("ui_state", "showing_settings_menu")
     battle_mode = state_alias("ui_state", "battle_mode")
     active_battle_goblin = state_alias("ui_state", "active_battle_goblin")
+    inventory_selected_slot = state_alias("ui_state", "inventory_selected_slot")
+    inventory_notice_text = state_alias("ui_state", "inventory_notice_text")
+    inventory_notice_expires_at = state_alias("ui_state", "inventory_notice_expires_at")
     hud_visible = state_alias("ui_state", "hud_visible")
     compass_visible = state_alias("ui_state", "compass_visible")
     minimap_visible = state_alias("ui_state", "minimap_visible")
@@ -283,10 +286,14 @@ class WorldScene(Scene):
             self._grass_count,
             self._rock_count,
         )
-        for label, finished in object_steps:
-            if finished:
+        for label, step_progress in object_steps:
+            step_progress = max(0.0, min(1.0, float(step_progress)))
+            yield (
+                label,
+                (completed_steps + step_progress) / total_steps,
+            )
+            if step_progress >= 1.0:
                 completed_steps += 1
-            yield (label, completed_steps / total_steps)
 
         self.log_timing("Creating world objects", start_time, time.perf_counter())
         self._initialized = True
@@ -513,6 +520,9 @@ class WorldScene(Scene):
 
     def _handle_inventory_click(self, pos):
         return self.ui_interactions.handle_inventory_click(pos)
+
+    def _handle_inventory_release(self, pos):
+        return self.ui_interactions.handle_inventory_release(pos)
 
     def _handle_pause_click(self, pos):
         return self.ui_interactions.handle_pause_click(pos)

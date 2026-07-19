@@ -5,6 +5,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from engine.entity import Entity
+from game.world.inventory import (
+    InventoryItem,
+    TEST_GOBLIN_DROP_NAME,
+    receive_inventory_item,
+)
 from game.world.player_stats import PlayerStats
 
 if TYPE_CHECKING:
@@ -117,6 +122,7 @@ class BattleController:
             return False
 
         scene.remove_entity(goblin)
+        receive_inventory_item(scene, InventoryItem(TEST_GOBLIN_DROP_NAME))
         self.end()
         return True
 

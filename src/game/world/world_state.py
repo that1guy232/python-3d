@@ -25,6 +25,7 @@ from game.config import (
     MOUSE_SENSITIVITY,
     SPRINT_SPEED,
 )
+from game.world.inventory import empty_inventory
 
 if TYPE_CHECKING:
     from engine.rendering.lighting_state import LocalBrightnessLight
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
     from game.world.objects.building import Building
     from game.world.objects.polygon import Polygon
     from game.world.objects.wall_tile import WallTile
+    from game.world.inventory import InventoryItem
 
 
 class Drawable(Protocol):
@@ -59,12 +61,6 @@ class CollisionMesh(Protocol):
     def get_bounding_box(self) -> tuple[float, float, float, float]: ...
 
 
-class InventoryItem(Protocol):
-    """Display contract for an item held by the world inventory UI."""
-
-    name: str
-
-
 # Disposal is intentionally capability-checked because a few CPU-only
 # drawables share these render passes. GPU lifetime ownership still belongs to
 # WorldRenderResources and SceneResourceDisposer.
@@ -89,7 +85,7 @@ class WorldBuildState:
     chests: list[Chest] = field(default_factory=list)
     showcase_chests: list[Chest] = field(default_factory=list)
     showcase_polygons: list[Polygon] = field(default_factory=list)
-    inventory_items: list[InventoryItem] = field(default_factory=list)
+    inventory_items: list[InventoryItem | None] = field(default_factory=empty_inventory)
     building_road_routes: list[list[tuple[float, float]]] = field(default_factory=list)
     building_road_segments: list[
         tuple[tuple[tuple[float, float], tuple[float, float]], float]
@@ -153,6 +149,9 @@ class WorldUIState:
     showing_settings_menu: bool = False
     battle_mode: bool = False
     active_battle_goblin: Entity | None = None
+    inventory_selected_slot: int | None = None
+    inventory_notice_text: str = ""
+    inventory_notice_expires_at: float = 0.0
     hud_visible: bool = True
     compass_visible: bool = True
     minimap_visible: bool = True

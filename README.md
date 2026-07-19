@@ -29,6 +29,7 @@ the project's direct third-party dependencies.
 | Space | Jump |
 | `E` | Interact with the focused door or chest |
 | `I` or Tab | Toggle inventory |
+| Left mouse | Select/drag an inventory item and move it to another slot |
 | `M` | Toggle minimap |
 | Escape | Pause/resume; closes inventory first |
 | `F3` | Toggle performance logging |

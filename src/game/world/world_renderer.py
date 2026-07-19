@@ -66,6 +66,7 @@ from game.world.lighting_receivers import (
     SKY_SUN_LIGHTING_RECEIVER,
     SPRITE_LIGHTING_RECEIVER,
 )
+from game.world.inventory import active_inventory_notice
 from game.world.objects.goblin import draw_goblin_shadows_batched
 from game.world.ui.battle_panel import BattlePanel
 from game.world.ui.inventory_panel import InventoryPanel
@@ -566,6 +567,7 @@ class WorldRenderer:
             or self._ui_value("inventory_open", False)
             or self._ui_value("paused", False)
             or self._controls_text_visible()
+            or active_inventory_notice(self.scene)
         )
 
     def _controls_text_visible(self) -> bool:
@@ -606,33 +608,52 @@ class WorldRenderer:
             with self._profile("hud_text.pause_menu"):
                 self.draw_pause_menu(text)
         else:
-            if not self._controls_text_visible():
+            if self._controls_text_visible():
+                self._count("hud_text.controls_frames")
+                with self._profile("hud_text.begin"):
+                    text.begin()
+                try:
+                    with self._profile("hud_text.fps"):
+                        text.draw_text(
+                            fps_label,
+                            12,
+                            10,
+                            key="fps",
+                            align="topleft",
+                            color=[255, 0, 0, 0],
+                        )
+                    controls = self._controls_text()
+                    with self._profile("hud_text.controls"):
+                        text.draw_text_multiline(
+                            controls,
+                            12,
+                            HEIGHT - 12,
+                            align="bottomleft",
+                        )
+                finally:
+                    with self._profile("hud_text.end"):
+                        text.end()
+            else:
                 self._count("hud_text.skipped")
-                return
-            self._count("hud_text.controls_frames")
-            with self._profile("hud_text.begin"):
-                text.begin()
-            try:
-                with self._profile("hud_text.fps"):
-                    text.draw_text(
-                        fps_label,
-                        12,
-                        10,
-                        key="fps",
-                        align="topleft",
-                        color=[255, 0, 0, 0],
-                    )
-                controls = self._controls_text()
-                with self._profile("hud_text.controls"):
-                    text.draw_text_multiline(
-                        controls,
-                        12,
-                        HEIGHT - 12,
-                        align="bottomleft",
-                    )
-            finally:
-                with self._profile("hud_text.end"):
-                    text.end()
+
+        self.draw_inventory_notice(text)
+
+    def draw_inventory_notice(self, text) -> None:  # pragma: no cover - visual
+        notice = active_inventory_notice(self.scene)
+        if not notice:
+            return
+        text.begin()
+        try:
+            text.draw_text(
+                notice,
+                WIDTH - 18.0,
+                HEIGHT - 18.0,
+                key="inventory_notice",
+                align="bottomright",
+                color=(255, 236, 180, 255),
+            )
+        finally:
+            text.end()
 
     def _fps_text(self, fps: float) -> str:
         now_s = time.perf_counter()
