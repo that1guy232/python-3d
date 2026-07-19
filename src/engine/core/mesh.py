@@ -754,7 +754,15 @@ class BatchedMesh:
 
 
 class GroundHeightSampler:
-    __slots__ = ("_count", "_spacing", "_w", "_heights", "_height_adjustments")
+    __slots__ = (
+        "_count",
+        "_spacing",
+        "_w",
+        "_heights",
+        "_height_adjustments",
+        "_surface_triangles",
+        "_surface_cell_offsets",
+    )
 
     def __init__(
         self,
@@ -763,6 +771,7 @@ class GroundHeightSampler:
         half: float,
         heights: np.ndarray,
         height_adjustments=None,
+        surface_vertices: np.ndarray | None = None,
     ):
         self._count = count
         self._spacing = spacing
@@ -774,6 +783,94 @@ class GroundHeightSampler:
             if normalized is not None:
                 adjustments.append(normalized)
         self._height_adjustments = tuple(adjustments)
+        (
+            self._surface_triangles,
+            self._surface_cell_offsets,
+        ) = self._build_surface_index(surface_vertices)
+
+    def _build_surface_index(
+        self,
+        surface_vertices: np.ndarray | None,
+    ) -> tuple[np.ndarray | None, np.ndarray | None]:
+        if surface_vertices is None:
+            return None, None
+
+        positions = np.asarray(surface_vertices, dtype=np.float32)
+        triangle_vertex_count = (len(positions) // 3) * 3
+        if triangle_vertex_count <= 0 or positions.ndim != 2 or positions.shape[1] < 3:
+            return None, None
+
+        triangles = positions[:triangle_vertex_count, :3].reshape(-1, 3, 3)
+        centers = triangles[:, :, (0, 2)].mean(axis=1)
+        cell_x = np.floor((centers[:, 0] + self._w) / self._spacing).astype(np.int64)
+        cell_z = np.floor((centers[:, 1] + self._w) / self._spacing).astype(np.int64)
+        cell_x = np.clip(cell_x, 0, self._count - 1)
+        cell_z = np.clip(cell_z, 0, self._count - 1)
+        cell_ids = cell_x * self._count + cell_z
+
+        order = np.argsort(cell_ids, kind="stable")
+        sorted_triangles = np.ascontiguousarray(triangles[order], dtype=np.float32)
+        cell_count = self._count * self._count
+        counts = np.bincount(cell_ids, minlength=cell_count)
+        offsets = np.zeros(cell_count + 1, dtype=np.int64)
+        np.cumsum(counts, out=offsets[1:])
+        return sorted_triangles, offsets
+
+    def _surface_height_at(
+        self,
+        x: float,
+        z: float,
+        gx: int,
+        gz: int,
+    ) -> float | None:
+        triangles = self._surface_triangles
+        offsets = self._surface_cell_offsets
+        if triangles is None or offsets is None:
+            return None
+
+        cell_id = gx * self._count + gz
+        start = int(offsets[cell_id])
+        end = int(offsets[cell_id + 1])
+        if start >= end:
+            return None
+
+        candidates = triangles[start:end]
+        x0 = candidates[:, 0, 0]
+        z0 = candidates[:, 0, 2]
+        x1 = candidates[:, 1, 0]
+        z1 = candidates[:, 1, 2]
+        x2 = candidates[:, 2, 0]
+        z2 = candidates[:, 2, 2]
+
+        v0x = x1 - x0
+        v0z = z1 - z0
+        v1x = x2 - x0
+        v1z = z2 - z0
+        v2x = float(x) - x0
+        v2z = float(z) - z0
+        denom = v0x * v1z - v1x * v0z
+        valid = np.abs(denom) > 1e-8
+        safe_denom = np.where(valid, denom, 1.0)
+        first_weight = (v2x * v1z - v1x * v2z) / safe_denom
+        second_weight = (v0x * v2z - v2x * v0z) / safe_denom
+        third_weight = 1.0 - first_weight - second_weight
+        epsilon = -1e-5
+        inside = (
+            valid
+            & (first_weight >= epsilon)
+            & (second_weight >= epsilon)
+            & (third_weight >= epsilon)
+        )
+        matches = np.flatnonzero(inside)
+        if len(matches) == 0:
+            return None
+
+        index = int(matches[0])
+        return float(
+            first_weight[index] * candidates[index, 1, 1]
+            + second_weight[index] * candidates[index, 2, 1]
+            + third_weight[index] * candidates[index, 0, 1]
+        )
 
     @staticmethod
     def _normalize_height_adjustment(adjustment):
@@ -889,6 +986,11 @@ class GroundHeightSampler:
         gz = int(math.floor((z + half) / s))
         gx = max(0, min(self._count - 1, gx))
         gz = max(0, min(self._count - 1, gz))
+
+        surface_height = self._surface_height_at(x, z, gx, gz)
+        if surface_height is not None:
+            return surface_height
+
         tx = gx * s
         tz = gz * s
         lx = x - tx

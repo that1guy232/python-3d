@@ -859,6 +859,7 @@ class TexturedGroundGridBuilder:
             half=self.w,
             heights=corner_heights,
             height_adjustments=[pad.sampler_tuple() for pad in terrain_pads],
+            surface_vertices=vertex_data[:, :3],
         )
         # Store the template tile vertex array and grid params so the mesh can
         # be updated at runtime when heights change.

@@ -36,7 +36,15 @@ RoadColumn = tuple[float, float, float, float, float]
 
 _EPSILON = 1e-6
 _MITER_LIMIT = 3.0
-_ROAD_COLUMNS = 5
+_ROAD_CROWN_SLOPE = 0.01
+_DEFAULT_CROSS_SEGMENT_LENGTH = 5.0
+_TURN_CLEARANCE_EPSILON = 0.02
+ROAD_SURFACE_CLEARANCE = 0.75
+
+
+def road_crown_elevation(width: float) -> float:
+    """Return a subtle crown rise that scales with the road width."""
+    return max(0.02, float(width) * _ROAD_CROWN_SLOPE)
 
 
 def _as_xz(point: Vector3 | Sequence[float]) -> PointXZ:
@@ -185,8 +193,10 @@ class RoadMeshBuilder:
     v_tiles: float = 1.0
     color: tuple[float, float, float] = (1.0, 1.0, 1.0)
     height_fn: HeightFn | None = None
+    surface_offset: float = 0.0
     elevation: float = 0.02
     segment_length: float = 20.0
+    cross_segment_length: float = _DEFAULT_CROSS_SEGMENT_LENGTH
     brightness_modifiers: Sequence[object] = ()
     default_brightness: float = 1.0
     lighting: object | None = None
@@ -203,6 +213,7 @@ class RoadMeshBuilder:
             return _empty_mesh(self.texture, exposure_baseline=self.default_brightness)
 
         sections = self._build_sections(sampled_points, distances, directions, normals)
+        self._lift_turn_sections(sampled_points, directions, sections)
         vertex_data = self._build_vertex_data(sections)
         if uses_dynamic_textured_lighting(self.dynamic_lighting):
             vertex_data = with_textured_normals(
@@ -288,8 +299,9 @@ class RoadMeshBuilder:
         normals: Sequence[PointXZ],
     ) -> list[list[RoadColumn]]:
         half_width = self.width * 0.5
-        column_offsets = np.linspace(-half_width, half_width, _ROAD_COLUMNS)
-        u_values = np.linspace(0.0, max(_EPSILON, self.v_tiles), _ROAD_COLUMNS)
+        column_count = self._cross_column_count()
+        column_offsets = np.linspace(-half_width, half_width, column_count)
+        u_values = np.linspace(0.0, max(_EPSILON, self.v_tiles), column_count)
 
         sections: list[list[RoadColumn]] = []
         for point_index, distance in enumerate(distances):
@@ -303,11 +315,119 @@ class RoadMeshBuilder:
                     point_index,
                     float(offset),
                 )
-                y = self._column_y(x, z, column)
+                y = self._column_y(x, z, column, column_count)
                 section.append((x, y, z, float(u_values[column]), v_coord))
             sections.append(section)
 
         return sections
+
+    def _cross_column_count(self) -> int:
+        max_spacing = max(1.0, float(self.cross_segment_length))
+        divisions = max(2, int(np.ceil(self.width / max_spacing)))
+        if divisions % 2:
+            divisions += 1
+        return divisions + 1
+
+    def _lift_turn_sections(
+        self,
+        points: Sequence[PointXZ],
+        directions: Sequence[PointXZ],
+        sections: list[list[RoadColumn]],
+    ) -> None:
+        """Keep long miter triangles above curved terrain at sharp turns."""
+        if self.height_fn is None or len(sections) < 3:
+            return
+
+        turn_segments: set[int] = set()
+        for point_index in range(1, len(points) - 1):
+            prev_x, prev_z = directions[point_index - 1]
+            next_x, next_z = directions[point_index]
+            cross = abs(prev_x * next_z - prev_z * next_x)
+            dot = prev_x * next_x + prev_z * next_z
+            if cross > 1e-4 or dot < 0.9999:
+                turn_segments.update((point_index - 1, point_index))
+
+        if not turn_segments:
+            return
+
+        column_count = min(len(section) for section in sections)
+        lifts = np.zeros((len(sections), column_count), dtype=np.float64)
+        for section_index in sorted(turn_segments):
+            if section_index < 0 or section_index >= len(sections) - 1:
+                continue
+            for column in range(column_count - 1):
+                triangles = (
+                    (
+                        (section_index, column),
+                        (section_index, column + 1),
+                        (section_index + 1, column + 1),
+                    ),
+                    (
+                        (section_index, column),
+                        (section_index + 1, column + 1),
+                        (section_index + 1, column),
+                    ),
+                )
+                for triangle in triangles:
+                    vertices = [sections[row][col] for row, col in triangle]
+                    required_lift = self._triangle_clearance_lift(vertices)
+                    if required_lift <= 0.0:
+                        continue
+                    required_lift += _TURN_CLEARANCE_EPSILON
+                    for row, col in triangle:
+                        lifts[row, col] = max(lifts[row, col], required_lift)
+
+        for row, section in enumerate(sections):
+            for column, vertex in enumerate(section[:column_count]):
+                lift = float(lifts[row, column])
+                if lift <= 0.0:
+                    continue
+                x, y, z, u, v = vertex
+                section[column] = (x, y + lift, z, u, v)
+
+    def _triangle_clearance_lift(
+        self,
+        vertices: Sequence[RoadColumn],
+    ) -> float:
+        max_edge = max(
+            _distance_xz(first[0] - second[0], first[2] - second[2])
+            for first, second in (
+                (vertices[0], vertices[1]),
+                (vertices[1], vertices[2]),
+                (vertices[2], vertices[0]),
+            )
+        )
+        sample_spacing = max(
+            1.0,
+            min(float(self.segment_length), float(self.cross_segment_length)),
+        )
+        divisions = max(2, int(np.ceil(max_edge / sample_spacing)))
+        required_lift = 0.0
+
+        for first_step in range(divisions + 1):
+            first_weight = first_step / divisions
+            for second_step in range(divisions + 1 - first_step):
+                second_weight = second_step / divisions
+                third_weight = 1.0 - first_weight - second_weight
+                x = (
+                    vertices[0][0] * first_weight
+                    + vertices[1][0] * second_weight
+                    + vertices[2][0] * third_weight
+                )
+                z = (
+                    vertices[0][2] * first_weight
+                    + vertices[1][2] * second_weight
+                    + vertices[2][2] * third_weight
+                )
+                road_y = (
+                    vertices[0][1] * first_weight
+                    + vertices[1][1] * second_weight
+                    + vertices[2][1] * third_weight
+                )
+                terrain_y = float(self.height_fn(x, z)) + self.surface_offset
+                required_lift = max(required_lift, terrain_y - road_y)
+
+        return max(0.0, required_lift)
 
     @staticmethod
     def _join_column_position(
@@ -354,15 +474,21 @@ class RoadMeshBuilder:
 
         return joined
 
-    def _column_y(self, x: float, z: float, column: int) -> float:
-        center_column = (_ROAD_COLUMNS - 1) * 0.5
+    def _column_y(
+        self,
+        x: float,
+        z: float,
+        column: int,
+        column_count: int,
+    ) -> float:
+        center_column = (column_count - 1) * 0.5
         distance_from_center = abs(float(column) - center_column)
         elevation_fraction = 1.0 - (distance_from_center / max(center_column, 1.0))
         elevation_fraction = max(0.0, min(1.0, elevation_fraction))
         base_y = (
             float(self.height_fn(x, z)) if self.height_fn is not None else self.ground_y
         )
-        return base_y + self.elevation * elevation_fraction
+        return base_y + self.surface_offset + self.elevation * elevation_fraction
 
     def _build_vertex_data(
         self, sections: Sequence[Sequence[RoadColumn]]
@@ -371,7 +497,7 @@ class RoadMeshBuilder:
         verts: list[tuple[float, float, float, float, float, float, float, float]] = []
 
         for first, second in zip(sections, sections[1:]):
-            for column in range(_ROAD_COLUMNS - 1):
+            for column in range(min(len(first), len(second)) - 1):
                 lx0, y_l0, lz0, u_l, v0 = first[column]
                 rx0, y_r0, rz0, u_r, _ = first[column + 1]
                 lx1, y_l1, lz1, _, v1 = second[column]
@@ -402,8 +528,10 @@ class Road:
     v_tiles: float = 1.0
     color: tuple[float, float, float] = (1.0, 1.0, 1.0)
     height_fn: HeightFn | None = None
+    surface_offset: float = 0.0
     elevation: float = 0.02
     segment_length: float = 20.0
+    cross_segment_length: float = _DEFAULT_CROSS_SEGMENT_LENGTH
     brightness_modifiers: Sequence[object] | None = None
     default_brightness: float = 1.0
     lighting: object | None = None
@@ -426,8 +554,10 @@ class Road:
         points: Optional[Sequence[Tuple[float, float]] | Sequence[Vector3]] = None,
         height_fn: Optional[HeightFn] = None,
         height_sampler: Optional[object] = None,
+        surface_offset: float = 0.0,
         elevation: float = 0.02,
         segment_length: float = 20.0,
+        cross_segment_length: float = _DEFAULT_CROSS_SEGMENT_LENGTH,
         brightness_modifiers: Optional[Sequence[object]] = None,
         default_brightness: float = 1.0,
         lighting=None,
@@ -446,8 +576,10 @@ class Road:
         self.dynamic_lighting = dynamic_lighting
         self.casts_shadows = False
         self.height_fn = self._resolve_height_fn(height_fn, height_sampler)
+        self.surface_offset = max(0.0, float(surface_offset))
         self.elevation = float(elevation)
         self.segment_length = max(1.0, float(segment_length))
+        self.cross_segment_length = max(1.0, float(cross_segment_length))
         self._mesh = None
 
         self._set_centerline(self._resolve_points(start=start, end=end, points=points))
@@ -509,8 +641,10 @@ class Road:
             v_tiles=self.v_tiles,
             color=self.color,
             height_fn=self.height_fn,
+            surface_offset=self.surface_offset,
             elevation=self.elevation,
             segment_length=self.segment_length,
+            cross_segment_length=self.cross_segment_length,
             brightness_modifiers=self.brightness_modifiers or (),
             default_brightness=self.default_brightness,
             lighting=self.lighting,

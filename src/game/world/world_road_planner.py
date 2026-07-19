@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 
-from game.world.objects import Road
+from game.world.objects.road import ROAD_SURFACE_CLEARANCE, Road, road_crown_elevation
 from game.world.objects.building import Building
 
 PointXZ = tuple[float, float]
@@ -637,8 +637,9 @@ class BuildingRoadPlanner:
             texture=self.road_tex,
             v_tiles=1.0,
             height_sampler=self._ground_height_sampler,
-            elevation=3.0,
-            segment_length=8.0,
+            surface_offset=ROAD_SURFACE_CLEARANCE,
+            elevation=road_crown_elevation(driveway_width),
+            segment_length=4.0,
             brightness_modifiers=(
                 ()
                 if packet_backend

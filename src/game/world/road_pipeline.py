@@ -8,9 +8,12 @@ import time
 
 from game.world.builder_support import _dispose_value, _dispose_values
 
-from game.world.objects import Road
-
-from game.world.objects.road import build_road_render_batch
+from game.world.objects.road import (
+    ROAD_SURFACE_CLEARANCE,
+    Road,
+    build_road_render_batch,
+    road_crown_elevation,
+)
 
 from game.world.world_road_planner import create_building_access_roads
 
@@ -38,7 +41,7 @@ def _build_roads(scene) -> None:
 
     center_x = (scene.ground_bounds[0] + scene.ground_bounds[1]) * 0.5
 
-    road_y = scene.ground_height_at(center_x, center_z) + 1
+    road_y = scene.ground_height_at(center_x, center_z)
 
     road_points = [
         (scene.ground_bounds[0], center_z),
@@ -59,8 +62,9 @@ def _build_roads(scene) -> None:
         texture=scene.road_tex,
         v_tiles=1.0,
         height_sampler=scene._ground_height_sampler,
-        elevation=3.0,
-        segment_length=8.0,
+        surface_offset=ROAD_SURFACE_CLEARANCE,
+        elevation=road_crown_elevation(road_width),
+        segment_length=4.0,
         brightness_modifiers=(
             () if packet_backend else getattr(scene, "brightness_modifiers", ())
         ),
