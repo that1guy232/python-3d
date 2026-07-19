@@ -43,7 +43,7 @@ The package boundary is intentional:
 
 `WorldScene.initialize_steps()` performs these phases:
 
-- Setup brightness areas through `world_setup.setup_brightness_areas()`.
+- Author initial typed local lights through `world_setup.setup_local_lights()`.
 - Create headbob, sway, and player-camera controllers through
   `world_setup.setup_controllers()`.
 - Configure fog and scene lighting through `world_setup.setup_graphics()`.
@@ -113,8 +113,8 @@ cached collision data while the GL context still exists.
 | `src/engine/core/scene.py` | Base scene protocol: optional camera plus event, render, and dispose hooks. |
 | `src/engine/core/performance.py` | Lightweight named-section profiler used by engine and world code. |
 | `src/engine/core/object3d.py` | Base local-vertex object with cached world vertices, XZ/XYZ bounds, and bounding spheres. |
-| `src/engine/core/mesh.py` | VBO-backed `BatchedMesh` plus `GroundHeightSampler` for terrain height lookups. |
-| `src/engine/core/compat_shader.py` | Compatibility-profile shader helpers for textured exposure, lighting, fog, vibrance, and shine state. |
+| `src/engine/core/mesh.py` | VBO-backed `BatchedMesh`, explicit lighting-receiver projection with a legacy fallback, and `GroundHeightSampler`. |
+| `src/engine/core/compat_shader.py` | Compatibility-profile shader helpers for textured exposure, lighting, fog, vibrance, shine state, and fixed-capacity overflow warnings. |
 | `src/engine/core/consts.py` | Shared direction vectors used by older movement/render helpers. |
 
 ### Engine Runtime Helpers
@@ -124,13 +124,42 @@ cached collision data while the GL context still exists.
 | `src/engine/__init__.py` | Engine-layer public exports. |
 | `src/engine/entity.py` | Runtime entity base class for update/draw/interact/collision hooks. |
 | `src/engine/collision.py` | Mesh collision helpers for wall blocking, floor support, and vertical collision resolution. |
+| `src/engine/lighting_receiver.py` | Immutable six-channel lighting receiver contract, local-light evaluation policy, material clamps, and compatibility-shader projection. |
+| `src/engine/core/gl_state.py` | Dependency-light OpenGL program teardown shared by packet and rollback draws. |
+| `src/engine/core/legacy_shader_adapter.py` | Lazily imports the deprecated lighting shader only for explicit legacy draws. |
+
+### Lighting and Shadow Migration Tooling
+
+Architecture, implementation status, and device acceptance are tracked in
+[LIGHTING_SYSTEM.md](LIGHTING_SYSTEM.md),
+[LIGHTING_MIGRATION_PROGRESS.md](LIGHTING_MIGRATION_PROGRESS.md), and
+[LIGHTING_HARDWARE_QUALIFICATION.md](LIGHTING_HARDWARE_QUALIFICATION.md).
+
+| File | Quick docs |
+| --- | --- |
+| `scripts/capture_lighting_gl_baseline.py` | Hidden-context receiver-level legacy framebuffer baseline. |
+| `RASTER_LIGHTING_PLAN.md` | Game-facing destination and implementation order for rasterized sun/point lighting, alpha-cutout and moving shadows, and wall-occluded torches. |
+| `scripts/capture_lighting_scene_ab.py` | Fixture/generated-world `legacy -> packet -> legacy` diagnostic with reproducible reports and images; exact parity is no longer the target after real shadows. |
+| `scripts/soak_lighting_scene_ab.py` | Process-isolated multi-seed generated-world A/B soak and aggregate report. |
+| `scripts/profile_packet_lighting.py` | Hidden-context steady-state profiler for local-light, environment, combined, and overlapping packet-record scans. |
+| `scripts/qualify_lighting_hardware.py` | Runs the historical fixture comparison, generated soak, and packet profiling as a development-machine diagnostic. |
+| `scripts/check_architecture.py` | Full unit discovery, world compilation, dependency-direction, and wildcard-import gate. |
 
 ### Engine Rendering
 
 | File | Quick docs |
 | --- | --- |
 | `src/engine/rendering/__init__.py` | Rendering package exports. |
-| `src/engine/rendering/lighting.py` | Shared lighting model for sunlight, indoor regions, brightness modifiers, and textured-normal data. |
+| `src/engine/rendering/lighting.py` | Authoritative revisioned scene-lighting owner with immutable typed local-light exposure, CPU lighting math, and textured-normal data. It stores neither local-light dictionaries nor covered regions. |
+| `src/engine/rendering/lighting_state.py` | Immutable revisioned lighting snapshots plus typed directional and local scalar-light records. |
+| `src/engine/rendering/lighting_adapter.py` | Builds uncapped backend-neutral receiver packets and explicit legacy projections. |
+| `src/engine/rendering/packet_shader.py` | Packet-driven lighting program, receiver-policy binding, and device-capacity validation. |
+| `src/engine/rendering/packet_shader_source.py` | Standalone packet GLSL, including fragment surface lighting and vertex-interpolated polygon point queries. |
+| `src/engine/rendering/directional_shadow.py` | Directional depth-map ownership, light-space matrices, and the shared opaque/alpha-cutout caster shader. |
+| `src/engine/rendering/packet_gpu_storage.py` | RGBA32F record textures plus fragment/vertex texture capability checks for local-light, region, and portal input. |
+| `src/engine/rendering/frame_comparison.py` | Stable-pixel masking and quantitative RGB parity metrics for renderer A/B gates. |
+| `src/engine/rendering/geometry_lighting.py` | Resolves explicit packet/legacy vertex representation, retaining lazy shader probing only for standalone compatibility callers. |
+| `src/engine/rendering/render_environment.py` | Immutable render-facing environment regions and portals. |
 | `src/engine/rendering/sprite.py` | Camera-facing world sprites and animated sprites. |
 | `src/engine/rendering/sky_renderer.py` | Sky, sun/moon/star, and cloud render orchestration. |
 | `src/engine/rendering/cloud_renderer.py` | Batched pixel-art cloud rendering. |
@@ -142,7 +171,7 @@ cached collision data while the GL context still exists.
 | File | Quick docs |
 | --- | --- |
 | `src/engine/camera/__init__.py` | Camera package exports. |
-| `src/engine/camera/camera.py` | Mutable first-person camera, cached view vectors, brightness sampling, frustum tests, and WASD movement primitive. |
+| `src/engine/camera/camera.py` | Mutable first-person camera, cached view vectors, typed revision-tagged brightness-query projection, frustum tests, and WASD movement primitive. |
 | `src/engine/camera/headbob.py` | Movement/idle headbob state, offsets, and footstep event timing. |
 | `src/engine/camera/sway_controller.py` | Mouse-look weapon/HUD sway smoothing. |
 
@@ -165,10 +194,13 @@ cached collision data while the GL context still exists.
 | `src/game/world/combat.py` | Battle-mode controller for entering/leaving combat, player damage rolls, active enemy damage, and battle mouse state. |
 | `src/game/world/collision_index.py` | Spatial collision candidate index for wall and polygon meshes, including dynamic/fallback mesh handling. |
 | `src/game/world/entity_registry.py` | Runtime entity registry that keeps entity lists, immediate draw lists, sprites, and collision meshes synchronized. |
-| `src/game/world/lighting_controller.py` | Static lighting controller for brightness changes, baked mesh refresh, texture-lighting shader sync, and exposure fallbacks. |
+| `src/game/world/environment.py` | Typed indoor volumes and portals, point queries, and legacy covered-region projection during lighting migration. |
+| `src/game/world/lighting_controller.py` | Lighting snapshot adapter, packet-runtime cache, alias-free packet operation, explicit backend transition, exact packet static-geometry validation, rollback-only request guard, and migration diagnostics. |
+| `src/game/world/legacy_lighting_bridge.py` | Lazily imported rollback-only owner for scene aliases, local-light/covered-region dictionaries, door-region bindings, compatibility uploads, CPU exposure, and ground/road/wall/fence rebuild policy. |
+| `src/game/world/lighting_receivers.py` | Complete receiver registry with disjoint packet-runtime and rollback-only CPU/untextured contract sets. |
 | `src/game/world/scene_resources.py` | Scene resource disposer for OpenGL-backed meshes, batches, HUD resources, entities, ambient audio, and cached render/collision references. |
 | `src/game/world/world_content.py` | Declarative scene content. Converts hand-authored or generated building declarations into mutable runtime specs. |
-| `src/game/world/world_lighting_plan.py` | Builds indoor covered regions and doorway/window/torch brightness modifiers from building specs. |
+| `src/game/world/world_lighting_plan.py` | Authors typed indoor environment and stable-ID opening-light records; projects compatibility dictionaries only for legacy construction. |
 | `src/game/world/world_road_planner.py` | Plans non-overlapping driveway routes from buildings to the road network. |
 | `src/game/world/world_spawner.py` | Spawns static billboard sprites inside world bounds while avoiding roads, buildings, and other sprites. |
 | `src/game/world/player_controller.py` | Player camera input controller for mouse look, WASD/sprint/jump, terrain support, wall collision, and boundary sliding. |
@@ -180,16 +212,16 @@ cached collision data while the GL context still exists.
 | `src/game/world/objects/__init__.py` | Convenient exports for common world object classes. |
 | `src/game/world/objects/building.py` | Building authoring helper that turns one rectangular footprint into wall/roof `WallTile` pieces with door/window openings. |
 | `src/game/world/objects/wall_tile.py` | Wall primitive and static wall batching helpers, including texture UVs and lighting data. |
-| `src/game/world/objects/ground.py` | Terrain grid builder that loads heightmaps, flattens building pads, generates vertex rows, and creates the ground batch. |
+| `src/game/world/objects/ground.py` | Terrain grid builder that loads heightmaps, flattens typed environment footprints, generates vertex rows, and creates the ground batch. |
 | `src/game/world/objects/ground_tile.py` | Legacy flat ground quad primitive. |
 | `src/game/world/objects/road.py` | Road mesh builder, road object, point containment, lighting refresh, and road render batching. |
 | `src/game/world/objects/fence.py` | Textured fence-ring mesh generation around the playable ground bounds. |
 | `src/game/world/objects/door.py` | Interactive door entity with slab rendering, collision, doorway-light binding, and batching. |
-| `src/game/world/objects/chest.py` | Interactive opening chest entity with textured box rendering and collision. |
+| `src/game/world/objects/chest.py` | Interactive chest with legacy CPU-baked and explicitly declared dynamic packet receiver representations. |
 | `src/game/world/objects/window.py` | Fixed window entity with slab rendering, wall backing, and batching. |
-| `src/game/world/objects/torch.py` | Building-mounted torch sprite plus helpers that derive torch light locations and brightness modifiers. |
+| `src/game/world/objects/torch.py` | Building-mounted torch sprite plus typed local-light authoring and legacy modifier projections. |
 | `src/game/world/objects/goblin.py` | Runtime roaming/chasing sprite entity with directional animation frames and batched shadows. |
-| `src/game/world/objects/polygon.py` | Extruded arbitrary polygon primitive plus static polygon render batching. |
+| `src/game/world/objects/polygon.py` | Extruded polygon primitive plus legacy CPU-baked and camera-independent packet render batching. |
 | `src/game/world/objects/slab.py` | Shared geometry, UV, collision, and draw helpers for textured rectangular slab entities. |
 
 ### Game World UI
@@ -246,7 +278,9 @@ cached collision data while the GL context still exists.
   replacing VBO-backed batches.
 - Collision candidate lookup is indexed in `collision_index.py`; invalidate or
   rebuild the index when collision shapes are added or removed after loading.
-- Camera brightness is cached by position buckets. Clear or invalidate caches
-  when brightness areas change.
+- Camera brightness is cached by position buckets. World lighting changes must
+  go through `SceneLighting` so its revision advances and the controller can
+  rebuild the typed camera projection and cache. `local_lights` and
+  `brightness_query_lights` are immutable views.
 - The profiler can be toggled with F3 and reset with F4 while the game is
   running.

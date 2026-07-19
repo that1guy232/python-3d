@@ -33,9 +33,11 @@ from OpenGL.GL import (
 )
 
 from engine.camera import Camera
+from engine.lighting_receiver import LightingReceiver
 from engine.textures.texture_utils import load_texture
 from engine.rendering.cloud_renderer import PixelCloudRenderer
 from engine.rendering.lighting import SceneLighting, sky_sun_y
+from engine.rendering.lighting_adapter import ReceiverLightingPacket
 
 
 class SkyRenderer:
@@ -89,6 +91,10 @@ class SkyRenderer:
         cloud_speed: float = 1.0,
         cloud_opacity: float = 1.0,
         profiler=None,
+        sun_receiver: LightingReceiver | None = None,
+        cloud_receiver: LightingReceiver | None = None,
+        sun_packet: ReceiverLightingPacket | None = None,
+        cloud_packet: ReceiverLightingPacket | None = None,
     ) -> None:  # pragma: no cover - visual
         """Draw the sky with minimal GL state churn."""
 
@@ -103,17 +109,40 @@ class SkyRenderer:
         glRotatef(math.degrees(-camera.rotation.y), 0, 1, 0)
 
         brightness = self._clamp01(getattr(camera, "brightness_default", 1.0))
+        sun_brightness = self._clamp01(
+            sun_packet.exposure
+            if sun_packet is not None
+            else brightness
+            if sun_receiver is None or sun_receiver.exposure
+            else 1.0
+        )
+        cloud_brightness = self._clamp01(
+            cloud_packet.exposure
+            if cloud_packet is not None
+            else brightness
+            if cloud_receiver is None or cloud_receiver.exposure
+            else 1.0
+        )
+        scene_directional = (
+            sun_packet.scene_directional if sun_packet is not None else None
+        )
         active_sun_direction = (
-            lighting.sun_direction if lighting is not None else sun_direction
+            scene_directional.sun_direction
+            if scene_directional is not None
+            else lighting.sun_direction
+            if lighting is not None
+            else sun_direction
         )
         az = self._sun_azimuth_deg(active_sun_direction)
         sun_y = sky_sun_y(
             sun_direction=active_sun_direction,
-            lighting=lighting,
+            lighting=None if scene_directional is not None else lighting,
             xz_distance=50000.0,
             fallback_y=20000.0,
         )
-        if lighting is not None:
+        if scene_directional is not None:
+            sr, sg, sb = scene_directional.tint
+        elif lighting is not None:
             sr, sg, sb = lighting.sun_tint
         else:
             sr, sg, sb = (1.0, 1.0, 1.0)
@@ -126,7 +155,12 @@ class SkyRenderer:
             dist=50000.0,
             half=self.sun_half_size,
             y=sun_y,
-            color=(brightness * sr, brightness * sg, brightness * sb, 1.0),
+            color=(
+                sun_brightness * sr,
+                sun_brightness * sg,
+                sun_brightness * sb,
+                1.0,
+            ),
         )
         glPopMatrix()
 
@@ -138,11 +172,16 @@ class SkyRenderer:
             )
             with cloud_context:
                 self._clouds.draw(
-                    brightness=brightness,
+                    brightness=cloud_brightness,
                     density=cloud_density,
                     speed=cloud_speed,
                     opacity=cloud_opacity,
-                    lighting=lighting,
+                    lighting=lighting if cloud_packet is None else None,
+                    sun_tint=(
+                        cloud_packet.scene_directional.tint
+                        if cloud_packet is not None
+                        else None
+                    ),
                 )
 
         # glBindTexture(GL_TEXTURE_2D, self._moon_tex)

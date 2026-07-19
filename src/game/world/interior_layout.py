@@ -608,4 +608,62 @@ def create_building_interior_layout(spec: dict[str, Any]) -> dict[str, Any]:
     return _single_room_layout(x_min, x_max, z_min, z_max)
 
 
-__all__ = ["create_building_interior_layout"]
+def exterior_partition_blocked_ranges(
+    layout: dict[str, Any],
+    *,
+    wall_thickness: float,
+) -> dict[str, list[tuple[float, float]]]:
+    """Return shell-wall ranges occupied by terminating interior partitions."""
+
+    ranges = {side: [] for side in ("north", "east", "south", "west")}
+    spaces = [
+        value
+        for name in ("rooms", "hallways")
+        for value in (layout.get(name, ()) or ())
+        if isinstance(value, dict)
+    ]
+    if not spaces:
+        return ranges
+    try:
+        x_min = min(float(space["x_min"]) for space in spaces)
+        x_max = max(float(space["x_max"]) for space in spaces)
+        z_min = min(float(space["z_min"]) for space in spaces)
+        z_max = max(float(space["z_max"]) for space in spaces)
+    except (KeyError, TypeError, ValueError):
+        return ranges
+
+    half_thickness = max(0.5, float(wall_thickness) * 0.5)
+    tolerance = max(0.01, half_thickness)
+
+    def add(side: str, offset: float) -> None:
+        ranges[side].append((offset - half_thickness, offset + half_thickness))
+
+    for partition in layout.get("partitions", ()) or ():
+        if not isinstance(partition, dict):
+            continue
+        try:
+            axis = str(partition["axis"]).lower()
+            coord = float(partition["coord"])
+            span_min = float(partition["span_min"])
+            span_max = float(partition["span_max"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if span_max < span_min:
+            span_min, span_max = span_max, span_min
+        if axis == "x":
+            if span_min <= z_min + tolerance:
+                add("south", coord)
+            if span_max >= z_max - tolerance:
+                add("north", coord)
+        elif axis == "z":
+            if span_min <= x_min + tolerance:
+                add("west", coord)
+            if span_max >= x_max - tolerance:
+                add("east", coord)
+
+    for side in ranges:
+        ranges[side].sort()
+    return ranges
+
+
+__all__ = ["create_building_interior_layout", "exterior_partition_blocked_ranges"]

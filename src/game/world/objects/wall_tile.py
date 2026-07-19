@@ -26,10 +26,14 @@ from OpenGL.GL import (
     GL_TEXTURE_WRAP_T,
     GL_REPEAT,
 )
-from engine.core.compat_shader import texture_color_exposure_shader_available
+from engine.rendering.geometry_lighting import uses_dynamic_textured_lighting
 from engine.core.mesh import BatchedMesh
 from engine.textures.texture_utils import get_texture_size
 from engine.rendering.lighting import INDOOR_LIGHT_FACTOR, sunlight_factor_for_normal
+from game.world.lighting_receivers import (
+    TEXTURED_STATIC_WALL_LIGHTING_RECEIVER,
+    UNTEXTURED_STATIC_WALL_LIGHTING_RECEIVER,
+)
 
 _LOCAL_FACE_NORMALS = (
     (1.0, 0.0, 0.0),  # front
@@ -414,7 +418,6 @@ def _tile_vertex_data(
                         else (0.0, 1.0, 0.0)
                     ),
                 )
-                normal = _normal_for_shader_face(tile, face_idx, normal)
                 for idx, uv in zip(tri_indices, tri_uvs):
                     v = world_verts[idx]
                     rows.append(
@@ -422,9 +425,9 @@ def _tile_vertex_data(
                             v.x,
                             v.y,
                             v.z,
-                            indoor_factor,
-                            indoor_factor,
-                            indoor_factor,
+                            1.0,
+                            1.0,
+                            1.0,
                             normal.x,
                             normal.y,
                             normal.z,
@@ -487,10 +490,11 @@ def build_wall_tile_batches(
     default_brightness: float = 1.0,
     sun_direction=None,
     lighting=None,
+    dynamic_lighting: bool | None = None,
 ) -> list[BatchedMesh]:
     """Merge static WallTile objects into VBO-backed batches grouped by texture."""
     chunks_by_texture = {}
-    shader_lighting = texture_color_exposure_shader_available()
+    shader_lighting = uses_dynamic_textured_lighting(dynamic_lighting)
     for tile in tiles:
         data = _tile_vertex_data(
             tile,
@@ -521,6 +525,11 @@ def build_wall_tile_batches(
                 alpha_test=bool(texture),
                 exposure_baseline=default_brightness,
                 environment_lighting=False,
+                lighting_receiver=(
+                    TEXTURED_STATIC_WALL_LIGHTING_RECEIVER
+                    if texture
+                    else UNTEXTURED_STATIC_WALL_LIGHTING_RECEIVER
+                ),
             )
         )
 

@@ -70,16 +70,28 @@ def _build_building_torches(scene) -> None:
 
     _ensure_state_owners(scene)
 
+    # Building base_y values are terrain-resolved during structure creation,
+    # after the early environment pass. Re-author torch lights here so visible
+    # sprites and point lights share the final wall-relative height.
+    apply_building_lighting(scene, getattr(scene, "building_specs", ()) or ())
+
     torch_tex = Torch.texture_or_load(getattr(scene, "torch_tex", None))
 
     scene.render_resources.torch_tex = torch_tex
 
-    scene.build_state.torches = Torch.build_for_brightness_modifiers(
-        getattr(scene, "torch_light_modifiers", ()) or (),
-        texture=torch_tex,
-        camera=scene.camera,
-        ground_height_at=scene.ground_height_at,
-    )
+    if getattr(scene, "lighting_backend", "legacy") == "packet":
+        scene.build_state.torches = Torch.build_for_point_lights(
+            getattr(scene, "torch_point_lights", ()) or (),
+            texture=torch_tex,
+            camera=scene.camera,
+        )
+    else:
+        scene.build_state.torches = Torch.build_for_brightness_modifiers(
+            getattr(scene, "torch_light_modifiers", ()) or (),
+            texture=torch_tex,
+            camera=scene.camera,
+            ground_height_at=scene.ground_height_at,
+        )
 
     scene.render_resources.sprite_items.extend(scene.build_state.torches)
 
@@ -207,7 +219,13 @@ def _build_building_doors(scene) -> None:
 
     add_entity = getattr(scene, "add_entity", None)
 
-    covered_regions = list(getattr(scene, "covered_regions", ()) or ())
+    packet_backend = getattr(scene, "lighting_backend", "legacy") == "packet"
+
+    covered_regions = (
+        [] if packet_backend else list(getattr(scene, "covered_regions", ()) or ())
+    )
+
+    environment_volumes = list(getattr(scene, "environment_volumes", ()) or ())
 
     doorway_light_modifiers = list(
         getattr(scene, "doorway_light_modifiers_by_region", ()) or ()
@@ -215,10 +233,8 @@ def _build_building_doors(scene) -> None:
 
     lighting = getattr(scene, "lighting", None)
 
-    sun_direction = getattr(
-        lighting,
-        "sun_direction",
-        getattr(scene, "sun_direction", None),
+    sun_direction = (
+        None if lighting is not None else getattr(scene, "sun_direction", None)
     )
 
     def add_door(door: Door) -> None:
@@ -254,7 +270,13 @@ def _build_building_doors(scene) -> None:
 
             continue
 
-        if spec_index < len(covered_regions):
+        portal = (
+            environment_volumes[spec_index].doorway
+            if spec_index < len(environment_volumes)
+            else None
+        )
+
+        if spec_index < len(covered_regions) or portal is not None:
 
             brightness_modifier = (
                 doorway_light_modifiers[spec_index]
@@ -263,8 +285,13 @@ def _build_building_doors(scene) -> None:
             )
 
             door.bind_doorway_light(
-                covered_regions[spec_index],
+                (
+                    covered_regions[spec_index]
+                    if spec_index < len(covered_regions)
+                    else None
+                ),
                 brightness_modifier=brightness_modifier,
+                portal=portal,
             )
 
         add_door(door)
@@ -455,10 +482,8 @@ def _build_building_windows(scene) -> None:
 
     lighting = getattr(scene, "lighting", None)
 
-    sun_direction = getattr(
-        lighting,
-        "sun_direction",
-        getattr(scene, "sun_direction", None),
+    sun_direction = (
+        None if lighting is not None else getattr(scene, "sun_direction", None)
     )
 
     for spec in getattr(scene, "building_specs", ()) or ():
@@ -542,16 +567,28 @@ def _prepare_buildings(
 
     apply_building_lighting(scene, scene.building_specs)
 
+    packet_backend = getattr(scene, "lighting_backend", "legacy") == "packet"
+
     scene.build_state.builder = TexturedGroundGridBuilder(
         count=grid_count,
         tile_size=grid_tile_size,
         gap=grid_gap,
         texture=scene.ground_tex,
-        brightness_modifiers=scene.brightness_modifiers,
+        brightness_modifiers=(
+            () if packet_backend else getattr(scene, "brightness_modifiers", ())
+        ),
         default_brightness=scene.camera.brightness_default,
         lighting=getattr(scene, "lighting", None),
-        sun_direction=getattr(scene, "sun_direction", None),
-        covered_regions=getattr(scene, "covered_regions", ()),
+        sun_direction=(
+            None
+            if getattr(scene, "lighting", None) is not None
+            else getattr(scene, "sun_direction", None)
+        ),
+        covered_regions=(
+            () if packet_backend else getattr(scene, "covered_regions", ())
+        ),
+        environment_volumes=getattr(scene, "environment_volumes", ()),
+        dynamic_lighting=getattr(scene, "lighting_backend", "legacy") == "packet",
     )
 
 
@@ -580,8 +617,8 @@ def _build_buildings(scene) -> None:
 
     lighting = getattr(scene, "lighting", None)
 
-    sun_direction = getattr(
-        lighting, "sun_direction", getattr(scene, "sun_direction", None)
+    sun_direction = (
+        None if lighting is not None else getattr(scene, "sun_direction", None)
     )
 
     for building, spec in zip(
@@ -685,6 +722,7 @@ def _build_buildings(scene) -> None:
         default_brightness=scene.camera.brightness_default,
         sun_direction=sun_direction,
         lighting=lighting,
+        dynamic_lighting=getattr(scene, "lighting_backend", "legacy") == "packet",
     )
 
     scene.log_timing("Building pieces", start_time, time.perf_counter())
@@ -838,8 +876,8 @@ def _build_showcase_polygons(scene) -> None:
 
     lighting = getattr(scene, "lighting", None)
 
-    sun_direction = getattr(
-        lighting, "sun_direction", getattr(scene, "sun_direction", None)
+    sun_direction = (
+        None if lighting is not None else getattr(scene, "sun_direction", None)
     )
 
     for polygon in scene.build_state.showcase_polygons:
@@ -888,10 +926,8 @@ def _build_showcase_chest(scene, texture) -> None:
 
     lighting = getattr(scene, "lighting", None)
 
-    sun_direction = getattr(
-        lighting,
-        "sun_direction",
-        getattr(scene, "sun_direction", None),
+    sun_direction = (
+        None if lighting is not None else getattr(scene, "sun_direction", None)
     )
 
     x = float(scene.world_center.x)

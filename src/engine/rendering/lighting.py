@@ -7,12 +7,19 @@ lights agree on one environment.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import math
 from typing import Any, Sequence
 
 import numpy as np
 from pygame.math import Vector3
+
+from engine.rendering.lighting_state import (
+    DirectionalLightSnapshot,
+    LightingSnapshot,
+    LocalBrightnessLight,
+    PointLight,
+)
 
 _EPSILON = 1e-8
 INDOOR_LIGHT_FACTOR = 0.34
@@ -30,13 +37,22 @@ class SceneLighting:
     sun_position: Vector3
     sun_target: Vector3
     sky_color: tuple[float, float, float, float]
-    ambient: float = 0.72
-    diffuse: float = 0.48
+    ambient: float = 0.34
+    diffuse: float = 1.28
     max_factor: float = 1.15
     sun_tint: tuple[float, float, float] = (1.0, 0.96, 0.86)
     base_brightness: float = 1.0
-    brightness_modifiers: list[dict[str, Any]] = field(default_factory=list)
-    covered_regions: list[object] = field(default_factory=list)
+    _local_lights: list[LocalBrightnessLight] = field(
+        default_factory=list,
+        init=False,
+        repr=False,
+    )
+    _point_lights: list[PointLight] = field(
+        default_factory=list,
+        init=False,
+        repr=False,
+    )
+    _revision: int = field(default=0, init=False, repr=False)
 
     @classmethod
     def from_world_center(
@@ -73,70 +89,241 @@ class SceneLighting:
         direction = self.sun_direction
         return Vector3(-direction.x, -direction.y, -direction.z)
 
+    @property
+    def revision(self) -> int:
+        return self._revision
+
+    @property
+    def local_lights(self) -> tuple[LocalBrightnessLight, ...]:
+        """Immutable view of the authoritative typed local-light collection."""
+
+        return tuple(self._local_lights)
+
+    @property
+    def point_lights(self) -> tuple[PointLight, ...]:
+        """Immutable view of generic 3D lights used by raster shading."""
+
+        return tuple(self._point_lights)
+
+    def _touch(self) -> int:
+        self._revision += 1
+        return self._revision
+
+    @staticmethod
+    def _vector_tuple(value) -> tuple[float, float, float]:
+        vector = _as_vector3(value)
+        return (float(vector.x), float(vector.y), float(vector.z))
+
+    def snapshot(self) -> LightingSnapshot:
+        """Return an immutable, revisioned view for render adapters."""
+
+        return LightingSnapshot(
+            revision=self.revision,
+            base_brightness=float(self.base_brightness),
+            sky_color=tuple(float(value) for value in self.sky_color),
+            directional=DirectionalLightSnapshot(
+                sun_position=self._vector_tuple(self.sun_position),
+                sun_target=self._vector_tuple(self.sun_target),
+                sun_direction=self._vector_tuple(self.sun_direction),
+                light_direction=self._vector_tuple(self.light_direction),
+                ambient=float(self.ambient),
+                diffuse=float(self.diffuse),
+                max_factor=float(self.max_factor),
+                tint=tuple(float(value) for value in self.sun_tint),
+            ),
+            local_lights=self.local_lights,
+            point_lights=self.point_lights,
+        )
+
+    def replace_point_lights(
+        self,
+        lights: Sequence[PointLight] | None,
+    ) -> tuple[PointLight, ...]:
+        values = list(lights or ())
+        if not all(isinstance(light, PointLight) for light in values):
+            raise TypeError("SceneLighting point lights must be PointLight")
+        self._point_lights[:] = values
+        self._touch()
+        return tuple(values)
+
+    def extend_point_lights(
+        self,
+        lights: Sequence[PointLight],
+    ) -> tuple[PointLight, ...]:
+        values = list(lights or ())
+        if not all(isinstance(light, PointLight) for light in values):
+            raise TypeError("SceneLighting point lights must be PointLight")
+        if values:
+            self._point_lights.extend(values)
+            self._touch()
+        return tuple(values)
+
+    def add_point_light(self, light: PointLight) -> PointLight:
+        if not isinstance(light, PointLight):
+            raise TypeError("SceneLighting point lights must be PointLight")
+        self._point_lights.append(light)
+        self._touch()
+        return light
+
+    def remove_point_lights(
+        self,
+        *,
+        light_ids: Sequence[str] | None = None,
+        id_prefix: str | None = None,
+    ) -> int:
+        selected_ids = {str(value) for value in light_ids or ()}
+        prefix = str(id_prefix) if id_prefix is not None else None
+        kept = [
+            light
+            for light in self._point_lights
+            if not (
+                light.light_id in selected_ids
+                or (prefix is not None and light.light_id.startswith(prefix))
+            )
+        ]
+        removed = len(self._point_lights) - len(kept)
+        if removed:
+            self._point_lights[:] = kept
+            self._touch()
+        return removed
+
     def set_base_brightness(self, value: float) -> float:
-        self.base_brightness = float(value)
+        value = float(value)
+        if self.base_brightness != value:
+            self.base_brightness = value
+            self._touch()
         return self.base_brightness
 
-    def set_covered_regions(self, regions: Sequence[object] | None) -> list[object]:
-        self.covered_regions = list(regions or ())
-        return self.covered_regions
-
-    def set_brightness_modifiers(
+    def replace_local_lights(
         self,
-        modifiers: Sequence[object] | None,
+        lights: Sequence[LocalBrightnessLight] | None,
         *,
         camera: object | None = None,
-        install_on_camera: bool = False,
-    ) -> list[dict[str, Any]]:
-        source = list(modifiers or ())
-        self.brightness_modifiers = []
-        self.extend_brightness_modifiers(
-            source,
-            camera=camera,
-            install_on_camera=install_on_camera,
+        project_to_camera: bool = False,
+    ) -> tuple[LocalBrightnessLight, ...]:
+        """Replace authoritative local lights with typed records."""
+
+        values = list(lights or ())
+        if not all(isinstance(light, LocalBrightnessLight) for light in values):
+            raise TypeError("SceneLighting local lights must be LocalBrightnessLight")
+        self._local_lights[:] = values
+        self._touch()
+        if project_to_camera:
+            self.project_local_lights_to_camera(camera)
+        return tuple(values)
+
+    def extend_local_lights(
+        self,
+        lights: Sequence[LocalBrightnessLight],
+        *,
+        camera: object | None = None,
+        project_to_camera: bool = True,
+    ) -> tuple[LocalBrightnessLight, ...]:
+        """Append typed local lights and advance the authoritative revision."""
+
+        values = list(lights or ())
+        if not all(isinstance(light, LocalBrightnessLight) for light in values):
+            raise TypeError("SceneLighting local lights must be LocalBrightnessLight")
+        if values:
+            self._local_lights.extend(values)
+            self._touch()
+            if project_to_camera:
+                self.project_local_lights_to_camera(camera)
+        return tuple(values)
+
+    def add_local_light(
+        self,
+        light: LocalBrightnessLight,
+        *,
+        camera: object | None = None,
+        project_to_camera: bool = True,
+    ) -> LocalBrightnessLight:
+        """Append one typed local light."""
+
+        if not isinstance(light, LocalBrightnessLight):
+            raise TypeError("SceneLighting local lights must be LocalBrightnessLight")
+        self._local_lights.append(light)
+        self._touch()
+        if project_to_camera:
+            self.project_local_lights_to_camera(camera)
+        return light
+
+    def update_local_light(
+        self,
+        light: LocalBrightnessLight | str,
+        *,
+        camera: object | None = None,
+        radius: float | None = None,
+        value: float | None = None,
+    ) -> LocalBrightnessLight | None:
+        """Replace one immutable local-light record by stable identity."""
+
+        light_id = (
+            light.light_id
+            if isinstance(light, LocalBrightnessLight)
+            else str(light)
         )
-        return self.brightness_modifiers
 
-    def extend_brightness_modifiers(
+        index = None
+        for candidate_index, candidate in enumerate(self._local_lights):
+            if candidate is light or candidate.light_id == light_id:
+                index = candidate_index
+                break
+        if index is None:
+            return None
+
+        target = self._local_lights[index]
+        changes: dict[str, float] = {}
+        if radius is not None:
+            changes["radius"] = max(0.0, float(radius))
+        if value is not None:
+            changes["value"] = float(value)
+        updated = replace(target, **changes)
+        self._local_lights[index] = updated
+        self._touch()
+        self.project_local_lights_to_camera(camera)
+        return updated
+
+    def remove_local_lights(
         self,
-        modifiers: Sequence[object],
         *,
+        light_ids: Sequence[str] | None = None,
+        id_prefix: str | None = None,
         camera: object | None = None,
-        install_on_camera: bool = True,
-    ) -> list[dict[str, Any]]:
-        added: list[dict[str, Any]] = []
-        for modifier in modifiers or ():
-            try:
-                added.append(
-                    self.add_brightness_modifier(
-                        modifier,
-                        camera=camera,
-                        install_on_camera=install_on_camera,
-                    )
-                )
-            except (KeyError, TypeError, ValueError, AttributeError):
-                continue
-        return added
+    ) -> int:
+        """Remove authoritative local lights selected by stable identity."""
 
-    def add_brightness_modifier(
-        self,
-        modifier: object,
-        *,
-        camera: object | None = None,
-        install_on_camera: bool = True,
-    ) -> dict[str, Any]:
-        normalized = normalize_brightness_modifier(modifier)
-        self.brightness_modifiers.append(normalized)
-        if install_on_camera:
-            install_brightness_modifier_on_camera(camera, normalized)
-        return normalized
+        selected_ids = {str(value) for value in light_ids or ()}
+        prefix = str(id_prefix) if id_prefix is not None else None
 
-    def sync_brightness_modifiers_from_camera(
-        self,
-        camera: object | None,
-    ) -> list[dict[str, Any]]:
-        areas = getattr(camera, "brightness_areas", ()) if camera is not None else ()
-        return self.set_brightness_modifiers(areas, install_on_camera=False)
+        def selected(light: LocalBrightnessLight) -> bool:
+            return light.light_id in selected_ids or (
+                prefix is not None and light.light_id.startswith(prefix)
+            )
+
+        kept_lights = [light for light in self._local_lights if not selected(light)]
+        removed = len(self._local_lights) - len(kept_lights)
+        if removed <= 0:
+            return 0
+        self._local_lights[:] = kept_lights
+        self._touch()
+        self.project_local_lights_to_camera(camera)
+        return removed
+
+    def project_local_lights_to_camera(self, camera: object | None) -> None:
+        """Replace Camera's typed point-query projection from this revision."""
+
+        if camera is None:
+            return
+        setter = getattr(camera, "replace_brightness_query_lights", None)
+        if callable(setter):
+            setter(self.local_lights, source_revision=self.revision)
+            return
+        clear = getattr(camera, "clear_brightness_query_lights", None)
+        if callable(clear):
+            clear()
+        for light in self.local_lights:
+            install_local_light_on_camera(camera, light)
 
 
 def _as_vector3(value, fallback: Vector3 | None = None) -> Vector3:
@@ -159,7 +346,7 @@ def normalize_brightness_modifier(modifier: object) -> dict[str, Any]:
 
     if isinstance(modifier, dict):
         center = _as_vector3(modifier["center"])
-        return {
+        normalized = {
             "center": center,
             "radius": float(modifier["radius"]),
             "value": float(modifier["value"]),
@@ -168,9 +355,12 @@ def normalize_brightness_modifier(modifier: object) -> dict[str, Any]:
             "indoor_only": bool(modifier.get("indoor_only", False)),
             "floor_scale": float(modifier.get("floor_scale", 1.0)),
         }
+        if modifier.get("light_id") is not None:
+            normalized["light_id"] = str(modifier["light_id"])
+        return normalized
 
     if all(hasattr(modifier, name) for name in ("center", "radius", "value")):
-        return {
+        normalized = {
             "center": _as_vector3(getattr(modifier, "center")),
             "radius": float(getattr(modifier, "radius")),
             "value": float(getattr(modifier, "value")),
@@ -179,6 +369,10 @@ def normalize_brightness_modifier(modifier: object) -> dict[str, Any]:
             "indoor_only": bool(getattr(modifier, "indoor_only", False)),
             "floor_scale": float(getattr(modifier, "floor_scale", 1.0)),
         }
+        light_id = getattr(modifier, "light_id", None)
+        if light_id is not None:
+            normalized["light_id"] = str(light_id)
+        return normalized
 
     values = list(modifier)  # type: ignore[arg-type]
     return {
@@ -192,24 +386,23 @@ def normalize_brightness_modifier(modifier: object) -> dict[str, Any]:
     }
 
 
-def install_brightness_modifier_on_camera(
+def install_local_light_on_camera(
     camera: object | None,
-    modifier: object,
+    light: object,
 ) -> None:
-    add_area = getattr(camera, "add_brightness_area", None)
+    add_area = getattr(camera, "add_brightness_query_light", None)
     if not callable(add_area):
         return
 
-    normalized = normalize_brightness_modifier(modifier)
-    add_area(
-        normalized["center"],
-        normalized["radius"],
-        normalized["value"],
-        normalized["falloff"],
-        bounds=normalized["bounds"],
-        indoor_only=normalized["indoor_only"],
-        floor_scale=normalized["floor_scale"],
-    )
+    if isinstance(light, LocalBrightnessLight):
+        typed_light = light
+    else:
+        normalized = normalize_brightness_modifier(light)
+        typed_light = LocalBrightnessLight.from_normalized(
+            normalized,
+            fallback_id="legacy-camera-light",
+        )
+    add_area(typed_light)
 
 
 def _normalized(value, fallback: Vector3 | None = None) -> Vector3:

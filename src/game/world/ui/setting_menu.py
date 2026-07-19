@@ -12,7 +12,7 @@ from game.config import (
     HEIGHT,
     WIDTH,
 )
-from engine.core.compat_shader import set_texture_vibrance_state
+from engine.render_style_state import update_render_vibrance_state
 from engine.sound.sound_utils import Sounds
 from engine.ui.menu import ButtonMenu, MenuItem, MenuOption, SliderOption
 
@@ -532,7 +532,7 @@ class SettingMenu(ButtonMenu):
     @staticmethod
     def _set_vibrance(scene, value: float) -> None:
         scene.vibrance = float(value)
-        set_texture_vibrance_state(float(value))
+        update_render_vibrance_state(float(value))
 
     def audio_label(self, scene) -> str:
         muted = Sounds.is_muted() if hasattr(Sounds, "is_muted") else False
@@ -904,7 +904,7 @@ class SettingMenu(ButtonMenu):
         scene.cloud_speed = CLOUD_SPEED
         scene.cloud_opacity = CLOUD_OPACITY
         scene.vibrance = 1.0
-        set_texture_vibrance_state(1.0)
+        update_render_vibrance_state(1.0)
 
     def back(self, scene) -> None:
         self._ui(scene).showing_settings_menu = False

@@ -27,9 +27,20 @@ from OpenGL.GL import (
 )
 
 from engine.core.mesh import BatchedMesh
+from engine.lighting_receiver import LightingReceiver
 
 HeightFn = Callable[[float, float], float]
 ReceiverFn = Callable[[float, float], bool]
+
+DECAL_LIGHTING_RECEIVER = LightingReceiver(
+    receiver_id="world.decal",
+    directional=False,
+    local=False,
+    environment=False,
+    exposure=False,
+    fog=True,
+    shine=False,
+)
 
 
 @dataclass
@@ -78,6 +89,7 @@ class Decal:
     depth_offset_factor: float = -1.0
     depth_offset_units: float = -1.0
     receiver_fn: Optional[ReceiverFn] = None
+    lighting_receiver: Optional[LightingReceiver] = DECAL_LIGHTING_RECEIVER
 
     # Internal
     _mesh: Optional[BatchedMesh] = None
@@ -136,7 +148,7 @@ class Decal:
     def draw_untextured(self) -> None:  # parity with Drawable
         self.draw()
 
-    def draw(self) -> None:
+    def draw(self, *, lighting_packet=None, packet_shader=None) -> None:
         if self._mesh is None:
             return
         if self.use_depth_offset:
@@ -147,7 +159,10 @@ class Decal:
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         try:
-            self._mesh.draw()
+            self._mesh.draw(
+                lighting_packet=lighting_packet,
+                packet_shader=packet_shader,
+            )
         finally:
             glDisable(GL_BLEND)
             glDepthMask(True)
@@ -164,6 +179,7 @@ class Decal:
             texture=self.texture,
             keep_vertex_data=False,
             shine_enabled=False,
+            lighting_receiver=self.lighting_receiver,
         )
         self._vertex_data = None
         self._quad_vertex_data = None

@@ -14,6 +14,10 @@ from engine.entity import Entity
 from engine.rendering.lighting import sunlight_factor_for_normal
 from engine.textures.texture_utils import load_texture
 from game.resources.paths import WALL1_TEXTURE_PATH
+from game.world.lighting_receivers import (
+    CPU_BAKED_OBJECT_LIGHTING_RECEIVER,
+    DYNAMIC_OBJECT_LIGHTING_RECEIVER,
+)
 
 from .slab import (
     SLAB_BOX_FACES,
@@ -95,6 +99,8 @@ def _oriented_box_vertices(
 class Chest(Entity):
     """A textured chest with a hinged lid and door-like interaction."""
 
+    lighting_receiver = CPU_BAKED_OBJECT_LIGHTING_RECEIVER
+    packet_lighting_receiver = DYNAMIC_OBJECT_LIGHTING_RECEIVER
     faces = SLAB_BOX_FACES
 
     def __init__(
@@ -137,7 +143,7 @@ class Chest(Entity):
         self.texture = texture_id(texture)
         self.uv_rect = texture_uv_rect(texture)
         self.lighting = lighting
-        self.sun_direction = sun_direction
+        self.sun_direction = None if lighting is not None else sun_direction
         self._mesh: BatchedMesh | None = None
         self._mesh_key = None
         self._bounds_cache: tuple[float, float, float, float] | None = None
@@ -268,6 +274,18 @@ class Chest(Entity):
             return height_axis
         return -height_axis
 
+    @staticmethod
+    def _face_base_shade(face_idx: int) -> float:
+        if face_idx == 0:
+            return CHEST_FRONT_SHADE
+        if face_idx == 1:
+            return CHEST_BACK_SHADE
+        if face_idx == 4:
+            return CHEST_TOP_SHADE
+        if face_idx == 5:
+            return CHEST_BOTTOM_SHADE
+        return CHEST_EDGE_SHADE
+
     def _face_shade(
         self,
         face_idx: int,
@@ -275,16 +293,7 @@ class Chest(Entity):
         height_axis: Vector3,
         depth_axis: Vector3,
     ) -> float:
-        if face_idx == 0:
-            base = CHEST_FRONT_SHADE
-        elif face_idx == 1:
-            base = CHEST_BACK_SHADE
-        elif face_idx == 4:
-            base = CHEST_TOP_SHADE
-        elif face_idx == 5:
-            base = CHEST_BOTTOM_SHADE
-        else:
-            base = CHEST_EDGE_SHADE
+        base = self._face_base_shade(face_idx)
         normal = self._face_normal(face_idx, width_axis, height_axis, depth_axis)
         return max(0.0, min(1.0, base * self._sunlight_factor(normal)))
 
@@ -299,10 +308,27 @@ class Chest(Entity):
         width_axis: Vector3,
         height_axis: Vector3,
         depth_axis: Vector3,
+        *,
+        dynamic_lighting: bool = False,
     ) -> None:
         uv_values = self._face_uvs()
         for face_idx, face in enumerate(self.faces):
-            shade = self._face_shade(face_idx, width_axis, height_axis, depth_axis)
+            shade = (
+                self._face_base_shade(face_idx)
+                if dynamic_lighting
+                else self._face_shade(
+                    face_idx,
+                    width_axis,
+                    height_axis,
+                    depth_axis,
+                )
+            )
+            normal = self._face_normal(
+                face_idx,
+                width_axis,
+                height_axis,
+                depth_axis,
+            )
             for vertex_idx, uv in (
                 (face[0], uv_values[0]),
                 (face[1], uv_values[1]),
@@ -312,18 +338,17 @@ class Chest(Entity):
                 (face[3], uv_values[3]),
             ):
                 vertex = verts[vertex_idx]
-                rows.append(
-                    (
+                row = (
                         vertex.x,
                         vertex.y,
                         vertex.z,
                         shade,
                         shade,
                         shade,
-                        uv[0],
-                        uv[1],
                     )
-                )
+                if dynamic_lighting:
+                    row += (normal.x, normal.y, normal.z)
+                rows.append(row + (uv[0], uv[1]))
 
     def _body_boxes(self):
         thickness = min(
@@ -452,8 +477,8 @@ class Chest(Entity):
             )
         return verts
 
-    def _vertex_data(self) -> np.ndarray:
-        rows: list[tuple[float, float, float, float, float, float, float, float]] = []
+    def _vertex_data(self, *, dynamic_lighting: bool = False) -> np.ndarray:
+        rows: list[tuple[float, ...]] = []
         for (
             center,
             width_axis,
@@ -478,17 +503,19 @@ class Chest(Entity):
                 width_axis,
                 height_axis,
                 depth_axis,
+                dynamic_lighting=dynamic_lighting,
             )
 
         if not rows:
-            return np.zeros((0, 8), dtype=np.float32)
+            return np.zeros((0, 11 if dynamic_lighting else 8), dtype=np.float32)
         return np.array(rows, dtype=np.float32)
 
-    def _mesh_cache_key(self):
+    def _mesh_cache_key(self, *, dynamic_lighting: bool = False):
         return (
             int(self.texture or 0),
             round(float(self.open_amount), 5),
-            self._light_cache_key(),
+            None if dynamic_lighting else self._light_cache_key(),
+            bool(dynamic_lighting),
         )
 
     def get_render_bounding_sphere(self):
@@ -521,23 +548,52 @@ class Chest(Entity):
     def get_collision_meshes(self):
         return (self,)
 
-    def draw(self, camera=None) -> None:  # pragma: no cover - visual
+    def _ensure_render_mesh(self, *, dynamic_lighting: bool) -> BatchedMesh | None:
+        mesh_key = self._mesh_cache_key(dynamic_lighting=dynamic_lighting)
+        if self._mesh is not None and mesh_key == self._mesh_key:
+            return self._mesh
+        self._dispose_mesh()
+        vertex_data = self._vertex_data(dynamic_lighting=dynamic_lighting)
+        if vertex_data.size == 0:
+            return None
+        self._mesh = BatchedMesh.from_vertex_data(
+            vertex_data,
+            texture=self.texture,
+            alpha_test=True,
+            exposure_baseline=1.0,
+            environment_lighting=False,
+            lighting_receiver=(
+                DYNAMIC_OBJECT_LIGHTING_RECEIVER
+                if dynamic_lighting
+                else CPU_BAKED_OBJECT_LIGHTING_RECEIVER
+            ),
+        )
+        self._mesh_key = mesh_key
+        return self._mesh
+
+    def shadow_meshes(self, camera=None) -> tuple[BatchedMesh, ...]:
+        """Expose current lid/body geometry before the color pass."""
+
+        if not self.visible or not self.texture:
+            return ()
+        mesh = self._ensure_render_mesh(dynamic_lighting=True)
+        return mesh.shadow_meshes() if mesh is not None else ()
+
+    def draw(
+        self,
+        camera=None,
+        *,
+        lighting_packet=None,
+        packet_shader=None,
+    ) -> None:  # pragma: no cover - visual
         if not self.visible or not self.texture:
             return
 
-        mesh_key = self._mesh_cache_key()
-        if self._mesh is None or mesh_key != self._mesh_key:
-            self._dispose_mesh()
-            vertex_data = self._vertex_data()
-            if vertex_data.size == 0:
-                return
-            self._mesh = BatchedMesh.from_vertex_data(
-                vertex_data,
-                texture=self.texture,
-                alpha_test=True,
-                exposure_baseline=1.0,
-                environment_lighting=False,
-            )
-            self._mesh_key = mesh_key
-
-        self._mesh.draw(camera=camera)
+        mesh = self._ensure_render_mesh(dynamic_lighting=packet_shader is not None)
+        if mesh is None:
+            return
+        mesh.draw(
+            camera=camera,
+            lighting_packet=lighting_packet,
+            packet_shader=packet_shader,
+        )

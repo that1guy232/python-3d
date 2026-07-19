@@ -8,9 +8,10 @@ import numpy as np
 import pygame
 from pygame.math import Vector3
 from game.world.objects.ground_tile import GroundTile
+from game.world.lighting_receivers import GROUND_LIGHTING_RECEIVER
 from game.resources.paths import TEXTURES_PATH
 from engine.core.mesh import BatchedMesh, GroundHeightSampler
-from engine.core.compat_shader import texture_color_exposure_shader_available
+from engine.rendering.geometry_lighting import uses_dynamic_textured_lighting
 from engine.rendering.lighting import (
     apply_brightness_modifiers,
     apply_covered_regions,
@@ -54,6 +55,8 @@ class TexturedGroundGridBuilder:
         lighting=None,
         sun_direction=None,
         covered_regions=None,
+        environment_volumes=None,
+        dynamic_lighting: bool | None = None,
     ):
         self.count = count
         self.tile_size = tile_size
@@ -66,8 +69,12 @@ class TexturedGroundGridBuilder:
         self.spacing = tile_size + gap
         self.default_brightness = default_brightness
         self.lighting = lighting
-        self.sun_direction = sun_direction
+        self.sun_direction = None if lighting is not None else sun_direction
         self.covered_regions = covered_regions or []
+        self.environment_volumes = (
+            None if environment_volumes is None else list(environment_volumes)
+        )
+        self.dynamic_lighting = dynamic_lighting
 
         tile = GroundTile(
             position=Vector3(0, 0, 0), width=self.w, height=self.h, depth=self.d
@@ -295,12 +302,20 @@ class TexturedGroundGridBuilder:
                 max_x = float(region["max_x"])
                 min_z = float(region["min_z"])
                 max_z = float(region["max_z"])
+            elif all(
+                hasattr(region, name)
+                for name in ("min_x", "max_x", "min_z", "max_z")
+            ):
+                min_x = float(region.min_x)
+                max_x = float(region.max_x)
+                min_z = float(region.min_z)
+                max_z = float(region.max_z)
             else:
                 min_x = float(region[0])
                 max_x = float(region[1])
                 min_z = float(region[2])
                 max_z = float(region[3])
-        except (KeyError, IndexError, TypeError, ValueError):
+        except (AttributeError, KeyError, IndexError, TypeError, ValueError):
             return None
 
         if max_x < min_x:
@@ -358,8 +373,13 @@ class TexturedGroundGridBuilder:
             return []
 
         pads: list[TerrainFlattenPad] = []
-        for region in self.covered_regions:
-            values = self._region_values(region)
+        terrain_footprints = (
+            self.environment_volumes
+            if self.environment_volumes is not None
+            else self.covered_regions
+        )
+        for footprint in terrain_footprints:
+            values = self._region_values(footprint)
             if values is None:
                 continue
             min_x, max_x, min_z, max_z = values
@@ -674,14 +694,16 @@ class TexturedGroundGridBuilder:
         total_vertices = vertices_per_tile * self.count * self.count
         vertex_data = np.zeros((total_vertices, 8), dtype=np.float32)
         corner_heights = np.zeros((self.count, self.count, 4), dtype=np.float32)
-        shader_lighting = texture_color_exposure_shader_available()
+        shader_lighting = uses_dynamic_textured_lighting(self.dynamic_lighting)
 
         if total_vertices == 0:
             empty = np.zeros((0, 8), dtype=np.float32)
             return BatchedMesh.from_vertex_data(
                 empty,
                 texture=self.texture,
+                casts_sun_shadows=False,
                 exposure_baseline=self.default_brightness,
+                lighting_receiver=GROUND_LIGHTING_RECEIVER,
             )
 
         split_covered_regions = bool(self.covered_regions) and not shader_lighting
@@ -792,7 +814,9 @@ class TexturedGroundGridBuilder:
         mesh = BatchedMesh.from_vertex_data(
             vertex_data,
             texture=self.texture,
+            casts_sun_shadows=False,
             exposure_baseline=self.default_brightness,
+            lighting_receiver=GROUND_LIGHTING_RECEIVER,
         )
         mesh.height_sampler = GroundHeightSampler(
             count=self.count,

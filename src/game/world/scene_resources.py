@@ -89,6 +89,7 @@ class SceneResourceDisposer:
 
         if self.build_state is not None:
             for attr_name in (
+                "environment_volumes",
                 "roads",
                 "building_roads",
                 "doors",

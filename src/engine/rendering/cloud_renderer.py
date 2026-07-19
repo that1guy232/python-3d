@@ -149,7 +149,19 @@ class PixelCloudRenderer:
         return max(0.0, min(1.0, float(value)))
 
     @staticmethod
-    def _lighting_tint(lighting) -> tuple[float, float, float]:
+    def _lighting_tint(
+        lighting,
+        sun_tint=None,
+    ) -> tuple[float, float, float]:
+        if sun_tint is not None:
+            try:
+                return (
+                    float(sun_tint[0]),
+                    float(sun_tint[1]),
+                    float(sun_tint[2]),
+                )
+            except Exception:
+                pass
         if lighting is None:
             return (1.0, 1.0, 1.0)
         try:
@@ -166,6 +178,7 @@ class PixelCloudRenderer:
         speed: float = 1.0,
         opacity: float = 1.0,
         lighting=None,
+        sun_tint=None,
     ) -> None:  # pragma: no cover - visual
         if not self._regions or not self._clouds:
             return
@@ -188,7 +201,7 @@ class PixelCloudRenderer:
 
         speed_scale = max(0.0, float(speed))
         brightness = self._clamp01(brightness)
-        sr, sg, sb = self._lighting_tint(lighting)
+        sr, sg, sb = self._lighting_tint(lighting, sun_tint)
         tint_r = brightness * (0.78 + 0.22 * sr)
         tint_g = brightness * (0.80 + 0.20 * sg)
         tint_b = brightness * (0.83 + 0.17 * sb)

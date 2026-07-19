@@ -21,12 +21,13 @@ from OpenGL.GL import (
 from pygame.math import Vector3
 
 from engine.core.mesh import BatchedMesh
-from engine.core.compat_shader import texture_color_exposure_shader_available
+from engine.rendering.geometry_lighting import uses_dynamic_textured_lighting
 from engine.rendering.lighting import (
     apply_brightness_modifiers,
     apply_directional_sunlight,
     with_textured_normals,
 )
+from game.world.lighting_receivers import ROAD_LIGHTING_RECEIVER
 
 PointXZ = tuple[float, float]
 SegmentXZ = tuple[PointXZ, PointXZ]
@@ -148,6 +149,7 @@ def _upload_mesh(
         vertex_data,
         texture=texture,
         exposure_baseline=exposure_baseline,
+        lighting_receiver=ROAD_LIGHTING_RECEIVER,
     )
 
 
@@ -189,6 +191,7 @@ class RoadMeshBuilder:
     default_brightness: float = 1.0
     lighting: object | None = None
     sun_direction: object | None = None
+    dynamic_lighting: bool | None = None
 
     def build(self, centerline: Sequence[Vector3]) -> BatchedMesh:
         sampled_points, distances = self._sample_centerline(centerline)
@@ -201,7 +204,7 @@ class RoadMeshBuilder:
 
         sections = self._build_sections(sampled_points, distances, directions, normals)
         vertex_data = self._build_vertex_data(sections)
-        if texture_color_exposure_shader_available():
+        if uses_dynamic_textured_lighting(self.dynamic_lighting):
             vertex_data = with_textured_normals(
                 vertex_data,
                 prefer_upward_normals=True,
@@ -405,6 +408,7 @@ class Road:
     default_brightness: float = 1.0
     lighting: object | None = None
     sun_direction: object | None = None
+    dynamic_lighting: bool | None = None
     _mesh: BatchedMesh | None = None
     _bounds: tuple[float, float, float, float] | None = None
     _segments: tuple[SegmentXZ, ...] = ()
@@ -428,6 +432,7 @@ class Road:
         default_brightness: float = 1.0,
         lighting=None,
         sun_direction=None,
+        dynamic_lighting: bool | None = None,
     ) -> None:
         self.ground_y = float(ground_y)
         self.width = float(width)
@@ -437,7 +442,9 @@ class Road:
         self.brightness_modifiers = brightness_modifiers or ()
         self.default_brightness = float(default_brightness)
         self.lighting = lighting
-        self.sun_direction = sun_direction
+        self.sun_direction = None if lighting is not None else sun_direction
+        self.dynamic_lighting = dynamic_lighting
+        self.casts_shadows = False
         self.height_fn = self._resolve_height_fn(height_fn, height_sampler)
         self.elevation = float(elevation)
         self.segment_length = max(1.0, float(segment_length))
@@ -508,6 +515,7 @@ class Road:
             default_brightness=self.default_brightness,
             lighting=self.lighting,
             sun_direction=self.sun_direction,
+            dynamic_lighting=self.dynamic_lighting,
         )
 
     def _rebuild(self) -> None:
@@ -552,7 +560,8 @@ class Road:
             self.default_brightness = float(default_brightness)
         if lighting is not None:
             self.lighting = lighting
-        if sun_direction is not None:
+            self.sun_direction = None
+        elif sun_direction is not None:
             self.sun_direction = sun_direction
         if height_sampler is not None:
             self.height_fn = self._resolve_height_fn(None, height_sampler)
@@ -565,10 +574,22 @@ class Road:
     def draw_untextured(self) -> None:
         self.draw()
 
-    def draw(self, camera=None, *, view_distance: float | None = None) -> None:
+    def draw(
+        self,
+        camera=None,
+        *,
+        view_distance: float | None = None,
+        lighting_packet=None,
+        packet_shader=None,
+    ) -> None:
         if self._mesh is None:
             return
-        self._mesh.draw(camera=camera, view_distance=view_distance)
+        self._mesh.draw(
+            camera=camera,
+            view_distance=view_distance,
+            lighting_packet=lighting_packet,
+            packet_shader=packet_shader,
+        )
 
     def contains_point(self, x: float, z: float, *, margin: float = 0.0) -> bool:
         """Return True if the XZ point lies over the road centerline strip."""
@@ -610,6 +631,7 @@ class RoadRenderBatch:
     def __init__(self, roads) -> None:
         self.roads = tuple(road for road in roads or () if road is not None)
         self._meshes: list[BatchedMesh] = []
+        self.casts_shadows = False
         self._build()
 
     def dispose(self) -> None:
@@ -650,6 +672,7 @@ class RoadRenderBatch:
                     texture=texture if texture else None,
                     exposure_baseline=baseline,
                     environment_lighting=environment_lighting,
+                    lighting_receiver=ROAD_LIGHTING_RECEIVER,
                 )
             )
 
@@ -657,13 +680,26 @@ class RoadRenderBatch:
         for mesh in self._meshes:
             mesh.set_exposure(exposure)
 
+    def shadow_meshes(self, camera=None) -> tuple[BatchedMesh, ...]:
+        """Expose road geometry through the shared shadow protocol."""
+
+        return tuple(mesh for mesh in self._meshes if mesh.casts_shadows)
+
     def draw(
-        self, camera=None, *, view_distance: float | None = None
+        self,
+        camera=None,
+        *,
+        view_distance: float | None = None,
+        lighting_packets=None,
+        packet_shader=None,
     ) -> None:  # pragma: no cover - visual
         BatchedMesh.draw_many(
             self._meshes,
             camera=camera,
             view_distance=view_distance,
+            lighting_packets=lighting_packets,
+            packet_shader=packet_shader,
+            require_lighting_packets=packet_shader is not None,
         )
 
 

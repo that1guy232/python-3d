@@ -39,9 +39,33 @@ from game.config import (
     VIEWDISTANCE,
     WIDTH,
 )
-from engine.core.compat_shader import set_texture_fog_state
 from engine.core.mesh import BatchedMesh
+from engine.render_style_state import update_render_fog_state
 from engine.rendering.sprite import draw_sprites_batched
+from engine.rendering.packet_shader import (
+    MAX_PACKET_POINT_LIGHTS,
+    PacketLightingBackendUnavailable,
+    get_packet_texture_lighting_shader,
+)
+from engine.rendering.directional_shadow import (
+    DirectionalShadowMap,
+    ShadowCasterShader,
+    directional_light_matrix,
+    directional_shadow_bias,
+)
+from engine.rendering.point_shadow import (
+    PointShadowCasterShader,
+    PointShadowMap,
+    point_light_face_matrices,
+)
+from game.world.lighting_receivers import (
+    DECAL_LIGHTING_RECEIVER,
+    ROAD_LIGHTING_RECEIVER,
+    SKY_CLEAR_LIGHTING_RECEIVER,
+    SKY_CLOUD_LIGHTING_RECEIVER,
+    SKY_SUN_LIGHTING_RECEIVER,
+    SPRITE_LIGHTING_RECEIVER,
+)
 from game.world.objects.goblin import draw_goblin_shadows_batched
 from game.world.ui.battle_panel import BattlePanel
 from game.world.ui.inventory_panel import InventoryPanel
@@ -71,6 +95,14 @@ class WorldRenderer:
         self.pause_panel = PauseMenuPanel(scene)
         self._fps_label = "FPS:   0.0"
         self._fps_label_update_s = 0.0
+        self._sun_shadow_map: DirectionalShadowMap | None = None
+        self._shadow_caster_shader: ShadowCasterShader | None = None
+        self._point_shadow_maps: list[PointShadowMap] = []
+        self._point_shadow_caster_shader: PointShadowCasterShader | None = None
+        self.sun_shadow_map_size = 2048
+        self.sun_shadow_extent = min(float(VIEWDISTANCE), 1000.0)
+        self.point_shadow_map_size = 256
+        self.max_point_shadows = 2
 
     def _profile(self, name: str):
         profiler = getattr(self.scene, "profiler", None)
@@ -101,9 +133,267 @@ class WorldRenderer:
         else:
             glDisable(GL_FOG)
 
+    def _packet_lighting_shader(self):
+        if getattr(self.scene, "lighting_backend", "legacy") != "packet":
+            return None
+        shader = get_packet_texture_lighting_shader()
+        if shader is None:
+            raise PacketLightingBackendUnavailable(
+                "packet lighting backend was selected but shader compilation failed"
+            )
+        return shader
+
+    def _ensure_sun_shadow_resources(
+        self,
+    ) -> tuple[DirectionalShadowMap, ShadowCasterShader]:
+        if self._sun_shadow_map is None:
+            self._sun_shadow_map = DirectionalShadowMap.create(
+                self.sun_shadow_map_size
+            )
+        if self._shadow_caster_shader is None:
+            self._shadow_caster_shader = ShadowCasterShader.create()
+        return self._sun_shadow_map, self._shadow_caster_shader
+
+    def _shadow_sources(self):
+        resources = self.resources
+        if resources.ground_mesh is not None:
+            yield resources.ground_mesh
+        for attr_name in (
+            "fence_meshes",
+            "wall_tile_batches",
+            "road_batches",
+            "door_batches",
+            "window_batches",
+            "polygon_batches",
+            "others",
+            "immediate_entities",
+        ):
+            yield from (getattr(resources, attr_name, ()) or ())
+
+    def _shadow_meshes_from(self, source):
+        if (
+            source is None
+            or not getattr(source, "visible", True)
+            or not getattr(source, "casts_shadows", True)
+        ):
+            return ()
+        provider = getattr(source, "shadow_meshes", None)
+        if callable(provider):
+            try:
+                return tuple(provider(camera=getattr(self.scene, "camera", None)))
+            except TypeError:
+                return tuple(provider())
+        mesh = getattr(source, "_mesh", None)
+        if isinstance(mesh, BatchedMesh):
+            return mesh.shadow_meshes()
+        return ()
+
+    def render_sun_shadow(self) -> None:
+        """Render current world-space casters and bind their sun visibility."""
+
+        packet_shader = self._packet_lighting_shader()
+        if packet_shader is None:
+            return
+        ground = getattr(self.resources, "ground_mesh", None)
+        camera = getattr(self.scene, "camera", None)
+        lighting = getattr(self.scene, "lighting", None)
+        if ground is None or camera is None or lighting is None:
+            packet_shader.set_directional_shadow(None)
+            return
+
+        direction = getattr(lighting, "light_direction", (0.0, 1.0, 0.0))
+        center = (
+            float(camera.position.x),
+            float(camera.position.y),
+            float(camera.position.z),
+        )
+        extent = max(50.0, float(self.sun_shadow_extent))
+        shadow_near = 1.0
+        shadow_far = extent * 4.0
+        light_matrix = directional_light_matrix(
+            center,
+            direction,
+            extent=extent,
+            near=shadow_near,
+            far=shadow_far,
+        )
+        shadow_map, caster_shader = self._ensure_sun_shadow_resources()
+        with shadow_map.render_depth():
+            for source in self._shadow_sources():
+                for mesh in self._shadow_meshes_from(source):
+                    if not getattr(mesh, "casts_sun_shadows", True):
+                        continue
+                    mesh.draw_shadow(caster_shader, light_matrix)
+        packet_shader.set_directional_shadow(
+            shadow_map.binding(
+                light_matrix,
+                bias=directional_shadow_bias(
+                    near=shadow_near,
+                    far=shadow_far,
+                ),
+            )
+        )
+
+    def _selected_point_lights(self, limit: int = MAX_PACKET_POINT_LIGHTS):
+        lighting = getattr(self.scene, "lighting", None)
+        lights = tuple(getattr(lighting, "point_lights", ()) or ())
+        eligible = [
+            light
+            for light in lights
+            if float(light.intensity) > 0.0
+            and float(light.range) > 0.0
+        ]
+        camera = getattr(self.scene, "camera", None)
+        if camera is None:
+            return tuple(eligible[: max(0, int(limit))])
+
+        camera_position = (
+            float(camera.position.x),
+            float(camera.position.y),
+            float(camera.position.z),
+        )
+
+        def priority(light):
+            distance = math.dist(camera_position, light.position)
+            importance = max(0.0001, float(light.importance))
+            in_range = distance <= float(light.range)
+            return (int(in_range), importance / max(1.0, distance), light.light_id)
+
+        eligible.sort(key=priority, reverse=True)
+        return tuple(eligible[: max(0, int(limit))])
+
+    def _ensure_point_shadow_resources(
+        self,
+        count: int,
+    ) -> tuple[tuple[PointShadowMap, ...], PointShadowCasterShader]:
+        while len(self._point_shadow_maps) < count:
+            self._point_shadow_maps.append(
+                PointShadowMap.create(self.point_shadow_map_size)
+            )
+        if self._point_shadow_caster_shader is None:
+            self._point_shadow_caster_shader = PointShadowCasterShader.create()
+        return (
+            tuple(self._point_shadow_maps[:count]),
+            self._point_shadow_caster_shader,
+        )
+
+    @staticmethod
+    def _mesh_intersects_point_light(mesh, position, light_range: float) -> bool:
+        center = getattr(mesh, "bounds_center", None)
+        if center is None:
+            return True
+        radius = max(0.0, float(getattr(mesh, "bounds_radius", 0.0)))
+        return math.dist(center, position) <= float(light_range) + radius
+
+    def render_point_shadows(self) -> None:
+        """Render radial depth cubes for the most relevant local lights."""
+
+        packet_shader = self._packet_lighting_shader()
+        if packet_shader is None:
+            return
+        active_lights = self._selected_point_lights()
+        packet_shader.set_active_point_lights(
+            light.light_id for light in active_lights
+        )
+        lights = tuple(
+            light for light in active_lights if light.casts_shadows
+        )[: self.max_point_shadows]
+        if not lights:
+            packet_shader.set_point_shadows(())
+            return
+
+        shadow_maps, caster_shader = self._ensure_point_shadow_resources(
+            len(lights)
+        )
+        shadow_meshes = tuple(
+            mesh
+            for source in self._shadow_sources()
+            for mesh in self._shadow_meshes_from(source)
+        )
+        bindings = []
+        for light, shadow_map in zip(lights, shadow_maps):
+            light_range = max(0.1, float(light.range))
+            position = tuple(float(value) for value in light.position)
+            near = max(0.1, min(1.0, light_range * 0.01))
+            matrices = point_light_face_matrices(
+                position,
+                near=near,
+                far=light_range,
+            )
+            casters = tuple(
+                mesh
+                for mesh in shadow_meshes
+                if self._mesh_intersects_point_light(
+                    mesh,
+                    position,
+                    light_range,
+                )
+            )
+            for face_index, matrix in enumerate(matrices):
+                with shadow_map.render_face(face_index):
+                    for mesh in casters:
+                        mesh.draw_point_shadow(
+                            caster_shader,
+                            matrix,
+                            position,
+                            light_range,
+                        )
+            bindings.append(
+                shadow_map.binding(
+                    light.light_id,
+                    position,
+                    light_range,
+                    bias=max(0.1, min(0.75, light_range * 0.003)),
+                )
+            )
+        packet_shader.set_point_shadows(bindings)
+
+    def dispose(self) -> None:
+        if self._sun_shadow_map is not None or self._point_shadow_maps:
+            packet_shader = get_packet_texture_lighting_shader()
+            if packet_shader is not None:
+                packet_shader.set_directional_shadow(None)
+                packet_shader.set_point_shadows(())
+                packet_shader.set_active_point_lights(None)
+        if self._shadow_caster_shader is not None:
+            self._shadow_caster_shader.dispose()
+            self._shadow_caster_shader = None
+        if self._sun_shadow_map is not None:
+            self._sun_shadow_map.dispose()
+            self._sun_shadow_map = None
+        if self._point_shadow_caster_shader is not None:
+            self._point_shadow_caster_shader.dispose()
+            self._point_shadow_caster_shader = None
+        for shadow_map in self._point_shadow_maps:
+            shadow_map.dispose()
+        self._point_shadow_maps.clear()
+
+    def _lighting_packet_for(self, mesh):
+        if self.lighting_controller is None or mesh is None:
+            return None
+        receiver = getattr(mesh, "lighting_receiver", None)
+        if receiver is None:
+            return None
+        return self._receiver_packet_for(receiver)
+
+    def _receiver_packet_for(self, receiver):
+        if self.lighting_controller is None or receiver is None:
+            return None
+        return self.lighting_controller.render_packet_for(receiver)
+
     def _sky_rgba(self) -> list[float]:
-        brightness = self._clamp01(
-            getattr(self.scene.camera, "brightness_default", 1.0)
+        packet = self._receiver_packet_for(SKY_CLEAR_LIGHTING_RECEIVER)
+        if packet is not None:
+            return [
+                self._clamp01(channel * packet.exposure)
+                for channel in packet.sky_color[:3]
+            ] + [1.0]
+        brightness = (
+            self._clamp01(
+                getattr(self.scene.camera, "brightness_default", 1.0)
+            )
+            if SKY_CLEAR_LIGHTING_RECEIVER.exposure
+            else 1.0
         )
         lighting = getattr(self.scene, "lighting", None)
         sky_color = getattr(lighting, "sky_color", LIGHT_BLUE)
@@ -115,6 +405,8 @@ class WorldRenderer:
         scene = self.scene
         with self._profile("render.sky"):
             lighting = getattr(scene, "lighting", None)
+            sun_packet = self._receiver_packet_for(SKY_SUN_LIGHTING_RECEIVER)
+            cloud_packet = self._receiver_packet_for(SKY_CLOUD_LIGHTING_RECEIVER)
             self.resources.sky.draw(
                 scene.camera,
                 sun_direction=getattr(
@@ -129,6 +421,10 @@ class WorldRenderer:
                 cloud_speed=getattr(scene, "cloud_speed", 1.0),
                 cloud_opacity=getattr(scene, "cloud_opacity", 1.0),
                 profiler=getattr(scene, "profiler", None),
+                sun_receiver=SKY_SUN_LIGHTING_RECEIVER,
+                cloud_receiver=SKY_CLOUD_LIGHTING_RECEIVER,
+                sun_packet=sun_packet,
+                cloud_packet=cloud_packet,
             )
 
     def draw(self, enable_timing: bool = False) -> None:  # pragma: no cover - visual
@@ -139,15 +435,37 @@ class WorldRenderer:
             self._apply_fog_state()
 
         with self._profile("draw.ground"):
+            packet_shader = self._packet_lighting_shader()
+            lighting_packet = (
+                self._lighting_packet_for(self.resources.ground_mesh)
+                if packet_shader is not None
+                else None
+            )
+            if packet_shader is not None and lighting_packet is None:
+                raise RuntimeError(
+                    "packet lighting backend has no ground receiver packet"
+                )
             self.resources.ground_mesh.draw(
-                camera=scene.camera, view_distance=VIEWDISTANCE
+                camera=scene.camera,
+                view_distance=VIEWDISTANCE,
+                lighting_packet=lighting_packet,
+                packet_shader=packet_shader,
             )
 
         with self._profile("draw.fences"):
+            packet_shader = self._packet_lighting_shader()
             BatchedMesh.draw_many(
                 self.resources.fence_meshes,
                 camera=scene.camera,
                 view_distance=VIEWDISTANCE,
+                lighting_packets=(
+                    self.lighting_controller.render_packets
+                    if packet_shader is not None
+                    and self.lighting_controller is not None
+                    else None
+                ),
+                packet_shader=packet_shader,
+                require_lighting_packets=packet_shader is not None,
             )
 
         with self._profile("draw.world_objects"):
@@ -168,6 +486,12 @@ class WorldRenderer:
         battle_overlay = self._ui_value("battle_overlay")
         if battle_overlay is not None:
             battle_overlay.sync_state()
+        if self.lighting_controller is not None:
+            self.lighting_controller.sync_uniforms()
+        with self._profile("render.sun_shadow"):
+            self.render_sun_shadow()
+        with self._profile("render.point_shadows"):
+            self.render_point_shadows()
         rgba = self._sky_rgba()
         fog_enabled = self._fog_enabled()
         fog_density = max(0.0, float(getattr(scene, "fog_density", FOGDENSITY)))
@@ -181,11 +505,10 @@ class WorldRenderer:
                 glDisable(GL_FOG)
 
             glFogfv(GL_FOG_COLOR, rgba)
-            set_texture_fog_state(
+            update_render_fog_state(
                 enabled=fog_enabled,
                 density=fog_density,
                 color=rgba,
-                compile_shader=False,
             )
             glClearColor(*rgba)
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
@@ -487,8 +810,26 @@ class WorldRenderer:
         start_draw_decal_batches_time = time.perf_counter()
         with self._profile("objects.decal_batches"):
             profiler = getattr(scene, "profiler", None)
+            packet_shader = self._packet_lighting_shader()
+            decal_packet = (
+                self.lighting_controller.render_packet_for(
+                    DECAL_LIGHTING_RECEIVER
+                )
+                if packet_shader is not None
+                and self.lighting_controller is not None
+                else None
+            )
+            if packet_shader is not None and decal_packet is None:
+                raise RuntimeError(
+                    "packet lighting backend has no decal receiver packet"
+                )
             for batch in resources.decal_batches:
-                batch.draw(camera=scene.camera, profiler=profiler)
+                batch.draw(
+                    camera=scene.camera,
+                    profiler=profiler,
+                    lighting_packet=decal_packet,
+                    packet_shader=packet_shader,
+                )
         end_draw_decal_batches_time = time.perf_counter()
         if enable_timing:
             print(
@@ -499,10 +840,19 @@ class WorldRenderer:
         start_draw_wall_tiles_time = time.perf_counter()
         with self._profile("objects.wall_tiles"):
             if resources.wall_tile_batches:
+                packet_shader = self._packet_lighting_shader()
                 BatchedMesh.draw_many(
                     resources.wall_tile_batches,
                     camera=scene.camera,
                     view_distance=VIEWDISTANCE,
+                    lighting_packets=(
+                        self.lighting_controller.render_packets
+                        if packet_shader is not None
+                        and self.lighting_controller is not None
+                        else None
+                    ),
+                    packet_shader=packet_shader,
+                    require_lighting_packets=packet_shader is not None,
                 )
             else:
                 entity_ids = {id(entity) for entity in resources.entities}
@@ -521,8 +871,19 @@ class WorldRenderer:
 
         start_draw_polygons_time = time.perf_counter()
         with self._profile("objects.polygon_batches"):
+            packet_shader = self._packet_lighting_shader()
             for batch in resources.polygon_batches:
-                batch.draw(camera=scene.camera, view_distance=VIEWDISTANCE)
+                batch.draw(
+                    camera=scene.camera,
+                    view_distance=VIEWDISTANCE,
+                    lighting_packets=(
+                        self.lighting_controller.render_packets
+                        if packet_shader is not None
+                        and self.lighting_controller is not None
+                        else None
+                    ),
+                    packet_shader=packet_shader,
+                )
         with self._profile("objects.polygons"):
             for polygon in resources.polygons:
                 if getattr(polygon, "render_batched", False):
@@ -539,8 +900,19 @@ class WorldRenderer:
 
         starting_draw_other_time = time.perf_counter()
         with self._profile("objects.road_batches"):
+            packet_shader = self._packet_lighting_shader()
             for batch in resources.road_batches:
-                batch.draw(camera=scene.camera, view_distance=VIEWDISTANCE)
+                batch.draw(
+                    camera=scene.camera,
+                    view_distance=VIEWDISTANCE,
+                    lighting_packets=(
+                        self.lighting_controller.render_packets
+                        if packet_shader is not None
+                        and self.lighting_controller is not None
+                        else None
+                    ),
+                    packet_shader=packet_shader,
+                )
 
         with self._profile("objects.others"):
             for obj in resources.others:
@@ -549,7 +921,26 @@ class WorldRenderer:
                 if not self._object_visible(obj):
                     continue
 
-                obj.draw()
+                mesh = getattr(obj, "_mesh", None)
+                receiver = getattr(mesh, "lighting_receiver", None)
+                if (
+                    packet_shader is not None
+                    and receiver is not None
+                    and receiver is ROAD_LIGHTING_RECEIVER
+                ):
+                    lighting_packet = self._lighting_packet_for(mesh)
+                    if lighting_packet is None:
+                        raise RuntimeError(
+                            "packet lighting backend has no direct-road packet"
+                        )
+                    obj.draw(
+                        camera=scene.camera,
+                        view_distance=VIEWDISTANCE,
+                        lighting_packet=lighting_packet,
+                        packet_shader=packet_shader,
+                    )
+                else:
+                    obj.draw()
         end_draw_other_time = time.perf_counter()
         if enable_timing:
             print(
@@ -560,12 +951,33 @@ class WorldRenderer:
         start_draw_entities_time = time.perf_counter()
 
         with self._profile("objects.door_batches"):
+            packet_shader = self._packet_lighting_shader()
             for batch in resources.door_batches:
-                batch.draw(camera=scene.camera, view_distance=VIEWDISTANCE)
+                batch.draw(
+                    camera=scene.camera,
+                    view_distance=VIEWDISTANCE,
+                    lighting_packets=(
+                        self.lighting_controller.render_packets
+                        if packet_shader is not None
+                        and self.lighting_controller is not None
+                        else None
+                    ),
+                    packet_shader=packet_shader,
+                )
 
         with self._profile("objects.window_batches"):
             for batch in resources.window_batches:
-                batch.draw(camera=scene.camera, view_distance=VIEWDISTANCE)
+                batch.draw(
+                    camera=scene.camera,
+                    view_distance=VIEWDISTANCE,
+                    lighting_packets=(
+                        self.lighting_controller.render_packets
+                        if packet_shader is not None
+                        and self.lighting_controller is not None
+                        else None
+                    ),
+                    packet_shader=packet_shader,
+                )
 
         with self._profile("objects.goblin_shadows"):
             build_state = getattr(scene, "build_state", scene)
@@ -591,10 +1003,37 @@ class WorldRenderer:
                 draw_entity = getattr(entity, "draw", None)
                 if callable(draw_entity):
                     with self._profile(f"entities.{type(entity).__name__}"):
-                        try:
-                            draw_entity(camera=scene.camera)
-                        except TypeError:
-                            draw_entity()
+                        packet_receiver = getattr(
+                            entity,
+                            "packet_lighting_receiver",
+                            None,
+                        )
+                        if (
+                            packet_shader is not None
+                            and packet_receiver is not None
+                        ):
+                            lighting_packet = (
+                                self.lighting_controller.render_packet_for(
+                                    packet_receiver
+                                )
+                                if self.lighting_controller is not None
+                                else None
+                            )
+                            if lighting_packet is None:
+                                raise RuntimeError(
+                                    "packet lighting backend has no dynamic "
+                                    "object receiver packet"
+                                )
+                            draw_entity(
+                                camera=scene.camera,
+                                lighting_packet=lighting_packet,
+                                packet_shader=packet_shader,
+                            )
+                        else:
+                            try:
+                                draw_entity(camera=scene.camera)
+                            except TypeError:
+                                draw_entity()
         end_draw_entities_time = time.perf_counter()
         if enable_timing:
             print(
@@ -605,6 +1044,19 @@ class WorldRenderer:
         start_draw_sprites_time = time.perf_counter()
         with self._profile("objects.sprites"):
             if resources.sprite_items and scene.camera is not None:
+                packet_shader = self._packet_lighting_shader()
+                sprite_packet = (
+                    self.lighting_controller.render_packet_for(
+                        SPRITE_LIGHTING_RECEIVER
+                    )
+                    if packet_shader is not None
+                    and self.lighting_controller is not None
+                    else None
+                )
+                if packet_shader is not None and sprite_packet is None:
+                    raise RuntimeError(
+                        "packet lighting backend has no sprite receiver packet"
+                    )
                 draw_sprites_batched(
                     resources.sprite_items,
                     scene.camera,
@@ -613,6 +1065,9 @@ class WorldRenderer:
                     sun_direction=getattr(scene, "sun_direction", None),
                     profiler=getattr(scene, "profiler", None),
                     static_data=True,
+                    lighting_receiver=SPRITE_LIGHTING_RECEIVER,
+                    lighting_packet=sprite_packet,
+                    packet_shader=packet_shader,
                 )
 
         end_draw_sprites_time = time.perf_counter()

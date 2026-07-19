@@ -4,12 +4,13 @@ import random
 import numpy as np
 from engine.textures.texture_utils import get_texture_size
 from engine.core.mesh import BatchedMesh
-from engine.core.compat_shader import texture_color_exposure_shader_available
+from engine.rendering.geometry_lighting import uses_dynamic_textured_lighting
 from engine.rendering.lighting import (
     apply_brightness_modifiers,
     apply_directional_sunlight,
     with_textured_normals,
 )
+from game.world.lighting_receivers import FENCE_LIGHTING_RECEIVER
 
 
 def build_textured_fence_ring(
@@ -30,6 +31,7 @@ def build_textured_fence_ring(
     default_brightness=1.0,
     lighting=None,
     sun_direction=None,
+    dynamic_lighting: bool | None = None,
 ):
     """Build fence ring - simplified."""
     if not textures:
@@ -134,7 +136,7 @@ def build_textured_fence_ring(
 
         vertex_data = np.array(verts, dtype=np.float32)
 
-        if texture_color_exposure_shader_available():
+        if uses_dynamic_textured_lighting(dynamic_lighting):
             vertex_data = with_textured_normals(vertex_data)
         else:
             apply_brightness_modifiers(
@@ -152,7 +154,14 @@ def build_textured_fence_ring(
             BatchedMesh.from_vertex_data(
                 vertex_data,
                 texture=tex,
+                # Fence panels are texture cutouts, not solid rectangles.  The
+                # same alpha test is consumed by the visible, sun-shadow, and
+                # point-shadow passes so gaps between posts and rails remain
+                # open in every representation.
+                alpha_test=True,
+                alpha_cutoff=0.5,
                 exposure_baseline=default_brightness,
+                lighting_receiver=FENCE_LIGHTING_RECEIVER,
             )
         )
 

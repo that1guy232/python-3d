@@ -31,6 +31,10 @@ from OpenGL.GL import (
 import numpy as np
 from engine.textures.texture_utils import get_texture_size
 from engine.rendering.lighting import sunlight_factor_for_normal
+from game.world.lighting_receivers import (
+    CPU_BAKED_OBJECT_LIGHTING_RECEIVER,
+    DYNAMIC_POLYGON_LIGHTING_RECEIVER,
+)
 
 
 class Polygon(Object3D):
@@ -506,13 +510,19 @@ def _quad_face_uvs(polygon: Polygon, world_verts, face, side_idx: int):
     return ((0.0, 0.0), (u_repeat, 0.0), (u_repeat, v_repeat), (0.0, v_repeat))
 
 
-def _polygon_vertex_data(polygon: Polygon, camera=None):
+def _polygon_vertex_data(
+    polygon: Polygon,
+    camera=None,
+    *,
+    dynamic_lighting: bool = False,
+):
     world_verts = polygon.get_world_vertices()
     if not world_verts:
         return None
 
     textured = bool(polygon.texture)
-    if textured:
+    dynamic_lighting = bool(dynamic_lighting and textured)
+    if textured and not dynamic_lighting:
         get_batch = getattr(camera, "get_brightness_batch", None)
         if callable(get_batch):
             vertex_brightness = get_batch(world_verts)
@@ -523,6 +533,7 @@ def _polygon_vertex_data(polygon: Polygon, camera=None):
                 get_at(vert) if callable(get_at) else default_brightness
                 for vert in world_verts
             ]
+    if textured:
         uv_map = _polygon_uv_map(polygon)
 
     rows = []
@@ -530,7 +541,16 @@ def _polygon_vertex_data(polygon: Polygon, camera=None):
     front_count = len(polygon.points_2d)
 
     for face_idx, face in enumerate(polygon.faces):
-        sun_factor = polygon._face_sun_factor(world_verts, face)
+        sun_factor = (
+            1.0
+            if dynamic_lighting
+            else polygon._face_sun_factor(world_verts, face)
+        )
+        normal = None
+        if dynamic_lighting and len(face) >= 3:
+            normal = (world_verts[face[1]] - world_verts[face[0]]).cross(
+                world_verts[face[2]] - world_verts[face[0]]
+            )
         if textured:
             if len(face) == 4:
                 uv_values = _quad_face_uvs(polygon, world_verts, face, side_idx)
@@ -551,24 +571,23 @@ def _polygon_vertex_data(polygon: Polygon, camera=None):
 
             for idx, uv in face_vertices:
                 vertex = world_verts[idx]
-                brightness = (
+                brightness = 1.0 if dynamic_lighting else (
                     vertex_brightness[idx]
                     if idx < len(vertex_brightness)
                     else getattr(camera, "brightness_default", 1.0)
                 )
                 color = _clamp01(brightness * sun_factor)
-                rows.append(
-                    (
+                row = (
                         vertex.x,
                         vertex.y,
                         vertex.z,
                         color,
                         color,
                         color,
-                        uv[0],
-                        uv[1],
                     )
-                )
+                if normal is not None:
+                    row += (normal.x, normal.y, normal.z)
+                rows.append(row + (uv[0], uv[1]))
             continue
 
         color = (
@@ -589,7 +608,7 @@ def _polygon_vertex_data(polygon: Polygon, camera=None):
             vertex = world_verts[idx]
             rows.append((vertex.x, vertex.y, vertex.z, color[0], color[1], color[2]))
 
-    columns = 8 if textured else 6
+    columns = 11 if dynamic_lighting else 8 if textured else 6
     if not rows:
         return np.zeros((0, columns), dtype=np.float32)
     return np.array(rows, dtype=np.float32)
@@ -612,14 +631,16 @@ class PolygonRenderBatch:
         self._meshes = []
         self._cache_key = None
 
-    def _current_cache_key(self, camera=None):
+    def _current_cache_key(self, camera=None, *, dynamic_lighting: bool = False):
         return (
             tuple(
                 (
                     id(polygon),
                     int(getattr(polygon, "texture", 0) or 0),
                     polygon._transform_cache_key(),
-                    (
+                    None
+                    if dynamic_lighting and getattr(polygon, "texture", 0)
+                    else (
                         polygon._face_sun_factor(
                             polygon.get_world_vertices(),
                             polygon.faces[0],
@@ -630,7 +651,7 @@ class PolygonRenderBatch:
                 )
                 for polygon in self.polygons
             ),
-            self._camera_brightness_key(camera),
+            None if dynamic_lighting else self._camera_brightness_key(camera),
         )
 
     @staticmethod
@@ -638,6 +659,28 @@ class PolygonRenderBatch:
         if camera is None:
             return None
         areas = []
+        typed_lights = getattr(camera, "brightness_query_lights", None)
+        if typed_lights is not None:
+            for light in typed_lights:
+                try:
+                    areas.append(
+                        (
+                            round(float(light.center[0]), 4),
+                            round(float(light.center[2]), 4),
+                            round(float(light.radius), 4),
+                            round(float(light.value), 4),
+                            round(float(light.falloff), 4),
+                            light.bounds,
+                            bool(light.indoor_only),
+                            round(float(light.floor_scale), 4),
+                        )
+                    )
+                except Exception:
+                    continue
+            return (
+                round(float(getattr(camera, "brightness_default", 1.0)), 4),
+                tuple(areas),
+            )
         for area in getattr(camera, "_brightness_areas_optimized", ()) or ():
             try:
                 areas.append(
@@ -659,11 +702,15 @@ class PolygonRenderBatch:
             tuple(areas),
         )
 
-    def _rebuild(self, camera=None) -> None:
+    def _rebuild(self, camera=None, *, dynamic_lighting: bool = False) -> None:
         self.dispose()
         groups = {}
         for polygon in self.polygons:
-            vertex_data = _polygon_vertex_data(polygon, camera=camera)
+            vertex_data = _polygon_vertex_data(
+                polygon,
+                camera=camera,
+                dynamic_lighting=dynamic_lighting,
+            )
             if vertex_data is None or vertex_data.size == 0:
                 continue
             texture = int(getattr(polygon, "texture", 0) or 0)
@@ -683,6 +730,11 @@ class PolygonRenderBatch:
                     alpha_test=bool(texture),
                     exposure_baseline=1.0,
                     environment_lighting=False,
+                    lighting_receiver=(
+                        DYNAMIC_POLYGON_LIGHTING_RECEIVER
+                        if dynamic_lighting and texture
+                        else CPU_BAKED_OBJECT_LIGHTING_RECEIVER
+                    ),
                 )
             )
 
@@ -691,17 +743,35 @@ class PolygonRenderBatch:
         camera=None,
         *,
         view_distance: float | None = None,
+        lighting_packets=None,
+        packet_shader=None,
     ) -> None:  # pragma: no cover - visual
-        cache_key = self._current_cache_key(camera)
+        dynamic_lighting = packet_shader is not None
+        cache_key = self._current_cache_key(
+            camera,
+            dynamic_lighting=dynamic_lighting,
+        )
         if cache_key != self._cache_key:
-            self._rebuild(camera)
+            self._rebuild(camera, dynamic_lighting=dynamic_lighting)
             self._cache_key = cache_key
 
         BatchedMesh.draw_many(
             self._meshes,
             camera=camera,
             view_distance=view_distance,
+            lighting_packets=lighting_packets,
+            packet_shader=packet_shader,
+            require_lighting_packets=packet_shader is not None,
         )
+
+    def shadow_meshes(self, camera=None) -> tuple[BatchedMesh, ...]:
+        """Return current polygon batches for the shared light-depth pass."""
+
+        cache_key = self._current_cache_key(camera, dynamic_lighting=True)
+        if cache_key != self._cache_key:
+            self._rebuild(camera, dynamic_lighting=True)
+            self._cache_key = cache_key
+        return tuple(mesh for mesh in self._meshes if mesh.casts_shadows)
 
 
 def build_polygon_render_batch(polygons) -> PolygonRenderBatch | None:

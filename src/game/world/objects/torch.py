@@ -9,9 +9,10 @@ from typing import Any, Callable, Iterable
 from pygame.math import Vector3
 
 from engine.rendering.lighting import (
-    install_brightness_modifier_on_camera,
+    install_local_light_on_camera,
     normalize_brightness_modifier,
 )
+from engine.rendering.lighting_state import LocalBrightnessLight, PointLight
 from engine.rendering.sprite import AnimatedWorldSprite
 from game.resources.paths import TORCH_FRAME_TEXTURE_PATHS, TORCH_TEXTURE_PATH
 from engine.textures.texture_utils import (
@@ -29,6 +30,7 @@ TORCH_WALL_INSET = 8.0
 TORCH_SPRITE_HEIGHT = 16.0
 TORCH_MOUNT_HEIGHT = 28.0
 TORCH_COLOR = (1.0, 0.82, 0.55)
+TORCH_POINT_INTENSITY = 2.4
 TORCH_ANIMATION_FPS = 9.0
 TORCH_ANIMATION_FRAME_DURATION = 1.0 / TORCH_ANIMATION_FPS
 
@@ -51,6 +53,26 @@ class Torch(AnimatedWorldSprite):
     """A textured torch billboard plus its matching brightness-area metadata."""
 
     brightness_modifier: dict[str, Any] | None = None
+    emissive: bool = True
+
+    @classmethod
+    def mount_height_for_building_spec(
+        cls,
+        spec: dict,
+        torch_spec: dict | None = None,
+    ) -> float:
+        """Resolve a wall-centered mount that keeps the sprite above the floor."""
+
+        torch_spec = torch_spec if isinstance(torch_spec, dict) else {}
+        if "mount_height" in torch_spec:
+            return float(torch_spec["mount_height"])
+        requested = float(spec.get("height", TORCH_MOUNT_HEIGHT * 2.0)) * 0.5
+        wall_height = max(TORCH_SPRITE_HEIGHT, float(spec.get("height", 0.0)))
+        half_sprite = TORCH_SPRITE_HEIGHT * 0.5
+        clearance = 2.0
+        minimum = half_sprite + clearance
+        maximum = max(minimum, wall_height - half_sprite - clearance)
+        return max(minimum, min(maximum, requested))
 
     @classmethod
     def animation_frames(cls, texture: Any | None = None) -> tuple[Any, ...]:
@@ -135,55 +157,220 @@ class Torch(AnimatedWorldSprite):
         cls,
         spec: dict,
         torch_spec: dict | None = None,
+        *,
+        light_id: str | None = None,
     ) -> dict[str, Any]:
+        """Compatibility projection of typed torch-light authoring."""
+
+        return normalize_brightness_modifier(
+            cls.local_light_for_building_spec(
+                spec,
+                torch_spec,
+                light_id=light_id,
+            )
+        )
+
+    @classmethod
+    def local_light_for_building_spec(
+        cls,
+        spec: dict,
+        torch_spec: dict | None = None,
+        *,
+        light_id: str | None = None,
+    ) -> LocalBrightnessLight:
+        """Author one typed legacy-scalar light for a building torch."""
+
         x, z = cls.light_xz_for_building_torch_spec(spec, torch_spec)
-        return {
-            "center": Vector3(x, 0.0, z),
-            "radius": cls.light_radius_for_building_spec(spec),
-            "value": TORCH_LIGHT_VALUE,
-            "falloff": TORCH_LIGHT_FALLOFF,
-            "bounds": cls.light_bounds_for_building_spec(spec),
-            "indoor_only": True,
-            "floor_scale": TORCH_FLOOR_LIGHT_SCALE,
-        }
+        return LocalBrightnessLight(
+            light_id=str(light_id or f"torch:{x:.3f}:{z:.3f}"),
+            center=(x, 0.0, z),
+            radius=cls.light_radius_for_building_spec(spec),
+            value=TORCH_LIGHT_VALUE,
+            falloff=TORCH_LIGHT_FALLOFF,
+            bounds=cls.light_bounds_for_building_spec(spec),
+            indoor_only=True,
+            floor_scale=TORCH_FLOOR_LIGHT_SCALE,
+        )
+
+    @classmethod
+    def point_light_for_building_spec(
+        cls,
+        spec: dict,
+        torch_spec: dict | None = None,
+        *,
+        light_id: str | None = None,
+    ) -> PointLight:
+        """Author one generic XYZ point light for a torch prefab."""
+
+        torch_spec = torch_spec if isinstance(torch_spec, dict) else {}
+        x, z = cls.light_xz_for_building_torch_spec(spec, torch_spec)
+        base_y = float(spec.get("base_y", getattr(spec.get("position"), "y", 0.0)))
+        mount_height = cls.mount_height_for_building_spec(spec, torch_spec)
+        raw_color = torch_spec.get("light_color", TORCH_COLOR)
+        color = tuple(float(value) for value in raw_color)
+        if len(color) != 3:
+            color = TORCH_COLOR
+        return PointLight(
+            light_id=str(light_id or f"torch:{x:.3f}:{z:.3f}"),
+            position=(x, base_y + mount_height, z),
+            color=(float(color[0]), float(color[1]), float(color[2])),
+            intensity=max(
+                0.0,
+                float(torch_spec.get("light_intensity", TORCH_POINT_INTENSITY)),
+            ),
+            range=max(
+                1.0,
+                float(
+                    torch_spec.get(
+                        "light_range",
+                        cls.light_radius_for_building_spec(spec),
+                    )
+                ),
+            ),
+            casts_shadows=bool(torch_spec.get("casts_shadows", True)),
+            importance=max(0.0, float(torch_spec.get("light_importance", 1.0))),
+        )
 
     @classmethod
     def brightness_modifiers_for_building_spec(
         cls,
         spec: dict,
+        *,
+        building_index: int | None = None,
     ) -> list[dict[str, Any]]:
+        return [
+            normalize_brightness_modifier(light)
+            for light in cls.local_lights_for_building_spec(
+                spec,
+                building_index=building_index,
+            )
+        ]
+
+    @classmethod
+    def local_lights_for_building_spec(
+        cls,
+        spec: dict,
+        *,
+        building_index: int | None = None,
+    ) -> list[LocalBrightnessLight]:
         torch_specs = spec.get("torches", None)
         if not isinstance(torch_specs, (list, tuple)):
-            return [cls.brightness_modifier_for_building_spec(spec)]
+            return [
+                cls.local_light_for_building_spec(
+                    spec,
+                    light_id=(
+                        f"building:{building_index}:torch:0"
+                        if building_index is not None
+                        else None
+                    ),
+                )
+            ]
 
-        modifiers: list[dict[str, Any]] = []
-        for torch_spec in torch_specs:
+        lights: list[LocalBrightnessLight] = []
+        for torch_index, torch_spec in enumerate(torch_specs):
             if not isinstance(torch_spec, dict):
                 continue
-            modifiers.append(
-                cls.brightness_modifier_for_building_spec(spec, torch_spec)
+            lights.append(
+                cls.local_light_for_building_spec(
+                    spec,
+                    torch_spec,
+                    light_id=(
+                        f"building:{building_index}:torch:{torch_index}"
+                        if building_index is not None
+                        else None
+                    ),
+                )
             )
-        return modifiers
+        return lights
 
     @classmethod
     def brightness_modifiers_for_building_specs(
         cls, specs: Iterable[dict]
     ) -> list[dict[str, Any]]:
-        modifiers: list[dict[str, Any]] = []
-        for spec in specs or ():
+        return [
+            normalize_brightness_modifier(light)
+            for light in cls.local_lights_for_building_specs(specs)
+        ]
+
+    @classmethod
+    def local_lights_for_building_specs(
+        cls,
+        specs: Iterable[dict],
+    ) -> list[LocalBrightnessLight]:
+        lights: list[LocalBrightnessLight] = []
+        for building_index, spec in enumerate(specs or ()):
             try:
-                modifiers.extend(cls.brightness_modifiers_for_building_spec(spec))
+                lights.extend(
+                    cls.local_lights_for_building_spec(
+                        spec,
+                        building_index=building_index,
+                    )
+                )
             except (KeyError, TypeError, ValueError, AttributeError):
                 continue
-        return modifiers
+        return lights
+
+    @classmethod
+    def point_lights_for_building_spec(
+        cls,
+        spec: dict,
+        *,
+        building_index: int | None = None,
+    ) -> list[PointLight]:
+        torch_specs = spec.get("torches", None)
+        if not isinstance(torch_specs, (list, tuple)):
+            return [
+                cls.point_light_for_building_spec(
+                    spec,
+                    light_id=(
+                        f"building:{building_index}:torch:0"
+                        if building_index is not None
+                        else None
+                    ),
+                )
+            ]
+        lights: list[PointLight] = []
+        for torch_index, torch_spec in enumerate(torch_specs):
+            if not isinstance(torch_spec, dict):
+                continue
+            lights.append(
+                cls.point_light_for_building_spec(
+                    spec,
+                    torch_spec,
+                    light_id=(
+                        f"building:{building_index}:torch:{torch_index}"
+                        if building_index is not None
+                        else None
+                    ),
+                )
+            )
+        return lights
+
+    @classmethod
+    def point_lights_for_building_specs(
+        cls,
+        specs: Iterable[dict],
+    ) -> list[PointLight]:
+        lights: list[PointLight] = []
+        for building_index, spec in enumerate(specs or ()):
+            try:
+                lights.extend(
+                    cls.point_lights_for_building_spec(
+                        spec,
+                        building_index=building_index,
+                    )
+                )
+            except (KeyError, TypeError, ValueError, AttributeError):
+                continue
+        return lights
 
     @staticmethod
     def normalize_brightness_modifier(modifier: object) -> dict[str, Any]:
         return normalize_brightness_modifier(modifier)
 
     @staticmethod
-    def install_brightness_modifier(camera: object, modifier: object) -> None:
-        install_brightness_modifier_on_camera(camera, modifier)
+    def install_local_light(camera: object, light: object) -> None:
+        install_local_light_on_camera(camera, light)
 
     @staticmethod
     def sprite_size_for_texture(
@@ -227,6 +414,36 @@ class Torch(AnimatedWorldSprite):
         )
 
     @classmethod
+    def from_point_light(
+        cls,
+        light: PointLight,
+        *,
+        texture: Any,
+        camera: object,
+        size: tuple[float, float] | None = None,
+    ) -> "Torch":
+        """Build the visible torch paired with a typed raster point light."""
+
+        if not isinstance(light, PointLight):
+            raise TypeError("Torch point-light visuals require PointLight records")
+        frames = cls.animation_frames(texture)
+        if not frames:
+            raise ValueError("Torch requires at least one texture frame")
+        x, y, z = (float(value) for value in light.position)
+        frame_index = int(abs(x * 0.19 + z * 0.31)) % len(frames)
+        return cls(
+            position=Vector3(x, y, z),
+            size=size if size is not None else cls.sprite_size_for_texture(frames[0]),
+            texture=frames[0],
+            camera=camera,
+            color=tuple(float(value) for value in light.color),
+            frames=frames,
+            frame_duration=TORCH_ANIMATION_FRAME_DURATION,
+            frame_index=frame_index,
+            brightness_modifier=None,
+        )
+
+    @classmethod
     def build_for_brightness_modifiers(
         cls,
         modifiers: Iterable[object],
@@ -253,5 +470,32 @@ class Torch(AnimatedWorldSprite):
                     )
                 )
             except (KeyError, TypeError, ValueError, AttributeError):
+                continue
+        return torches
+
+    @classmethod
+    def build_for_point_lights(
+        cls,
+        lights: Iterable[PointLight],
+        *,
+        texture: Any | None = None,
+        camera: object,
+    ) -> list["Torch"]:
+        frames = cls.texture_or_load(texture)
+        if not frames:
+            return []
+        size = cls.sprite_size_for_texture(frames[0])
+        torches: list[Torch] = []
+        for light in lights or ():
+            try:
+                torches.append(
+                    cls.from_point_light(
+                        light,
+                        texture=frames,
+                        camera=camera,
+                        size=size,
+                    )
+                )
+            except (TypeError, ValueError, AttributeError):
                 continue
         return torches

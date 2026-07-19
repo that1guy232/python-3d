@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import warnings
 
 from OpenGL.GL import (
     GL_COMPILE_STATUS,
@@ -32,10 +33,34 @@ from OpenGL.GL import (
     glUniform4f,
     glUseProgram,
 )
+from engine.render_style_state import (
+    TextureFogState,
+    TextureShineState,
+    TextureVibranceState,
+    get_render_fog_state,
+    get_render_shine_state,
+    get_render_vibrance_state,
+    update_render_fog_state,
+    update_render_shine_state,
+    update_render_vibrance_state,
+)
 
 MAX_BRIGHTNESS_AREAS = 64
 MAX_ENVIRONMENT_REGIONS = 32
 MAX_ENVIRONMENT_OPENINGS = 64
+
+
+class LightingCapacityWarning(RuntimeWarning):
+    """Legacy shader input exceeded a fixed compatibility-array capacity."""
+
+
+def _warn_lighting_capacity(label: str, count: int, limit: int) -> None:
+    warnings.warn(
+        f"Legacy texture lighting supports at most {limit} {label}; "
+        f"received {count}. Extra entries are ignored.",
+        LightingCapacityWarning,
+        stacklevel=3,
+    )
 
 
 _TEXTURE_COLOR_EXPOSURE_VERTEX = """#version 120
@@ -451,6 +476,7 @@ class TextureColorExposureShader:
         scene_lighting_enabled: bool = False,
         directional_enabled: bool = False,
         environment_enabled: bool = False,
+        fog_enabled: bool = True,
         shine_enabled: bool = True,
     ) -> None:
         glUseProgram(self.program)
@@ -473,9 +499,12 @@ class TextureColorExposureShader:
                 self.environment_enabled_location,
                 1 if environment_enabled else 0,
             )
-        self.apply_fog_state(_texture_fog_state)
-        self.apply_vibrance_state(_texture_vibrance_state)
-        self.apply_shine_state(_texture_shine_state, enabled=shine_enabled)
+        self.apply_fog_state(get_render_fog_state(), enabled=fog_enabled)
+        self.apply_vibrance_state(get_render_vibrance_state())
+        self.apply_shine_state(
+            get_render_shine_state(),
+            enabled=shine_enabled,
+        )
 
     def set_exposure_scale(self, exposure_scale: float) -> None:
         if self.exposure_location >= 0:
@@ -621,9 +650,17 @@ class TextureColorExposureShader:
             else:
                 glUniform4f(location, 1.0, 1.0, 1.0, 0.0)
 
-    def apply_fog_state(self, state: "TextureFogState") -> None:
+    def apply_fog_state(
+        self,
+        state: "TextureFogState",
+        *,
+        enabled: bool = True,
+    ) -> None:
         if self.fog_enabled_location >= 0:
-            glUniform1i(self.fog_enabled_location, 1 if state.enabled else 0)
+            glUniform1i(
+                self.fog_enabled_location,
+                1 if enabled and state.enabled else 0,
+            )
         if self.fog_density_location >= 0:
             glUniform1f(self.fog_density_location, max(0.0, state.density))
         if self.fog_color_location >= 0:
@@ -676,34 +713,10 @@ class TextureLightingState:
     environment_window_params: tuple[tuple[float, float, float, float], ...] = ()
 
 
-@dataclass(frozen=True)
-class TextureFogState:
-    enabled: bool = False
-    density: float = 0.0
-    color: tuple[float, float, float, float] = (0.7, 0.8, 1.0, 1.0)
-
-
-@dataclass(frozen=True)
-class TextureVibranceState:
-    vibrance: float = 1.0
-
-
-@dataclass(frozen=True)
-class TextureShineState:
-    enabled: bool = True
-    strength: float = 0.38
-    power: float = 28.0
-    fresnel: float = 0.18
-    tint: tuple[float, float, float] = (1.0, 0.96, 0.86)
-
-
 _texture_color_exposure_shader: TextureColorExposureShader | None = None
 _texture_color_exposure_failed = False
 _texture_color_exposure_scale = 1.0
 _texture_lighting_state = TextureLightingState()
-_texture_fog_state = TextureFogState()
-_texture_vibrance_state = TextureVibranceState()
-_texture_shine_state = TextureShineState()
 
 
 def _decode_log(log) -> str:
@@ -991,8 +1004,12 @@ def _light_direction_from(
     lighting=None, sun_direction=None
 ) -> tuple[float, float, float]:
     if lighting is not None:
+        light_direction = getattr(lighting, "light_direction", None)
+        if light_direction is None:
+            directional = getattr(lighting, "directional", None)
+            light_direction = getattr(directional, "light_direction", None)
         return _vector3_tuple(
-            getattr(lighting, "light_direction", None),
+            light_direction,
             (0.0, 1.0, 0.0),
         )
 
@@ -1015,12 +1032,22 @@ def _brightness_area_uniforms(
     tuple[float, ...],
     tuple[float, ...],
 ]:
+    source_areas = (
+        list(brightness_areas) if brightness_areas is not None else []
+    )
+    if len(source_areas) > MAX_BRIGHTNESS_AREAS:
+        _warn_lighting_capacity(
+            "brightness areas",
+            len(source_areas),
+            MAX_BRIGHTNESS_AREAS,
+        )
+
     areas: list[tuple[float, float, float, float]] = []
     falloffs: list[float] = []
     bounds_values: list[tuple[float, float, float, float]] = []
     indoor_only_values: list[float] = []
     floor_scale_values: list[float] = []
-    for area in brightness_areas or ():
+    for area in source_areas:
         if len(areas) >= MAX_BRIGHTNESS_AREAS:
             break
         try:
@@ -1032,6 +1059,16 @@ def _brightness_area_uniforms(
                 bounds = area.get("bounds")
                 indoor_only = bool(area.get("indoor_only", False))
                 floor_scale = area.get("floor_scale", 1.0)
+            elif all(
+                hasattr(area, name) for name in ("center", "radius", "value")
+            ):
+                center = area.center
+                radius = area.radius
+                value = area.value
+                falloff = getattr(area, "falloff", 1.0)
+                bounds = getattr(area, "bounds", None)
+                indoor_only = bool(getattr(area, "indoor_only", False))
+                floor_scale = getattr(area, "floor_scale", 1.0)
             else:
                 center, radius, value, falloff = area[:4]
                 bounds = area[4] if len(area) > 4 else None
@@ -1079,6 +1116,38 @@ def _environment_region_uniforms(
     tuple[tuple[float, float, float, float], ...],
     tuple[tuple[float, float, float, float], ...],
 ]:
+    source_regions = list(covered_regions) if covered_regions is not None else []
+    if len(source_regions) > MAX_ENVIRONMENT_REGIONS:
+        _warn_lighting_capacity(
+            "environment regions",
+            len(source_regions),
+            MAX_ENVIRONMENT_REGIONS,
+        )
+
+    raw_opening_count = 0
+    for region in source_regions:
+        if not isinstance(region, dict):
+            continue
+        raw_openings = region.get("openings")
+        if isinstance(raw_openings, (list, tuple)):
+            raw_opening_count += sum(
+                1 for opening in raw_openings if isinstance(opening, dict)
+            )
+            continue
+        if isinstance(region.get("doorway"), dict):
+            raw_opening_count += 1
+        raw_windows = region.get("windows")
+        if isinstance(raw_windows, (list, tuple)):
+            raw_opening_count += sum(
+                1 for opening in raw_windows if isinstance(opening, dict)
+            )
+    if raw_opening_count > MAX_ENVIRONMENT_OPENINGS:
+        _warn_lighting_capacity(
+            "environment openings",
+            raw_opening_count,
+            MAX_ENVIRONMENT_OPENINGS,
+        )
+
     regions: list[tuple[float, float, float, float]] = []
     factors: list[float] = []
     openings: list[tuple[float, float, float, float]] = []
@@ -1107,7 +1176,7 @@ def _environment_region_uniforms(
             (width, depth, side_fade, edge_factor),
         )
 
-    for region in covered_regions or ():
+    for region in source_regions:
         if len(regions) >= MAX_ENVIRONMENT_REGIONS:
             break
         opening_values = []
@@ -1200,7 +1269,12 @@ def set_texture_lighting_state(
     if lighting is not None:
         if base_brightness is None and hasattr(lighting, "base_brightness"):
             base_brightness = getattr(lighting, "base_brightness")
-        if brightness_areas is None and hasattr(lighting, "brightness_modifiers"):
+        if brightness_areas is None and hasattr(lighting, "local_lights"):
+            brightness_areas = getattr(lighting, "local_lights")
+        elif brightness_areas is None and hasattr(
+            lighting,
+            "brightness_modifiers",
+        ):
             brightness_areas = getattr(lighting, "brightness_modifiers")
         if covered_regions is None and hasattr(lighting, "covered_regions"):
             covered_regions = getattr(lighting, "covered_regions")
@@ -1253,8 +1327,13 @@ def set_texture_lighting_state(
             if base_brightness is not None
             else current.base_brightness
         ),
-        light_direction=_light_direction_from(
-            lighting=lighting, sun_direction=sun_direction
+        light_direction=(
+            current.light_direction
+            if lighting is None and sun_direction is None
+            else _light_direction_from(
+                lighting=lighting,
+                sun_direction=sun_direction,
+            )
         ),
         light_ambient=(
             float(ambient)
@@ -1319,13 +1398,15 @@ def set_texture_fog_state(
 ) -> bool:
     """Update shared fog uniforms for textured compatibility draws."""
 
-    global _texture_fog_state
-
-    current = _texture_fog_state
-    _texture_fog_state = TextureFogState(
-        enabled=bool(enabled) if enabled is not None else current.enabled,
-        density=max(0.0, float(density)) if density is not None else current.density,
-        color=_rgba_tuple(color, current.color) if color is not None else current.color,
+    current = get_render_fog_state()
+    state = update_render_fog_state(
+        enabled=enabled,
+        density=density,
+        color=(
+            _rgba_tuple(color, current.color)
+            if color is not None
+            else None
+        ),
     )
 
     shader = (
@@ -1339,14 +1420,14 @@ def set_texture_fog_state(
     current_program = _current_program_id()
     try:
         glUseProgram(shader.program)
-        shader.apply_fog_state(_texture_fog_state)
+        shader.apply_fog_state(state)
     finally:
         glUseProgram(current_program)
     return True
 
 
 def get_texture_fog_state() -> TextureFogState:
-    return _texture_fog_state
+    return get_render_fog_state()
 
 
 def set_texture_vibrance_state(
@@ -1356,13 +1437,7 @@ def set_texture_vibrance_state(
 ) -> bool:
     """Update shared vibrance uniforms for textured compatibility draws."""
 
-    global _texture_vibrance_state
-
-    current = _texture_vibrance_state
-    value = current.vibrance if vibrance is None else float(vibrance)
-    _texture_vibrance_state = TextureVibranceState(
-        vibrance=max(0.0, min(2.0, value)),
-    )
+    state = update_render_vibrance_state(vibrance)
 
     shader = (
         get_texture_color_exposure_shader()
@@ -1375,14 +1450,14 @@ def set_texture_vibrance_state(
     current_program = _current_program_id()
     try:
         glUseProgram(shader.program)
-        shader.apply_vibrance_state(_texture_vibrance_state)
+        shader.apply_vibrance_state(state)
     finally:
         glUseProgram(current_program)
     return True
 
 
 def get_texture_vibrance_state() -> TextureVibranceState:
-    return _texture_vibrance_state
+    return get_render_vibrance_state()
 
 
 def set_texture_shine_state(
@@ -1396,21 +1471,17 @@ def set_texture_shine_state(
 ) -> bool:
     """Update shared glossy highlight uniforms for textured compatibility draws."""
 
-    global _texture_shine_state
-
-    current = _texture_shine_state
+    current = get_render_shine_state()
     tint_value = current.tint
     if tint is not None:
         rgba = _rgba_tuple(tint, (*current.tint, 1.0))
         tint_value = (rgba[0], rgba[1], rgba[2])
 
-    _texture_shine_state = TextureShineState(
-        enabled=bool(enabled) if enabled is not None else current.enabled,
-        strength=(
-            max(0.0, float(strength)) if strength is not None else current.strength
-        ),
-        power=max(1.0, float(power)) if power is not None else current.power,
-        fresnel=max(0.0, float(fresnel)) if fresnel is not None else current.fresnel,
+    state = update_render_shine_state(
+        enabled=enabled,
+        strength=strength,
+        power=power,
+        fresnel=fresnel,
         tint=tint_value,
     )
 
@@ -1425,14 +1496,14 @@ def set_texture_shine_state(
     current_program = _current_program_id()
     try:
         glUseProgram(shader.program)
-        shader.apply_shine_state(_texture_shine_state)
+        shader.apply_shine_state(state)
     finally:
         glUseProgram(current_program)
     return True
 
 
 def get_texture_shine_state() -> TextureShineState:
-    return _texture_shine_state
+    return get_render_shine_state()
 
 
 def use_fixed_pipeline() -> None:

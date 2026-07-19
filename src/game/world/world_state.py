@@ -27,6 +27,8 @@ from game.config import (
 )
 
 if TYPE_CHECKING:
+    from engine.rendering.lighting_state import LocalBrightnessLight
+    from game.world.environment import EnvironmentVolume
     from game.world.objects import Chest, Door, Goblin, Road, Torch, Window
     from game.world.objects.building import Building
     from game.world.objects.polygon import Polygon
@@ -74,6 +76,8 @@ class WorldBuildState:
     """Semantic objects and planning results produced while building a world."""
 
     building_specs: list[dict[str, Any]] = field(default_factory=list)
+    initial_local_lights: list[LocalBrightnessLight] = field(default_factory=list)
+    environment_volumes: list[EnvironmentVolume] = field(default_factory=list)
     buildings: list[Building] = field(default_factory=list)
     roads: list[Road] = field(default_factory=list)
     building_roads: list[Road] = field(default_factory=list)

@@ -84,6 +84,7 @@ class WorldScene(Scene):
     goblin_tex = state_alias("render_resources", "goblin_tex")
 
     building_specs = state_alias("build_state", "building_specs")
+    environment_volumes = state_alias("build_state", "environment_volumes")
     buildings = state_alias("build_state", "buildings")
     roads = state_alias("build_state", "roads")
     building_roads = state_alias("build_state", "building_roads")
@@ -147,7 +148,9 @@ class WorldScene(Scene):
         rock_count: int = 750,
         building_count: int = 10,
         world_content: WorldContent | None = None,
+        world_random_seed: int | None = None,
         defer_setup: bool = False,
+        lighting_backend: str = "packet",
     ) -> None:
         super().__init__()
         self.build_state = WorldBuildState()
@@ -155,6 +158,12 @@ class WorldScene(Scene):
         self.ui_state = WorldUIState()
         self._texture_lighting_sync_key = None
         self._texture_lighting_sync_result = False
+        backend = str(lighting_backend).strip().lower()
+        if backend not in ("legacy", "packet"):
+            raise ValueError(
+                "lighting_backend must be 'legacy' or 'packet'"
+            )
+        self.lighting_backend = backend
         self.collision_index = SceneCollisionIndex(self.render_resources)
         self.entity_registry = SceneEntityRegistry(
             self.render_resources,
@@ -189,6 +198,7 @@ class WorldScene(Scene):
         self._rock_count = rock_count
         self.building_count = building_count
         self.world_content = world_content
+        self.world_random_seed = world_random_seed
 
         spacing = grid_tile_size + grid_gap
         half = grid_tile_size / 2.0
@@ -219,6 +229,10 @@ class WorldScene(Scene):
             for _label, _progress in self.initialize_steps():
                 pass
 
+    def set_lighting_backend(self, backend: str) -> str:
+        """Transition lighting backends through the compatibility boundary."""
+        return self.lighting_controller.activate_backend(backend)
+
     def initialize_steps(self) -> Iterator[tuple[str, float]]:
         """Initialize the scene incrementally for loading-screen rendering."""
         if self._initialized:
@@ -227,8 +241,8 @@ class WorldScene(Scene):
 
         setup_steps: list[tuple[str, Callable[[], None]]] = [
             (
-                "Setting up brightness areas",
-                lambda: self._setup_brightness_areas(
+                "Setting up local lights",
+                lambda: self._setup_local_lights(
                     self._grid_count, self._grid_spacing, self._grid_half
                 ),
             ),
@@ -284,10 +298,10 @@ class WorldScene(Scene):
         print("World scene initialization complete.")
         yield ("Ready", 1.0)
 
-    def _setup_brightness_areas(
+    def _setup_local_lights(
         self, grid_count: int, spacing: float, half: float
     ) -> None:
-        return world_setup.setup_brightness_areas(self, grid_count, spacing, half)
+        return world_setup.setup_local_lights(self, grid_count, spacing, half)
 
     def _setup_controllers(self) -> None:
         return world_setup.setup_controllers(self)
@@ -530,4 +544,7 @@ class WorldScene(Scene):
         return self.lighting_controller.apply_static_exposure(brightness)
 
     def dispose(self) -> None:
-        return self.resource_disposer.dispose()
+        try:
+            self.renderer.dispose()
+        finally:
+            self.resource_disposer.dispose()

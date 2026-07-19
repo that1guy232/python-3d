@@ -38,6 +38,7 @@ from game.config import (
 from engine.camera.headbob import HeadBob
 from engine.camera.sway_controller import SwayController
 from engine.rendering.lighting import SceneLighting
+from engine.rendering.lighting_state import LocalBrightnessLight
 from engine.rendering.sky_renderer import SkyRenderer
 from engine.sound.sound_utils import Sounds
 from game.resources.paths import (
@@ -75,8 +76,10 @@ from OpenGL.GL import (
 )
 
 
-def setup_brightness_areas(scene, grid_count: int, spacing: float, half: float) -> None:
-    brightness_modifiers = []
+def setup_local_lights(scene, grid_count: int, spacing: float, half: float) -> None:
+    """Author initial typed local lights before SceneLighting is constructed."""
+
+    local_lights: list[LocalBrightnessLight] = []
     min_x = 0 + half
     max_x = grid_count * spacing - half
     min_z = 0 + half
@@ -85,24 +88,34 @@ def setup_brightness_areas(scene, grid_count: int, spacing: float, half: float) 
         cx = random.triangular(min_x, max_x, (min_x + max_x) * 0.5) + 1e-6
         cz = random.triangular(min_z, max_z, (min_z + max_z) * 0.5) + 1e-6
         radius = random.uniform(150.0, 250.0)
-        brightness_modifiers.append(
-            (
-                Vector3(cx, 0, cz),
-                radius,
-                random.uniform(0.5, 0.8),
-                4,
+        local_lights.append(
+            LocalBrightnessLight(
+                light_id=f"world:initial:{len(local_lights)}",
+                center=(cx, 0.0, cz),
+                radius=radius,
+                value=random.uniform(0.5, 0.8),
+                falloff=4.0,
             )
         )
 
-    for modifier in brightness_modifiers:
-        try:
-            scene.camera.add_brightness_area(*modifier)
-        except Exception:
-            pass
-    scene.brightness_modifiers = brightness_modifiers
+    replace_query_lights = getattr(
+        scene.camera,
+        "replace_brightness_query_lights",
+        None,
+    )
+    if callable(replace_query_lights):
+        replace_query_lights(local_lights)
+    build_state = getattr(scene, "build_state", None)
+    if build_state is not None:
+        build_state.initial_local_lights = list(local_lights)
+    packet_backend = getattr(scene, "lighting_backend", "legacy") == "packet"
+    if not packet_backend:
+        scene.brightness_modifiers = [
+            light.to_legacy_dict() for light in local_lights
+        ]
     lighting = getattr(scene, "lighting", None)
     if lighting is not None:
-        lighting.set_brightness_modifiers(brightness_modifiers)
+        lighting.replace_local_lights(local_lights, camera=scene.camera)
 
 
 def setup_controllers(scene) -> None:
@@ -173,14 +186,24 @@ def setup_graphics(scene) -> None:
         sky_color=LIGHT_BLUE,
         base_brightness=getattr(scene.camera, "brightness_default", 1.0),
     )
-    scene.lighting.set_brightness_modifiers(
-        getattr(scene, "brightness_modifiers", ()),
+    packet_backend = getattr(scene, "lighting_backend", "legacy") == "packet"
+    initial_lights = getattr(
+        getattr(scene, "build_state", None),
+        "initial_local_lights",
+        (),
     )
-    scene.lighting.set_covered_regions(getattr(scene, "covered_regions", ()))
+    scene.lighting.replace_local_lights(
+        initial_lights,
+        camera=scene.camera,
+        project_to_camera=True,
+    )
     lighting_controller = getattr(scene, "lighting_controller", None)
-    if lighting_controller is not None:
+    if lighting_controller is not None and not packet_backend:
+        lighting_controller.set_legacy_covered_regions(
+            getattr(scene, "covered_regions", ())
+        )
         lighting_controller.sync_aliases()
-    else:
+    elif not packet_backend:
         scene.sun_pos = scene.lighting.sun_position
         scene.sun_direction = scene.lighting.sun_direction
 

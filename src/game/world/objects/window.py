@@ -36,6 +36,10 @@ from .slab import (
     texture_uv_rect,
 )
 from game.resources.paths import WINDOW_TEXTURE_PATH
+from game.world.lighting_receivers import (
+    CPU_BAKED_SLAB_LIGHTING_RECEIVER,
+    DYNAMIC_SLAB_LIGHTING_RECEIVER,
+)
 from engine.textures.texture_utils import get_texture_size, load_texture
 
 WINDOW_THICKNESS = 3.0
@@ -110,7 +114,7 @@ class Window(TexturedSlabMixin, Entity):
         self.backing_uv_rect = texture_uv_rect(backing_texture)
         self.backing_texture_size = get_texture_size(backing_texture)
         self.lighting = lighting
-        self.sun_direction = sun_direction
+        self.sun_direction = None if lighting is not None else sun_direction
         self.panel_axis = self.tangent.copy()
         self.depth_axis = self.normal.copy()
         self._bounds_cache: tuple[float, float, float, float] | None = None
@@ -214,22 +218,36 @@ class Window(TexturedSlabMixin, Entity):
             collision_thickness=max(WINDOW_THICKNESS, wall_thickness),
         )
 
-    def _face_shade(self, face_idx: int) -> float:
+    def _face_base_shade(self, face_idx: int) -> float:
         if face_idx == 0:
-            base = 1.0
-            normal = self._face_normal(face_idx)
-        elif face_idx == 1:
-            base = WINDOW_INTERIOR_SHADE
-            normal = INDOOR_NORMAL
-        elif face_idx == 4:
-            base = WINDOW_TOP_SHADE
-            normal = self._face_normal(face_idx)
-        elif face_idx == 5:
-            base = WINDOW_BOTTOM_SHADE
-            normal = self._face_normal(face_idx)
-        else:
-            base = WINDOW_EDGE_SHADE
-            normal = self._face_normal(face_idx)
+            return 1.0
+        if face_idx == 1:
+            return WINDOW_INTERIOR_SHADE
+        if face_idx == 4:
+            return WINDOW_TOP_SHADE
+        if face_idx == 5:
+            return WINDOW_BOTTOM_SHADE
+        return WINDOW_EDGE_SHADE
+
+    def _face_lighting_normal(self, face_idx: int) -> Vector3:
+        if face_idx == 1:
+            return Vector3(INDOOR_NORMAL)
+        return self._face_normal(face_idx)
+
+    def _dynamic_face_shade(self, face_idx: int) -> float:
+        """Keep frame material contrast without embedding indoor darkness."""
+
+        if face_idx in (0, 1):
+            return 1.0
+        if face_idx == 4:
+            return WINDOW_TOP_SHADE
+        if face_idx == 5:
+            return WINDOW_BOTTOM_SHADE
+        return WINDOW_EDGE_SHADE
+
+    def _face_shade(self, face_idx: int) -> float:
+        base = self._face_base_shade(face_idx)
+        normal = self._face_lighting_normal(face_idx)
         return max(0.0, min(1.0, base * self._sunlight_factor(normal)))
 
     def _face_uvs(self, face_idx: int) -> list[tuple[float, float]]:
@@ -346,18 +364,27 @@ class Window(TexturedSlabMixin, Entity):
         *,
         as_quads: bool = False,
         include_normals: bool = False,
+        dynamic_lighting: bool = False,
     ) -> np.ndarray:
         textured = bool(self.backing_texture)
+        dynamic_lighting = bool(dynamic_lighting and textured)
         rows = []
         for face_idx, face_sign in ((0, 1.0), (1, -1.0)):
-            shade = self._face_shade(face_idx)
+            shade = (
+                self._dynamic_face_shade(face_idx)
+                if dynamic_lighting
+                else self._face_shade(face_idx)
+            )
             if textured:
                 color = (shade, shade, shade)
             else:
                 r, g, b = WINDOW_CORNER_BACKING_COLOR
                 color = (r * shade, g * shade, b * shade)
-            normal = (
-                self._face_normal(face_idx) if include_normals and textured else None
+            normal = self._face_normal(face_idx) if include_normals and textured else None
+            directional_normal = (
+                normal
+                if include_normals and textured and dynamic_lighting
+                else None
             )
 
             for quad in self._corner_backing_quads(face_sign):
@@ -377,8 +404,7 @@ class Window(TexturedSlabMixin, Entity):
                     if textured:
                         u, v = self._wall_backing_uv(vertex)
                         if normal is not None:
-                            rows.append(
-                                (
+                            row = (
                                     vertex.x,
                                     vertex.y,
                                     vertex.z,
@@ -388,10 +414,14 @@ class Window(TexturedSlabMixin, Entity):
                                     normal.x,
                                     normal.y,
                                     normal.z,
-                                    u,
-                                    v,
                                 )
-                            )
+                            if directional_normal is not None:
+                                row += (
+                                    directional_normal.x,
+                                    directional_normal.y,
+                                    directional_normal.z,
+                                )
+                            rows.append(row + (u, v))
                         else:
                             rows.append(
                                 (
@@ -417,7 +447,15 @@ class Window(TexturedSlabMixin, Entity):
                             )
                         )
 
-        columns = 11 if textured and include_normals else 8 if textured else 6
+        columns = (
+            14
+            if textured and include_normals and dynamic_lighting
+            else 11
+            if textured and include_normals
+            else 8
+            if textured
+            else 6
+        )
         if not rows:
             return np.zeros((0, columns), dtype=np.float32)
         return np.array(rows, dtype=np.float32)
@@ -459,6 +497,7 @@ class Window(TexturedSlabMixin, Entity):
                 environment_lighting=False,
                 draw_mode=GL_QUADS,
                 shader_lighting=False,
+                lighting_receiver=CPU_BAKED_SLAB_LIGHTING_RECEIVER,
             )
             self._corner_backing_light_key = light_key
             mesh = self._corner_backing_mesh
@@ -496,21 +535,26 @@ class WindowRenderBatch:
         self._slab_meshes = []
         self._cache_key = None
 
-    def _current_cache_key(self):
-        return tuple(
+    def _current_cache_key(self, dynamic_lighting: bool = False):
+        return (bool(dynamic_lighting),) + tuple(
             (
                 id(window),
                 bool(getattr(window, "visible", True)),
                 int(getattr(window, "texture", 0) or 0),
                 int(getattr(window, "backing_texture", 0) or 0),
-                window._slab_light_cache_key(),
+                None if dynamic_lighting else window._slab_light_cache_key(),
             )
             for window in self.windows
         )
 
     @staticmethod
     def _make_meshes(
-        groups, *, alpha_test: bool, draw_mode=GL_QUADS
+        groups,
+        *,
+        alpha_test: bool,
+        casts_shadows: bool = True,
+        dynamic_lighting: bool = False,
+        draw_mode=GL_QUADS,
     ) -> list[BatchedMesh]:
         meshes = []
         for (texture, _columns), chunks in groups.items():
@@ -527,15 +571,21 @@ class WindowRenderBatch:
                     vertex_data,
                     texture=texture if texture else None,
                     alpha_test=alpha_test,
+                    casts_shadows=casts_shadows,
                     exposure_baseline=1.0,
                     environment_lighting=False,
                     draw_mode=draw_mode,
                     shader_lighting=False,
+                    lighting_receiver=(
+                        DYNAMIC_SLAB_LIGHTING_RECEIVER
+                        if dynamic_lighting and texture
+                        else CPU_BAKED_SLAB_LIGHTING_RECEIVER
+                    ),
                 )
             )
         return meshes
 
-    def _rebuild(self) -> None:
+    def _rebuild(self, dynamic_lighting: bool = False) -> None:
         self.dispose()
         backing_groups = {}
         slab_groups = {}
@@ -551,6 +601,7 @@ class WindowRenderBatch:
             backing_data = window._corner_backing_vertex_data(
                 as_quads=True,
                 include_normals=True,
+                dynamic_lighting=dynamic_lighting,
             )
             if backing_data.size:
                 texture = int(getattr(window, "backing_texture", 0) or 0)
@@ -570,6 +621,7 @@ class WindowRenderBatch:
                 verts,
                 as_quads=True,
                 include_normals=True,
+                dynamic_lighting=dynamic_lighting,
             )
             if slab_data.size:
                 slab_groups.setdefault(
@@ -577,26 +629,61 @@ class WindowRenderBatch:
                     [],
                 ).append(slab_data)
 
-        self._backing_meshes = self._make_meshes(backing_groups, alpha_test=False)
-        self._slab_meshes = self._make_meshes(slab_groups, alpha_test=True)
+        self._backing_meshes = self._make_meshes(
+            backing_groups,
+            alpha_test=False,
+            casts_shadows=True,
+            dynamic_lighting=dynamic_lighting,
+        )
+        self._slab_meshes = self._make_meshes(
+            slab_groups,
+            alpha_test=True,
+            casts_shadows=False,
+            dynamic_lighting=dynamic_lighting,
+        )
 
     def draw(
-        self, camera=None, *, view_distance: float | None = None
+        self,
+        camera=None,
+        *,
+        view_distance: float | None = None,
+        lighting_packets=None,
+        packet_shader=None,
     ) -> None:  # pragma: no cover - visual
-        cache_key = self._current_cache_key()
+        dynamic_lighting = packet_shader is not None
+        cache_key = self._current_cache_key(dynamic_lighting)
         if cache_key != self._cache_key:
-            self._rebuild()
+            self._rebuild(dynamic_lighting)
             self._cache_key = cache_key
 
         BatchedMesh.draw_many(
             self._backing_meshes,
             camera=camera,
             view_distance=view_distance,
+            lighting_packets=lighting_packets,
+            packet_shader=packet_shader,
+            require_lighting_packets=packet_shader is not None,
         )
         BatchedMesh.draw_many(
             self._slab_meshes,
             camera=camera,
             view_distance=view_distance,
+            lighting_packets=lighting_packets,
+            packet_shader=packet_shader,
+            require_lighting_packets=packet_shader is not None,
+        )
+
+    def shadow_meshes(self, camera=None) -> tuple[BatchedMesh, ...]:
+        """Return backing and cutout slab geometry for the light-depth pass."""
+
+        cache_key = self._current_cache_key(dynamic_lighting=True)
+        if cache_key != self._cache_key:
+            self._rebuild(dynamic_lighting=True)
+            self._cache_key = cache_key
+        return tuple(
+            mesh
+            for mesh in (*self._backing_meshes, *self._slab_meshes)
+            if mesh.casts_shadows
         )
 
 

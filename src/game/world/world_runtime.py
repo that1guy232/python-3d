@@ -31,6 +31,7 @@ from engine.collision import (
 )
 from engine.rendering.lighting import INDOOR_LIGHT_FACTOR, covered_region_factor_at
 from engine.sound.sound_utils import Sounds
+from game.world.environment import environment_factor_at
 
 _BASE_ENTITY_UPDATE = Entity.update
 _AMBIENT_BIRDS_KEY = "ambient_birds"
@@ -69,11 +70,19 @@ def _ambient_birds_volume(scene) -> float:
         return _AMBIENT_BIRDS_OUTDOOR_VOLUME
 
     try:
-        region_factor = covered_region_factor_at(
-            camera.position.x,
-            camera.position.z,
-            covered_regions=getattr(scene, "covered_regions", ()),
-        )
+        environment_volumes = getattr(scene, "environment_volumes", ()) or ()
+        if environment_volumes:
+            region_factor = environment_factor_at(
+                camera.position.x,
+                camera.position.z,
+                volumes=environment_volumes,
+            )
+        else:
+            region_factor = covered_region_factor_at(
+                camera.position.x,
+                camera.position.z,
+                covered_regions=getattr(scene, "covered_regions", ()),
+            )
     except (TypeError, ValueError, AttributeError):
         region_factor = 1.0
 

@@ -231,7 +231,7 @@ def _build_goblins(scene) -> None:
         pixelated=False,
     )
 
-    rng = random.Random()
+    rng = random.Random(getattr(scene, "world_random_seed", None))
 
     spawn_blocked = _goblin_position_blocker(scene, block_roads=True)
 

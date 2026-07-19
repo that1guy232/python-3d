@@ -29,6 +29,7 @@ from pygame.math import Vector3
 
 from engine.core.mesh import BatchedMesh
 from engine.rendering.lighting import sunlight_factor_for_normal
+from game.world.lighting_receivers import CPU_BAKED_SLAB_LIGHTING_RECEIVER
 
 SLAB_BOX_FACES = [
     (0, 1, 2, 3),  # front
@@ -320,14 +321,27 @@ class TexturedSlabMixin:
         *,
         as_quads: bool = False,
         include_normals: bool = False,
+        dynamic_lighting: bool = False,
     ) -> np.ndarray:
         rows = []
         for face_idx, face in enumerate(self.faces):
             if len(face) != 4:
                 continue
-            shade = self._face_shade(face_idx)
+            dynamic_face_shade = getattr(
+                self,
+                "_dynamic_face_shade",
+                self._face_base_shade,
+            )
+            shade = (
+                dynamic_face_shade(face_idx)
+                if dynamic_lighting
+                else self._face_shade(face_idx)
+            )
             uvs = self._face_uvs(face_idx)
             normal = self._face_normal(face_idx) if include_normals else None
+            directional_normal = (
+                normal if include_normals and dynamic_lighting else None
+            )
             face_vertices = (
                 (face[0], uvs[0]),
                 (face[1], uvs[1]),
@@ -346,8 +360,7 @@ class TexturedSlabMixin:
             for vertex_idx, uv in face_vertices:
                 vertex = verts[vertex_idx]
                 if normal is not None:
-                    rows.append(
-                        (
+                    row = (
                             vertex.x,
                             vertex.y,
                             vertex.z,
@@ -357,10 +370,14 @@ class TexturedSlabMixin:
                             normal.x,
                             normal.y,
                             normal.z,
-                            uv[0],
-                            uv[1],
                         )
-                    )
+                    if directional_normal is not None:
+                        row += (
+                            directional_normal.x,
+                            directional_normal.y,
+                            directional_normal.z,
+                        )
+                    rows.append(row + (uv[0], uv[1]))
                 else:
                     rows.append(
                         (
@@ -376,7 +393,7 @@ class TexturedSlabMixin:
                     )
 
         if not rows:
-            columns = 11 if include_normals else 8
+            columns = 14 if include_normals and dynamic_lighting else 11 if include_normals else 8
             return np.zeros((0, columns), dtype=np.float32)
         return np.array(rows, dtype=np.float32)
 
@@ -413,6 +430,7 @@ class TexturedSlabMixin:
                 environment_lighting=False,
                 draw_mode=GL_QUADS,
                 shader_lighting=False,
+                lighting_receiver=CPU_BAKED_SLAB_LIGHTING_RECEIVER,
             )
             self._slab_mesh_dirty = False
             self._slab_mesh_light_key = light_key

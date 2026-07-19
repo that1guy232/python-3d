@@ -14,6 +14,10 @@ from typing import Any
 
 from pygame.math import Vector3
 
+from game.world.interior_layout import (
+    create_building_interior_layout,
+    exterior_partition_blocked_ranges,
+)
 from game.world.objects import Door, Window
 
 DEFAULT_BUILDING_HEIGHT = 66.0
@@ -325,6 +329,7 @@ def _random_window_specs_for_building(
     depth: float,
     doorway_side: str,
     doorway_width: float,
+    partition_ranges_by_side: dict[str, list[tuple[float, float]]] | None = None,
 ) -> list[dict]:
     windows: list[dict] = []
     sides = list(_BUILDING_FEATURE_SIDES)
@@ -345,6 +350,7 @@ def _random_window_specs_for_building(
             doorway_side,
             doorway_width,
         )
+        blocked_ranges.extend((partition_ranges_by_side or {}).get(side, ()))
         offsets = _random_feature_offsets_for_wall(
             rng,
             span,
@@ -386,6 +392,7 @@ def _random_window_specs_for_building(
             doorway_side,
             doorway_width,
         )
+        blocked_ranges.extend((partition_ranges_by_side or {}).get(side, ()))
         offsets = _random_feature_offsets_for_wall(
             rng,
             span,
@@ -432,6 +439,7 @@ def _random_torch_specs_for_building(
     doorway_side: str,
     doorway_width: float,
     windows: list[dict],
+    partition_ranges_by_side: dict[str, list[tuple[float, float]]] | None = None,
 ) -> list[dict]:
     torches: list[dict] = []
     windows_by_side = _window_ranges_by_side(windows)
@@ -454,6 +462,7 @@ def _random_torch_specs_for_building(
             doorway_width,
         )
         blocked_ranges.extend(windows_by_side.get(side, ()))
+        blocked_ranges.extend((partition_ranges_by_side or {}).get(side, ()))
         offsets = _random_feature_offsets_for_wall(
             rng,
             span,
@@ -488,6 +497,7 @@ def _random_torch_specs_for_building(
             doorway_width,
         )
         blocked_ranges.extend(windows_by_side.get(side, ()))
+        blocked_ranges.extend((partition_ranges_by_side or {}).get(side, ()))
         offsets = _random_feature_offsets_for_wall(
             rng,
             span,
@@ -553,12 +563,29 @@ def create_world_content(
         x = max(min_x + x_margin, min(max_x - x_margin, x))
         z = max(min_z + z_margin, min(max_z - z_margin, z))
 
+        draft_layout = create_building_interior_layout(
+            {
+                "width": width,
+                "depth": depth,
+                "height": DEFAULT_BUILDING_HEIGHT,
+                "doorway_side": doorway_side,
+                "doorway_width": doorway_width,
+                "doorway_height": doorway_height,
+                "wall_thickness": 2.5,
+            }
+        )
+        partition_ranges = exterior_partition_blocked_ranges(
+            draft_layout,
+            wall_thickness=2.5,
+        )
+
         windows = _random_window_specs_for_building(
             rng,
             width=width,
             depth=depth,
             doorway_side=doorway_side,
             doorway_width=doorway_width,
+            partition_ranges_by_side=partition_ranges,
         )
         torches = _random_torch_specs_for_building(
             rng,
@@ -567,6 +594,7 @@ def create_world_content(
             doorway_side=doorway_side,
             doorway_width=doorway_width,
             windows=windows,
+            partition_ranges_by_side=partition_ranges,
         )
 
         buildings.append(
@@ -593,7 +621,11 @@ def resolve_world_content(
 ) -> WorldContent:
     content = getattr(scene, "world_content", None)
     if content is None:
-        content = create_world_content(scene, building_count=building_count)
+        content = create_world_content(
+            scene,
+            building_count=building_count,
+            rng=random.Random(getattr(scene, "world_random_seed", None)),
+        )
         scene.world_content = content
         return content
     if isinstance(content, WorldContent):

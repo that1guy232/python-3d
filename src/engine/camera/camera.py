@@ -1,10 +1,31 @@
 """First-person camera state, brightness sampling, and frustum helpers."""
 
+from __future__ import annotations
+
+from dataclasses import dataclass
 import math
+from typing import TYPE_CHECKING
 import numpy as np
 from pygame.math import Vector3
 from engine.config import WIDTH, HEIGHT
 import pygame
+
+if TYPE_CHECKING:
+    from engine.rendering.lighting_state import LocalBrightnessLight
+
+
+@dataclass(frozen=True, slots=True)
+class CameraBrightnessArea:
+    """Immutable camera-owned projection for X/Z brightness point queries."""
+
+    light_id: str
+    center: tuple[float, float, float]
+    radius: float
+    value: float
+    falloff: float = 1.0
+    bounds: tuple[float, float, float, float] | None = None
+    indoor_only: bool = False
+    floor_scale: float = 1.0
 
 
 class Camera:
@@ -24,11 +45,10 @@ class Camera:
         self.rotation = rotation or Vector3(0, 0, 0)  # pitch (x), yaw (y), roll (z)
         self.speed = 5
 
-        # Area-based brightness: a list of circular areas (center, radius, value).
-        # If no areas are defined, brightness defaults to `brightness_default` (0.0).
-        # Access the current camera brightness with the `brightness` property below.
-        self.brightness_areas = []
+        # Typed point-query projection of the scene's immutable local lights.
+        self._brightness_lights: list[CameraBrightnessArea] = []
         self._brightness_default = float(default_brightness)
+        self._brightness_source_revision: int | None = None
 
         # FOV scale (same formula you used)
         self._fov_scale = (height / 2) / math.tan(math.radians(fov / 2))
@@ -63,9 +83,6 @@ class Camera:
         self._brightness_cache_hits = 0
         self._brightness_cache_misses = 0
 
-        # OPTIMIZATION: Precomputed squared radii to avoid sqrt in distance checks
-        self._brightness_areas_optimized = []
-
         # initialize
         self.update_rotation(0)
 
@@ -85,67 +102,120 @@ class Camera:
         self.brightness_default = value
         return self._brightness_default
 
-    # OPTIMIZATION: Brightness area helpers with caching and precomputation
-    def add_brightness_area(
-        self,
-        center,
-        radius,
-        value,
-        falloff,
-        bounds=None,
-        indoor_only=False,
-        floor_scale=1.0,
-    ):
-        """
-        Add a circular brightness area.
-
-        center: pygame.Vector3 or (x,y,z) tuple. Only x/z are used for containment.
-        radius: float, world-space radius around center (uses x/z plane).
-        value: float, brightness value to apply inside the area.
-        bounds: optional (min_x, max_x, min_z, max_z) clamp for enclosed lights.
-        indoor_only: when True, static surface callers may skip this light for
-            exterior surfaces. Point-based callers still receive the light.
-        floor_scale: optional 0..1 contribution scale for upward floor surfaces.
-        """
-        if not isinstance(center, Vector3):
-            center = Vector3(*center)
-
+    @staticmethod
+    def _legacy_brightness_area(light: CameraBrightnessArea) -> dict:
         area = {
-            "center": center,
-            "radius": float(radius),
-            "value": float(value),
-            "falloff": float(falloff),
+            "light_id": light.light_id,
+            "center": Vector3(light.center),
+            "radius": float(light.radius),
+            "value": float(light.value),
+            "falloff": float(light.falloff),
+            "floor_scale": float(light.floor_scale),
         }
-        if bounds is not None:
-            area["bounds"] = tuple(float(v) for v in bounds)
-        if indoor_only:
+        if light.bounds is not None:
+            area["bounds"] = tuple(float(value) for value in light.bounds)
+        if light.indoor_only:
             area["indoor_only"] = True
-        area["floor_scale"] = max(0.0, min(1.0, float(floor_scale)))
-        self.brightness_areas.append(area)
+        return area
 
-        # OPTIMIZATION: Precompute squared radius and store optimized version
-        optimized_area = {
-            "center_x": center.x,
-            "center_z": center.z,
-            "radius_squared": float(radius) ** 2,
-            "radius": float(radius),  # Keep original radius for distance calculations
-            "value": float(value),
-            "falloff": float(falloff),
-            "bounds": area.get("bounds"),
-            "indoor_only": bool(area.get("indoor_only", False)),
-            "floor_scale": area["floor_scale"],
-            "original": area,  # Keep reference to original for compatibility
-        }
-        self._brightness_areas_optimized.append(optimized_area)
+    @classmethod
+    def _legacy_brightness_contributions(cls, contributions) -> list[dict]:
+        return [
+            {
+                **value,
+                "area": cls._legacy_brightness_area(value["area"]),
+            }
+            for value in contributions
+        ]
 
-        # Clear cache when areas change
+    @property
+    def brightness_query_lights(self) -> tuple[CameraBrightnessArea, ...]:
+        """Immutable typed inputs used by camera point queries."""
+
+        return tuple(self._brightness_lights)
+
+    @property
+    def has_brightness_query_lights(self) -> bool:
+        return bool(self._brightness_lights)
+
+    @staticmethod
+    def _center_tuple(center) -> tuple[float, float, float]:
+        try:
+            return (float(center.x), float(center.y), float(center.z))
+        except AttributeError:
+            values = tuple(float(value) for value in center)
+            if len(values) == 2:
+                return (values[0], 0.0, values[1])
+            return (values[0], values[1], values[2])
+
+    def _invalidate_brightness_projection(self, *, source_revision=None) -> None:
         self._brightness_cache.clear()
+        self._brightness_source_revision = (
+            int(source_revision) if source_revision is not None else None
+        )
 
-    def clear_brightness_areas(self):
-        """Remove all defined brightness areas."""
-        self.brightness_areas.clear()
-        self._brightness_areas_optimized.clear()
-        self._brightness_cache.clear()
+    # Typed query-light projection helpers.
+    def add_brightness_query_light(
+        self,
+        light: CameraBrightnessArea | LocalBrightnessLight,
+    ) -> CameraBrightnessArea:
+        """Add one typed point-query record."""
+
+        projected = self._project_brightness_query_light(light)
+        self._brightness_lights.append(projected)
+        self._invalidate_brightness_projection()
+        return projected
+
+    @classmethod
+    def _project_brightness_query_light(
+        cls,
+        source: CameraBrightnessArea | LocalBrightnessLight,
+    ) -> CameraBrightnessArea:
+        from engine.rendering.lighting_state import LocalBrightnessLight
+
+        if isinstance(source, CameraBrightnessArea):
+            return source
+        if not isinstance(source, LocalBrightnessLight):
+            raise TypeError(
+                "Camera query lights must be CameraBrightnessArea or "
+                "LocalBrightnessLight"
+            )
+        return CameraBrightnessArea(
+            light_id=source.light_id,
+            center=cls._center_tuple(source.center),
+            radius=max(0.0, float(source.radius)),
+            value=float(source.value),
+            falloff=max(0.0, float(source.falloff)),
+            bounds=(
+                tuple(float(item) for item in source.bounds)
+                if source.bounds is not None
+                else None
+            ),
+            indoor_only=bool(source.indoor_only),
+            floor_scale=max(0.0, min(1.0, float(source.floor_scale))),
+        )
+
+    def replace_brightness_query_lights(
+        self,
+        lights: list[CameraBrightnessArea | LocalBrightnessLight]
+        | tuple[CameraBrightnessArea | LocalBrightnessLight, ...],
+        *,
+        source_revision: int | None = None,
+    ) -> tuple[CameraBrightnessArea, ...]:
+        """Replace point-query areas from an authoritative lighting snapshot."""
+
+        values = [
+            self._project_brightness_query_light(source)
+            for source in lights or ()
+        ]
+        self._brightness_lights[:] = values
+        self._invalidate_brightness_projection(source_revision=source_revision)
+        return self.brightness_query_lights
+
+    def clear_brightness_query_lights(self) -> None:
+        """Remove all point-query lights."""
+        self._brightness_lights.clear()
+        self._invalidate_brightness_projection()
 
     def _get_cache_key(self, point, surface_indoor=None):
         """Generate a cache key for a point (rounded to reduce cache size)."""
@@ -161,7 +231,7 @@ class Camera:
         Return the brightness at the given world-space point with proper area blending.
         This version properly combines overlapping brightness areas by adding their contributions.
         """
-        if not self._brightness_areas_optimized:
+        if not self._brightness_lights:
             return self.brightness_default
 
         # Check cache first
@@ -184,25 +254,25 @@ class Camera:
         contributing_areas = []
 
         # Find all areas that contain this point and calculate their contributions
-        for area in self._brightness_areas_optimized:
-            if area.get("indoor_only", False) and surface_indoor is False:
+        for area in self._brightness_lights:
+            if area.indoor_only and surface_indoor is False:
                 continue
 
-            bounds = area.get("bounds")
+            bounds = area.bounds
             if bounds is not None:
                 min_x, max_x, min_z, max_z = bounds
                 if not (min_x <= point_x <= max_x and min_z <= point_z <= max_z):
                     continue
 
-            dx = point_x - area["center_x"]
-            dz = point_z - area["center_z"]
+            dx = point_x - area.center[0]
+            dz = point_z - area.center[2]
             dist_sq = dx * dx + dz * dz
 
-            if dist_sq <= area["radius_squared"]:
+            if dist_sq <= area.radius * area.radius:
                 # Calculate distance-based falloff within the area
-                radius = area["radius"]
-                falloff = area.get("falloff", 1.0)
-                value = area["value"]
+                radius = area.radius
+                falloff = area.falloff
+                value = area.value
 
                 if radius > 1e-12:
                     # Calculate normalized distance (0 at center, 1 at edge)
@@ -236,7 +306,7 @@ class Camera:
         result = {
             "brightness_blended": total_brightness,
             "brightness": (
-                max(ca["area"]["value"] for ca in contributing_areas)
+                max(ca["area"].value for ca in contributing_areas)
                 if contributing_areas
                 else self.brightness_default
             ),
@@ -262,7 +332,7 @@ class Camera:
         Get detailed brightness information at a point including all contributing areas.
         Returns a dict with blended brightness and list of contributing areas.
         """
-        if not self._brightness_areas_optimized:
+        if not self._brightness_lights:
             return None
 
         # Check cache first
@@ -273,9 +343,11 @@ class Camera:
             if cached_result and "contributing_areas" in cached_result:
                 return {
                     "brightness": cached_result["brightness_blended"],
-                    "contributing_areas": cached_result["contributing_areas"],
+                    "contributing_areas": self._legacy_brightness_contributions(
+                        cached_result["contributing_areas"]
+                    ),
                     "primary_area": (
-                        cached_result["area"]["original"]
+                        self._legacy_brightness_area(cached_result["area"])
                         if cached_result["area"]
                         else None
                     ),
@@ -290,9 +362,13 @@ class Camera:
         if cached_result and "contributing_areas" in cached_result:
             return {
                 "brightness": brightness,
-                "contributing_areas": cached_result["contributing_areas"],
+                "contributing_areas": self._legacy_brightness_contributions(
+                    cached_result["contributing_areas"]
+                ),
                 "primary_area": (
-                    cached_result["area"]["original"] if cached_result["area"] else None
+                    self._legacy_brightness_area(cached_result["area"])
+                    if cached_result["area"]
+                    else None
                 ),
             }
 
@@ -343,7 +419,7 @@ class Camera:
         Returns:
             List of brightness values corresponding to each point
         """
-        if not self._brightness_areas_optimized:
+        if not self._brightness_lights:
             return [self.brightness_default] * len(points)
 
         results = []

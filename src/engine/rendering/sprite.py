@@ -51,15 +51,25 @@ from OpenGL.GL import (
 )
 from engine.config import WIDTH, HEIGHT, VIEWDISTANCE
 from engine.core.consts import FORWARD, RIGHT, WORLD_UP
-from engine.core.compat_shader import (
-    get_texture_color_exposure_shader,
-    use_fixed_pipeline,
-)
+from engine.lighting_receiver import LightingReceiver
+from engine.core.gl_state import use_fixed_pipeline
+from engine.core.legacy_shader_adapter import get_legacy_texture_shader
 from engine.rendering.lighting import sprite_light_factor
 
 # Internal helpers for billboard math
 _EPS = 1e-6
 _EPS2 = _EPS * _EPS
+
+DEFAULT_SPRITE_LIGHTING_RECEIVER = LightingReceiver(
+    receiver_id="world.sprite",
+    directional=True,
+    local=True,
+    environment=False,
+    exposure=True,
+    fog=True,
+    shine=True,
+    point=True,
+)
 
 
 def _profile(profiler, name: str):
@@ -88,9 +98,10 @@ def _sprite_array_scratch(owner, sprite_count: int) -> dict:
         "sizes": np.empty((sprite_capacity, 2), dtype=np.float32),
         "uvs": np.empty((sprite_capacity, 4), dtype=np.float32),
         "rgb": np.empty((sprite_capacity, 3), dtype=np.float32),
+        "emissive": np.empty(sprite_capacity, dtype=np.float32),
         "vertices": np.empty((vertex_capacity, 3), dtype=np.float32),
         "colors": np.empty((vertex_capacity, 4), dtype=np.float32),
-        "texcoords": np.empty((vertex_capacity, 2), dtype=np.float32),
+        "texcoords": np.empty((vertex_capacity, 3), dtype=np.float32),
         "normals": np.empty((vertex_capacity, 3), dtype=np.float32),
     }
     setattr(owner, "_sprite_array_scratch", scratch)
@@ -124,6 +135,7 @@ def _sprite_data_cache(
     sizes = np.empty((sprite_count, 2), dtype=np.float32)
     uvs = np.empty((sprite_count, 4), dtype=np.float32)
     rgb = np.empty((sprite_count, 3), dtype=np.float32)
+    emissive = np.empty(sprite_count, dtype=np.float32)
     textures = np.empty(sprite_count, dtype=np.int64)
 
     cache = {
@@ -136,6 +148,7 @@ def _sprite_data_cache(
         "sizes": sizes,
         "uvs": uvs,
         "rgb": rgb,
+        "emissive": emissive,
         "textures": textures,
         "rel_x": np.empty(sprite_count, dtype=np.float32),
         "rel_y": np.empty(sprite_count, dtype=np.float32),
@@ -181,6 +194,7 @@ def _refresh_sprite_data_cache_entry(
     sizes = cache["sizes"]
     uvs = cache["uvs"]
     rgb = cache["rgb"]
+    emissive = cache["emissive"]
     textures = cache["textures"]
 
     texture = getattr(sprite, "texture", None)
@@ -214,6 +228,7 @@ def _refresh_sprite_data_cache_entry(
     rgb[i, 0] = float(color[0])
     rgb[i, 1] = float(color[1])
     rgb[i, 2] = float(color[2])
+    emissive[i] = float(bool(getattr(sprite, "emissive", False)))
 
 
 def _length_sq(v: Vector3) -> float:
@@ -232,6 +247,8 @@ class WorldSprite:
     camera: Any  # expects Camera with _right and _forward vectors updated
     color: tuple[float, float, float] = (1.0, 1.0, 1.0)
     uv_rect: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0)
+    lighting_receiver: LightingReceiver = DEFAULT_SPRITE_LIGHTING_RECEIVER
+    emissive: bool = False
 
     def __post_init__(self) -> None:
         texture_id = getattr(self.texture, "texture", None)
@@ -274,7 +291,13 @@ class WorldSprite:
     def draw_untextured(self) -> None:  # keep interface parity
         self.draw()
 
-    def draw(self, pitch_effect: bool = False) -> None:  # pragma: no cover - visual
+    def draw(
+        self,
+        pitch_effect: bool = False,
+        *,
+        lighting_packet=None,
+        packet_shader=None,
+    ) -> None:  # pragma: no cover - visual
         if not self.texture:
             return
 
@@ -302,17 +325,26 @@ class WorldSprite:
 
         r, g, b = self.color
         u0, v0, u1, v1 = self.uv_rect
-        shader = get_texture_color_exposure_shader()
+        use_packet_shader = packet_shader is not None and lighting_packet is not None
+        shader = None if use_packet_shader else get_legacy_texture_shader()
 
-        if shader is not None:
+        if use_packet_shader or shader is not None:
             forward = getattr(self.camera, "_forward", FORWARD)
             normal = Vector3(-forward.x * 0.35, 1.0, -forward.z * 0.35)
             normal = normal.normalize() if _length_sq(normal) > _EPS2 else WORLD_UP
-            shader.bind(
-                scene_lighting_enabled=True,
-                directional_enabled=True,
-                environment_enabled=False,
-            )
+            if use_packet_shader:
+                packet_shader.bind(lighting_packet)
+            else:
+                flags = self.lighting_receiver.compatibility_shader_flags(
+                    has_normals=True
+                )
+                shader.bind(
+                    scene_lighting_enabled=flags.scene_lighting,
+                    directional_enabled=flags.directional,
+                    environment_enabled=flags.environment,
+                    fog_enabled=flags.fog,
+                    shine_enabled=flags.shine,
+                )
             glNormal3f(normal.x, normal.y, normal.z)
             glColor4f(r, g, b, 1.0)
         else:
@@ -331,7 +363,7 @@ class WorldSprite:
             glVertex3f(bl.x, bl.y, bl.z)
         finally:
             glEnd()
-            if shader is not None:
+            if use_packet_shader or shader is not None:
                 use_fixed_pipeline()
             glColor4f(1.0, 1.0, 1.0, 1.0)
             glDisable(GL_BLEND)
@@ -419,6 +451,9 @@ def draw_sprites_batched(
     sun_direction=None,
     profiler=None,
     static_data: bool = False,
+    lighting_receiver: LightingReceiver = DEFAULT_SPRITE_LIGHTING_RECEIVER,
+    lighting_packet=None,
+    packet_shader=None,
 ) -> None:
     """Draw visible sprites in texture batches while keeping fixed-function GL."""
     if not sprites:
@@ -472,16 +507,23 @@ def draw_sprites_batched(
     aspect = WIDTH / HEIGHT
 
     brightness_default = getattr(camera, "brightness_default", 0.0)
-    brightness_areas = getattr(camera, "brightness_areas", [])
-    has_brightness_areas = bool(brightness_areas)
+    has_brightness_areas = getattr(camera, "has_brightness_query_lights", None)
+    if has_brightness_areas is None:
+        has_brightness_areas = bool(getattr(camera, "brightness_areas", ()))
     get_brightness_at = getattr(camera, "get_brightness_at", None)
     sun_factor = (
         sprite_light_factor(lighting=lighting, sun_direction=sun_direction)
         if lighting is not None or sun_direction is not None
         else 1.0
     )
-    shader = get_texture_color_exposure_shader()
-    use_shader_lighting = shader is not None
+    use_packet_shader = packet_shader is not None and lighting_packet is not None
+    shader = None if use_packet_shader else get_legacy_texture_shader()
+    use_shader_lighting = use_packet_shader or shader is not None
+    receiver_flags = (
+        None
+        if use_packet_shader
+        else lighting_receiver.compatibility_shader_flags(has_normals=True)
+    )
 
     # cylindrical billboard axes (render)
     world_up = Vector3(0.0, 1.0, 0.0)
@@ -660,11 +702,16 @@ def draw_sprites_batched(
         glEnableClientState_local(GL_COLOR_ARRAY)
         glEnableClientState_local(GL_TEXTURE_COORD_ARRAY)
         if use_shader_lighting:
-            shader.bind(
-                scene_lighting_enabled=True,
-                directional_enabled=True,
-                environment_enabled=False,
-            )
+            if use_packet_shader:
+                packet_shader.bind(lighting_packet)
+            else:
+                shader.bind(
+                    scene_lighting_enabled=receiver_flags.scene_lighting,
+                    directional_enabled=receiver_flags.directional,
+                    environment_enabled=receiver_flags.environment,
+                    fog_enabled=receiver_flags.fog,
+                    shine_enabled=receiver_flags.shine,
+                )
             glDisableClientState_local(GL_NORMAL_ARRAY)
             glNormal3f_local(fn_x, fn_y, fn_z)
 
@@ -672,6 +719,7 @@ def draw_sprites_batched(
         source_sizes = data_cache["sizes"]
         source_uvs = data_cache["uvs"]
         source_rgb = data_cache["rgb"]
+        source_emissive = data_cache["emissive"]
 
         try:
             sprite_count = visible_count
@@ -684,6 +732,7 @@ def draw_sprites_batched(
                 sizes = scratch["sizes"][:sprite_count]
                 uvs = scratch["uvs"][:sprite_count]
                 rgb = scratch["rgb"][:sprite_count]
+                emissive = scratch["emissive"][:sprite_count]
                 vertices = scratch["vertices"][:vertex_count]
                 colors = scratch["colors"][:vertex_count]
                 texcoords = scratch["texcoords"][:vertex_count]
@@ -692,6 +741,7 @@ def draw_sprites_batched(
                 np.take(source_sizes, visible_indices, axis=0, out=sizes)
                 np.take(source_uvs, visible_indices, axis=0, out=uvs)
                 np.take(source_rgb, visible_indices, axis=0, out=rgb)
+                np.take(source_emissive, visible_indices, axis=0, out=emissive)
 
                 if not use_shader_lighting:
                     if has_brightness_areas and get_brightness_at is not None:
@@ -732,7 +782,7 @@ def draw_sprites_batched(
                 vertex_view[:, 3, 1] += -rx_y * hw - ux_y * hh
                 vertex_view[:, 3, 2] += -rx_z * hw - ux_z * hh
 
-                texcoord_view = texcoords.reshape(sprite_count, 4, 2)
+                texcoord_view = texcoords.reshape(sprite_count, 4, 3)
                 texcoord_view[:, 0, 0] = uvs[:, 0]
                 texcoord_view[:, 0, 1] = uvs[:, 3]
                 texcoord_view[:, 1, 0] = uvs[:, 2]
@@ -741,6 +791,7 @@ def draw_sprites_batched(
                 texcoord_view[:, 2, 1] = uvs[:, 1]
                 texcoord_view[:, 3, 0] = uvs[:, 0]
                 texcoord_view[:, 3, 1] = uvs[:, 1]
+                texcoord_view[:, :, 2] = emissive[:, np.newaxis]
 
                 color_view = colors.reshape(sprite_count, 4, 4)
                 color_view[:, :, 0:3] = rgb[:, np.newaxis, :]
@@ -749,7 +800,7 @@ def draw_sprites_batched(
             with _profile(profiler, "sprites.submit_arrays"):
                 glVertexPointer_local(3, GL_FLOAT, 0, vertices)
                 glColorPointer_local(4, GL_FLOAT, 0, colors)
-                glTexCoordPointer_local(2, GL_FLOAT, 0, texcoords)
+                glTexCoordPointer_local(3, GL_FLOAT, 0, texcoords)
 
                 for tex, batch_start, batch_sprite_count in batches:
                     glBindTexture_local(GL_TEXTURE_2D, tex)
@@ -759,7 +810,7 @@ def draw_sprites_batched(
                         batch_sprite_count * 4,
                     )
         finally:
-            if shader is not None:
+            if use_shader_lighting:
                 use_fixed_pipeline()
             glDisableClientState_local(GL_TEXTURE_COORD_ARRAY)
             glDisableClientState_local(GL_COLOR_ARRAY)

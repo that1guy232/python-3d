@@ -627,6 +627,9 @@ class BuildingRoadPlanner:
         driveway_width: float,
         road_y: float,
     ) -> Road:
+        packet_backend = (
+            getattr(self.scene, "lighting_backend", "legacy") == "packet"
+        )
         return Road(
             points=route,
             ground_y=road_y,
@@ -636,10 +639,19 @@ class BuildingRoadPlanner:
             height_sampler=self._ground_height_sampler,
             elevation=3.0,
             segment_length=8.0,
-            brightness_modifiers=self.brightness_modifiers,
+            brightness_modifiers=(
+                ()
+                if packet_backend
+                else getattr(self.scene, "brightness_modifiers", ())
+            ),
             default_brightness=self.camera.brightness_default,
             lighting=getattr(self.scene, "lighting", None),
-            sun_direction=getattr(self.scene, "sun_direction", None),
+            sun_direction=(
+                None
+                if packet_backend
+                else getattr(self.scene, "sun_direction", None)
+            ),
+            dynamic_lighting=packet_backend,
         )
 
     def _instantiate_planned_roads(

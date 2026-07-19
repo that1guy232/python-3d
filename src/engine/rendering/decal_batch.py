@@ -40,10 +40,12 @@ from OpenGL.GL import (
     glMultiDrawArrays,
     glTexCoordPointer,
     glVertexPointer,
+    glUseProgram,
 )
 
 from engine.core.mesh import BatchedMesh
-from engine.rendering.decal import Decal
+from engine.lighting_receiver import LightingReceiver
+from engine.rendering.decal import DECAL_LIGHTING_RECEIVER, Decal
 from engine.config import HEIGHT, VIEWDISTANCE, WIDTH
 
 
@@ -101,7 +103,10 @@ class DecalBatch:
 
     @staticmethod
     def build(
-        decals: Iterable[Decal], *, tile_size: float | None = None
+        decals: Iterable[Decal],
+        *,
+        tile_size: float | None = None,
+        lighting_receiver: LightingReceiver | None = DECAL_LIGHTING_RECEIVER,
     ) -> "DecalBatch":
         """Build decal batches grouped by texture and spatial tile.
 
@@ -184,6 +189,7 @@ class DecalBatch:
                 texture=texture,
                 keep_vertex_data=False,
                 shine_enabled=False,
+                lighting_receiver=lighting_receiver,
             )
             meshes[(texture,)] = mesh
 
@@ -303,7 +309,14 @@ class DecalBatch:
         if profiler is not None and getattr(profiler, "enabled", False):
             profiler.count(name, amount)
 
-    def draw(self, camera=None, profiler=None) -> None:
+    def draw(
+        self,
+        camera=None,
+        profiler=None,
+        *,
+        lighting_packet=None,
+        packet_shader=None,
+    ) -> None:
         """Draw decal batches. If `camera` is provided, perform a cheap
         distance cull per-texture using precomputed centers.
         """
@@ -369,6 +382,9 @@ class DecalBatch:
         glEnableClientState_local(GL_VERTEX_ARRAY)
         glEnableClientState_local(GL_COLOR_ARRAY)
         glEnableClientState_local(GL_TEXTURE_COORD_ARRAY)
+        use_packet_shader = packet_shader is not None and lighting_packet is not None
+        if use_packet_shader:
+            packet_shader.bind(lighting_packet)
         drawn_tiles = 0
         drawn_vertices = 0
         draw_calls = 0
@@ -455,6 +471,8 @@ class DecalBatch:
                 drawn_tiles += visible_count
                 drawn_vertices += visible_vertices
         finally:
+            if use_packet_shader:
+                glUseProgram(0)
             if drawn_tiles:
                 self._count(profiler, "decals.drawn_tiles", drawn_tiles)
                 self._count(profiler, "decals.vertices", drawn_vertices)

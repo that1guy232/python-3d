@@ -24,6 +24,10 @@ from .slab import (
     texture_uv_rect,
 )
 from game.resources.paths import DOOR_TEXTURE_PATH
+from game.world.lighting_receivers import (
+    CPU_BAKED_SLAB_LIGHTING_RECEIVER,
+    DYNAMIC_SLAB_LIGHTING_RECEIVER,
+)
 from engine.textures.texture_utils import load_texture
 
 DOOR_INTERACTION_DISTANCE = 95.0
@@ -106,13 +110,14 @@ class Door(TexturedSlabMixin, Entity):
         self.texture = texture_id(texture)
         self.uv_rect = texture_uv_rect(texture)
         self.lighting = lighting
-        self.sun_direction = sun_direction
+        self.sun_direction = None if lighting is not None else sun_direction
         self.interior = bool(interior)
+        self._environment_portal: object | None = None
         self._doorway_light_region: dict[str, Any] | None = None
         self._doorway_light_open_factor = 1.0
         self._doorway_light_closed_factor: float | None = None
         self._last_doorway_light_factor: float | None = None
-        self._doorway_brightness_modifier: dict[str, Any] | None = None
+        self._doorway_brightness_modifier: object | None = None
         self._doorway_brightness_open_radius = 0.0
         self._doorway_brightness_closed_radius = 0.0
         self._doorway_brightness_open_value = 1.0
@@ -273,79 +278,126 @@ class Door(TexturedSlabMixin, Entity):
 
     def bind_doorway_light(
         self,
-        region: object,
+        region: object | None,
         *,
         brightness_modifier: object | None = None,
+        portal: object | None = None,
+        synchronize: bool = True,
     ) -> None:
-        if not isinstance(region, dict):
+        doorway = region.get("doorway") if isinstance(region, dict) else None
+        has_legacy_region = isinstance(region, dict) and isinstance(doorway, dict)
+        if not has_legacy_region and portal is None:
             return
 
-        doorway = region.get("doorway")
-        if not isinstance(doorway, dict):
-            return
-
-        self._doorway_light_region = region
+        self._environment_portal = portal
+        self._doorway_light_region = region if has_legacy_region else None
+        open_factor = (
+            getattr(portal, "open_factor", 1.0)
+            if portal is not None
+            else doorway.get("open_edge_factor", 1.0)
+        )
         self._doorway_light_open_factor = max(
             0.0,
-            min(1.0, float(doorway.get("open_edge_factor", 1.0))),
+            min(1.0, float(open_factor)),
         )
-        closed_factor = doorway.get("closed_edge_factor", region.get("factor"))
+        closed_factor = (
+            getattr(portal, "closed_factor", INDOOR_LIGHT_FACTOR)
+            if portal is not None
+            else doorway.get("closed_edge_factor", region.get("factor"))
+        )
         try:
             self._doorway_light_closed_factor = max(0.0, min(1.0, float(closed_factor)))
         except (TypeError, ValueError):
             self._doorway_light_closed_factor = None
 
-        if isinstance(brightness_modifier, dict):
-            self._doorway_brightness_modifier = brightness_modifier
-            try:
-                self._doorway_brightness_open_radius = max(
-                    0.0,
-                    float(
-                        brightness_modifier.get(
-                            "open_radius",
-                            brightness_modifier.get("radius", 0.0),
-                        )
-                    ),
+        if brightness_modifier is not None:
+            previous_modifier = self._doorway_brightness_modifier
+            self._doorway_brightness_modifier = getattr(
+                brightness_modifier,
+                "light",
+                brightness_modifier,
+            )
+            if isinstance(brightness_modifier, dict):
+                open_radius = brightness_modifier.get(
+                    "open_radius",
+                    brightness_modifier.get("radius", 0.0),
                 )
-            except (TypeError, ValueError):
-                self._doorway_brightness_open_radius = 0.0
-            try:
-                self._doorway_brightness_closed_radius = max(
-                    0.0,
-                    float(brightness_modifier.get("closed_radius", 0.0)),
+                closed_radius = brightness_modifier.get("closed_radius", 0.0)
+                open_value = brightness_modifier.get(
+                    "open_value",
+                    brightness_modifier.get("value", 1.0),
                 )
-            except (TypeError, ValueError):
-                self._doorway_brightness_closed_radius = 0.0
-            try:
-                self._doorway_brightness_open_value = max(
-                    0.0,
-                    float(
-                        brightness_modifier.get(
-                            "open_value",
-                            brightness_modifier.get("value", 1.0),
-                        )
-                    ),
+                has_transition_metadata = True
+            else:
+                has_transition_metadata = hasattr(
+                    brightness_modifier,
+                    "open_radius",
                 )
-            except (TypeError, ValueError):
-                self._doorway_brightness_open_value = 1.0
-        self._sync_doorway_light(force=True)
+                open_radius = getattr(
+                    brightness_modifier,
+                    "open_radius",
+                    getattr(self._doorway_brightness_modifier, "radius", 0.0),
+                )
+                closed_radius = getattr(brightness_modifier, "closed_radius", 0.0)
+                open_value = getattr(
+                    brightness_modifier,
+                    "open_value",
+                    getattr(self._doorway_brightness_modifier, "value", 1.0),
+                )
+            if has_transition_metadata or previous_modifier is None:
+                try:
+                    self._doorway_brightness_open_radius = max(
+                        0.0,
+                        float(open_radius),
+                    )
+                except (TypeError, ValueError):
+                    self._doorway_brightness_open_radius = 0.0
+                try:
+                    self._doorway_brightness_closed_radius = max(
+                        0.0,
+                        float(closed_radius),
+                    )
+                except (TypeError, ValueError):
+                    self._doorway_brightness_closed_radius = 0.0
+                try:
+                    self._doorway_brightness_open_value = max(
+                        0.0,
+                        float(open_value),
+                    )
+                except (TypeError, ValueError):
+                    self._doorway_brightness_open_value = 1.0
+        if synchronize:
+            self._sync_doorway_light(force=True)
 
     def _sync_doorway_light(self, *, force: bool = False) -> None:
         region = self._doorway_light_region
-        if not isinstance(region, dict):
+        doorway = region.get("doorway") if isinstance(region, dict) else None
+        has_legacy_region = isinstance(region, dict) and isinstance(doorway, dict)
+        if not has_legacy_region and self._environment_portal is None:
             return
 
-        doorway = region.get("doorway")
-        if not isinstance(doorway, dict):
-            return
-
-        try:
+        if has_legacy_region:
+            try:
+                region_factor = max(
+                    0.0,
+                    min(1.0, float(region.get("factor", INDOOR_LIGHT_FACTOR))),
+                )
+            except (TypeError, ValueError):
+                region_factor = INDOOR_LIGHT_FACTOR
+        else:
             region_factor = max(
                 0.0,
-                min(1.0, float(region.get("factor", INDOOR_LIGHT_FACTOR))),
+                min(
+                    1.0,
+                    float(
+                        getattr(
+                            self._environment_portal,
+                            "closed_factor",
+                            INDOOR_LIGHT_FACTOR,
+                        )
+                    ),
+                ),
             )
-        except (TypeError, ValueError):
-            region_factor = INDOOR_LIGHT_FACTOR
         closed_factor = (
             region_factor
             if self._doorway_light_closed_factor is None
@@ -355,14 +407,21 @@ class Door(TexturedSlabMixin, Entity):
         edge_factor = (
             closed_factor + (self._doorway_light_open_factor - closed_factor) * amount
         )
+        set_portal_openness = getattr(self._environment_portal, "set_openness", None)
+        if callable(set_portal_openness):
+            try:
+                edge_factor = float(set_portal_openness(self.open_amount))
+            except (TypeError, ValueError):
+                pass
         light_changed = (
             force
             or self._last_doorway_light_factor is None
             or abs(edge_factor - self._last_doorway_light_factor) > 1e-4
         )
 
-        if light_changed:
+        if light_changed and has_legacy_region:
             doorway["edge_factor"] = edge_factor
+        if light_changed:
             self._last_doorway_light_factor = edge_factor
         self._sync_doorway_brightness(amount, force=force)
 
@@ -373,7 +432,7 @@ class Door(TexturedSlabMixin, Entity):
         force: bool = False,
     ) -> None:
         modifier = self._doorway_brightness_modifier
-        if not isinstance(modifier, dict):
+        if modifier is None:
             return
 
         radius = (
@@ -394,38 +453,69 @@ class Door(TexturedSlabMixin, Entity):
         ):
             return
 
-        modifier["radius"] = max(0.0, radius)
-        modifier["value"] = max(0.0, value)
+        radius = max(0.0, radius)
+        value = max(0.0, value)
+        update_light = getattr(self.lighting, "update_local_light", None)
+        if callable(update_light):
+            light_id = (
+                modifier.get("light_id")
+                if isinstance(modifier, dict)
+                else getattr(modifier, "light_id", None)
+            )
+            updated = update_light(
+                light_id,
+                camera=self.camera,
+                radius=radius,
+                value=value,
+            )
+            if isinstance(modifier, dict):
+                modifier["radius"] = radius
+                modifier["value"] = value
+        elif isinstance(modifier, dict):
+            modifier["radius"] = radius
+            modifier["value"] = value
         self._last_doorway_brightness_radius = radius
         self._last_doorway_brightness_value = value
 
-    def _face_shade(self, face_idx: int) -> float:
+    def _face_base_shade(self, face_idx: int) -> float:
         if self.interior:
             if face_idx in (0, 1):
-                base = INDOOR_LIGHT_FACTOR
+                return INDOOR_LIGHT_FACTOR
             elif face_idx == 4:
-                base = DOOR_TOP_SHADE * INDOOR_LIGHT_FACTOR
+                return DOOR_TOP_SHADE * INDOOR_LIGHT_FACTOR
             elif face_idx == 5:
-                base = DOOR_BOTTOM_SHADE * INDOOR_LIGHT_FACTOR
-            else:
-                base = DOOR_EDGE_SHADE * INDOOR_LIGHT_FACTOR
-            return max(0.0, min(1.0, base * self._sunlight_factor(INDOOR_NORMAL)))
+                return DOOR_BOTTOM_SHADE * INDOOR_LIGHT_FACTOR
+            return DOOR_EDGE_SHADE * INDOOR_LIGHT_FACTOR
 
         if face_idx == 0:
-            base = 1.0
-            normal = self._face_normal(face_idx)
-        elif face_idx == 1:
-            base = INDOOR_LIGHT_FACTOR
-            normal = INDOOR_NORMAL
-        elif face_idx == 4:
-            base = DOOR_TOP_SHADE
-            normal = self._face_normal(face_idx)
-        elif face_idx == 5:
-            base = DOOR_BOTTOM_SHADE
-            normal = self._face_normal(face_idx)
-        else:
-            base = DOOR_EDGE_SHADE
-            normal = self._face_normal(face_idx)
+            return 1.0
+        if face_idx == 1:
+            return INDOOR_LIGHT_FACTOR
+        if face_idx == 4:
+            return DOOR_TOP_SHADE
+        if face_idx == 5:
+            return DOOR_BOTTOM_SHADE
+        return DOOR_EDGE_SHADE
+
+    def _face_lighting_normal(self, face_idx: int) -> Vector3:
+        if self.interior or face_idx == 1:
+            return Vector3(INDOOR_NORMAL)
+        return self._face_normal(face_idx)
+
+    def _dynamic_face_shade(self, face_idx: int) -> float:
+        """Return material shading only; geometry now decides light visibility."""
+
+        if face_idx in (0, 1):
+            return 1.0
+        if face_idx == 4:
+            return DOOR_TOP_SHADE
+        if face_idx == 5:
+            return DOOR_BOTTOM_SHADE
+        return DOOR_EDGE_SHADE
+
+    def _face_shade(self, face_idx: int) -> float:
+        base = self._face_base_shade(face_idx)
+        normal = self._face_lighting_normal(face_idx)
         return max(0.0, min(1.0, base * self._sunlight_factor(normal)))
 
     def _face_uvs(self, face_idx: int) -> list[tuple[float, float]]:
@@ -488,19 +578,19 @@ class DoorRenderBatch:
         self._meshes = []
         self._cache_key = None
 
-    def _current_cache_key(self):
-        return tuple(
+    def _current_cache_key(self, dynamic_lighting: bool = False):
+        return (bool(dynamic_lighting),) + tuple(
             (
                 id(door),
                 bool(getattr(door, "visible", True)),
                 int(getattr(door, "texture", 0) or 0),
                 round(float(getattr(door, "open_amount", 0.0)), 5),
-                door._slab_light_cache_key(),
+                None if dynamic_lighting else door._slab_light_cache_key(),
             )
             for door in self.doors
         )
 
-    def _rebuild(self) -> None:
+    def _rebuild(self, dynamic_lighting: bool = False) -> None:
         self.dispose()
         groups = {}
 
@@ -514,6 +604,7 @@ class DoorRenderBatch:
                 verts,
                 as_quads=True,
                 include_normals=True,
+                dynamic_lighting=dynamic_lighting,
             )
             if vertex_data.size == 0:
                 continue
@@ -540,22 +631,45 @@ class DoorRenderBatch:
                     environment_lighting=False,
                     draw_mode=GL_QUADS,
                     shader_lighting=False,
+                    lighting_receiver=(
+                        DYNAMIC_SLAB_LIGHTING_RECEIVER
+                        if dynamic_lighting
+                        else CPU_BAKED_SLAB_LIGHTING_RECEIVER
+                    ),
                 )
             )
 
     def draw(
-        self, camera=None, *, view_distance: float | None = None
+        self,
+        camera=None,
+        *,
+        view_distance: float | None = None,
+        lighting_packets=None,
+        packet_shader=None,
     ) -> None:  # pragma: no cover - visual
-        cache_key = self._current_cache_key()
+        dynamic_lighting = packet_shader is not None
+        cache_key = self._current_cache_key(dynamic_lighting)
         if cache_key != self._cache_key:
-            self._rebuild()
+            self._rebuild(dynamic_lighting)
             self._cache_key = cache_key
 
         BatchedMesh.draw_many(
             self._meshes,
             camera=camera,
             view_distance=view_distance,
+            lighting_packets=lighting_packets,
+            packet_shader=packet_shader,
+            require_lighting_packets=packet_shader is not None,
         )
+
+    def shadow_meshes(self, camera=None) -> tuple[BatchedMesh, ...]:
+        """Return current door geometry for the shared light-depth pass."""
+
+        cache_key = self._current_cache_key(dynamic_lighting=True)
+        if cache_key != self._cache_key:
+            self._rebuild(dynamic_lighting=True)
+            self._cache_key = cache_key
+        return tuple(mesh for mesh in self._meshes if mesh.casts_shadows)
 
 
 def build_door_render_batch(doors) -> DoorRenderBatch | None:
