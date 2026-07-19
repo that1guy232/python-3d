@@ -46,7 +46,7 @@ Runtime code is split by ownership:
   resource catalogs.
 
 See [DOCUMENTATION.md](DOCUMENTATION.md) for runtime flow, subsystem ownership,
-extension points, lighting diagnostics, and a detailed source map.
+extension points, lighting architecture, and a detailed source map.
 
 ## Performance logging
 
@@ -69,23 +69,11 @@ $env:PY3D_SETUP_TIMING="1"     # print world-loading setup timings
 $env:PY3D_RERAISE_SCENE_EXCEPTIONS="1"  # crash on scene hook failures while debugging
 ```
 
-## Tests
+## Testing policy
 
-Run the headless unit tests with:
-
-```powershell
-py -m unittest discover -s tests
-```
-
-Run the lightweight architecture gate with:
-
-```powershell
-py scripts/check_architecture.py
-```
-
-The architecture gate compiles `src/game/world`, runs the complete unit-test
-suite, verifies that `engine` does not import `game`, and rejects wildcard
-imports under `src`.
+The repository does not keep a permanent automated test suite. Add focused
+tests only while actively changing the feature they cover, and remove those
+temporary tests when that work is complete.
 
 ## Declaring world content
 

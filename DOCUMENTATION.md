@@ -165,35 +165,11 @@ separately releases its directional and point-shadow GPU resources.
 | `src/engine/lighting_receiver.py` | Immutable six-channel lighting receiver contract, local-light evaluation policy, material clamps, and compatibility-shader projection. |
 | `src/engine/render_style_state.py` | Process-wide fog and vibrance state shared by fixed-function and programmable render paths. |
 
-### Lighting and Shadow Diagnostics
+### Lighting Backends
 
 The packet renderer is the default backend. A legacy backend remains behind
-`WorldScene.set_lighting_backend()` for rollback and A/B diagnostics. The
-scripts and tests below are the in-repository source of truth for backend
-contracts and device qualification; reports and images are written under
-`artifacts/`. Treat generated report bundles as local diagnostics unless they
-are intentionally selected as a baseline.
-
-| File | Quick docs |
-| --- | --- |
-| `scripts/capture_lighting_gl_baseline.py` | Hidden-context receiver-level legacy framebuffer baseline. |
-| `scripts/capture_lighting_scene_ab.py` | Fixture/generated-world `legacy -> packet -> legacy` diagnostic with reproducible reports and images; exact parity is no longer the target after real shadows. |
-| `scripts/soak_lighting_scene_ab.py` | Process-isolated multi-seed generated-world A/B soak and aggregate report. |
-| `scripts/profile_packet_lighting.py` | Hidden-context steady-state profiler for local-light, environment, combined, and overlapping packet-record scans. |
-| `scripts/qualify_lighting_hardware.py` | Runs the historical fixture comparison, generated soak, and packet profiling as a development-machine diagnostic. |
-| `scripts/check_architecture.py` | Full unit discovery, world compilation, dependency-direction, and wildcard-import gate. |
-| `tests/test_directional_shadow.py` | Directional shadow math, framebuffer behavior, alpha cutouts, and moving-caster coverage. |
-| `tests/test_point_shadow.py` | Point-shadow cubemap math, framebuffer behavior, and occluder coverage. |
-| `tests/test_packet_shader.py` | Packet shader, GPU storage, capacity, receiver, and backend-isolation contracts. |
-
-Run the full hardware diagnostic with:
-
-```powershell
-py scripts/qualify_lighting_hardware.py --require-pass
-```
-
-This requires a working OpenGL context and writes its default report bundle to
-`artifacts/lighting_hardware_qualification/current_device`.
+`WorldScene.set_lighting_backend()` for rollback and targeted A/B work while
+the lighting implementation is being changed.
 
 ### Engine Rendering
 
@@ -337,6 +313,9 @@ This requires a working OpenGL context and writes its default report bundle to
 
 ## Practical Notes
 
+- The repository does not keep permanent tests or development scripts. Add
+  focused tooling only while actively changing the feature it covers, and
+  remove it when that work is complete.
 - `WorldScene` orchestrates state rather than owning every mutable collection
   directly. New code should use `build_state`, `render_resources`, or `ui_state`;
   the scene-level descriptors are compatibility aliases.
