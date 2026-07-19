@@ -6,7 +6,8 @@ from dataclasses import dataclass
 
 from game.config import HEIGHT, WIDTH
 from game.world.inventory import (
-    INVENTORY_SLOT_COUNT,
+    BACKPACK_SLOT_COUNT,
+    EQUIPMENT_SLOT_COUNT,
     inventory_slots,
     move_inventory_item,
 )
@@ -19,6 +20,7 @@ class InventoryLayout:
     grid_rect: tuple[float, float, float, float]
     stats_rect: tuple[float, float, float, float]
     slot_rects: tuple[tuple[float, float, float, float], ...]
+    equipment_slot_rects: tuple[tuple[float, float, float, float], ...] = ()
 
 
 class WorldUIInteractions:
@@ -47,20 +49,44 @@ class WorldUIInteractions:
         gap = 22.0
         stats_w = min(280.0, max(230.0, outer_w * 0.31))
         grid_x = outer_x + padding
-        grid_y = outer_y + 82.0
         grid_w = outer_w - padding * 2.0 - stats_w - gap
-        stats_h = outer_h - 108.0
         stats_x = grid_x + grid_w + gap
         slot_gap = 10.0
         cols = 6
-        rows = INVENTORY_SLOT_COUNT // cols
+        rows = BACKPACK_SLOT_COUNT // cols
+        equipment_gap = 14.0
+        equipment_size = min(
+            70.0,
+            max(
+                44.0,
+                (grid_w - equipment_gap * (EQUIPMENT_SLOT_COUNT - 1))
+                / EQUIPMENT_SLOT_COUNT,
+            ),
+        )
+        equipment_y = outer_y + 74.0
+        equipment_w = (
+            EQUIPMENT_SLOT_COUNT * equipment_size
+            + (EQUIPMENT_SLOT_COUNT - 1) * equipment_gap
+        )
+        equipment_x = grid_x + max(0.0, (grid_w - equipment_w) * 0.5)
+        equipment_slot_rects = tuple(
+            (
+                equipment_x + index * (equipment_size + equipment_gap),
+                equipment_y,
+                equipment_size,
+                equipment_size,
+            )
+            for index in range(EQUIPMENT_SLOT_COUNT)
+        )
+        grid_y = equipment_y + equipment_size + 32.0
+        available_grid_h = outer_y + outer_h - padding - grid_y
         slot_size = min(
             72.0,
             max(
                 44.0,
                 min(
                     (grid_w - slot_gap * (cols - 1)) / cols,
-                    (stats_h - slot_gap * (rows - 1)) / rows,
+                    (available_grid_h - slot_gap * (rows - 1)) / rows,
                 ),
             ),
         )
@@ -72,21 +98,23 @@ class WorldUIInteractions:
             close_size,
             close_size,
         )
-        slot_rects = tuple(
+        backpack_slot_rects = tuple(
             (
                 grid_x + (index % cols) * (slot_size + slot_gap),
                 grid_y + (index // cols) * (slot_size + slot_gap),
                 slot_size,
                 slot_size,
             )
-            for index in range(INVENTORY_SLOT_COUNT)
+            for index in range(BACKPACK_SLOT_COUNT)
         )
+        slot_rects = backpack_slot_rects + equipment_slot_rects
         return InventoryLayout(
             outer_rect=(outer_x, outer_y, outer_w, outer_h),
             close_rect=close_rect,
             grid_rect=(grid_x, grid_y, grid_w, grid_h),
             stats_rect=(stats_x, outer_y + 62.0, stats_w, outer_h - 86.0),
             slot_rects=slot_rects,
+            equipment_slot_rects=equipment_slot_rects,
         )
 
     @classmethod
@@ -131,6 +159,7 @@ class WorldUIInteractions:
         x, y, w, h = self.inventory_close_rect()
         if x <= mx <= x + w and y <= my <= y + h:
             self.scene.inventory_selected_slot = None
+            self.scene.inventory_drag_source = None
             self.scene.inventory_open = False
             self.scene.paused = False
             self.scene.showing_settings_menu = False
@@ -139,30 +168,27 @@ class WorldUIInteractions:
 
         clicked = self.inventory_slot_at(pos)
         if clicked is None:
+            self.scene.inventory_selected_slot = None
+            self.scene.inventory_drag_source = None
             return False
 
-        selected = getattr(self.scene, "inventory_selected_slot", None)
-        if selected is None:
-            if inventory_slots(self.scene)[clicked] is None:
-                return False
-            self.scene.inventory_selected_slot = clicked
-            return True
-
-        if selected == clicked:
+        if inventory_slots(self.scene)[clicked] is None:
             self.scene.inventory_selected_slot = None
+            self.scene.inventory_drag_source = None
             return True
 
-        move_inventory_item(self.scene, selected, clicked)
-        self.scene.inventory_selected_slot = None
+        self.scene.inventory_selected_slot = clicked
+        self.scene.inventory_drag_source = clicked
         return True
 
     def handle_inventory_release(self, pos) -> bool:
-        selected = getattr(self.scene, "inventory_selected_slot", None)
+        source = getattr(self.scene, "inventory_drag_source", None)
+        self.scene.inventory_drag_source = None
         released = self.inventory_slot_at(pos)
-        if selected is None or released is None or selected == released:
+        if source is None or released is None or source == released:
             return False
-        moved = move_inventory_item(self.scene, selected, released)
-        self.scene.inventory_selected_slot = None
+        moved = move_inventory_item(self.scene, source, released)
+        self.scene.inventory_selected_slot = released if moved else source
         return moved
 
     def handle_battle_click(self, pos) -> bool:

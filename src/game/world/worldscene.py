@@ -77,6 +77,9 @@ class WorldScene(Scene):
     grasses_textures = state_alias("render_resources", "grasses_textures")
     rock_textures = state_alias("render_resources", "rock_textures")
     fence_textures = state_alias("render_resources", "fence_textures")
+    equipment_slot_textures = state_alias(
+        "render_resources", "equipment_slot_textures"
+    )
     wall_tex = state_alias("render_resources", "wall_tex")
     torch_tex = state_alias("render_resources", "torch_tex")
     door_tex = state_alias("render_resources", "door_tex")
@@ -113,6 +116,7 @@ class WorldScene(Scene):
     battle_mode = state_alias("ui_state", "battle_mode")
     active_battle_goblin = state_alias("ui_state", "active_battle_goblin")
     inventory_selected_slot = state_alias("ui_state", "inventory_selected_slot")
+    inventory_drag_source = state_alias("ui_state", "inventory_drag_source")
     inventory_notice_text = state_alias("ui_state", "inventory_notice_text")
     inventory_notice_expires_at = state_alias("ui_state", "inventory_notice_expires_at")
     hud_visible = state_alias("ui_state", "hud_visible")

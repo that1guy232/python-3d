@@ -127,6 +127,7 @@ class WorldRenderResources:
     grasses_textures: list[Any] = field(default_factory=list)
     rock_textures: list[Any] = field(default_factory=list)
     fence_textures: list[Any] = field(default_factory=list)
+    equipment_slot_textures: dict[str, Any] = field(default_factory=dict)
     wall_tex: Any | None = None
     torch_tex: Any | None = None
     door_tex: Any | None = None
@@ -150,6 +151,7 @@ class WorldUIState:
     battle_mode: bool = False
     active_battle_goblin: Entity | None = None
     inventory_selected_slot: int | None = None
+    inventory_drag_source: int | None = None
     inventory_notice_text: str = ""
     inventory_notice_expires_at: float = 0.0
     hud_visible: bool = True

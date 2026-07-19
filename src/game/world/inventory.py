@@ -2,19 +2,63 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import Enum
 import time
 
-INVENTORY_SLOT_COUNT = 24
+BACKPACK_SLOT_COUNT = 24
+EQUIPMENT_SLOT_COUNT = 4
+INVENTORY_SLOT_COUNT = BACKPACK_SLOT_COUNT + EQUIPMENT_SLOT_COUNT
 INVENTORY_NOTICE_SECONDS = 3.0
 TEST_GOBLIN_DROP_NAME = "Test Item"
 
 
+class ItemType(str, Enum):
+    """Inventory item categories, including the four equippable categories."""
+
+    MISC = "misc"
+    BODY = "body"
+    BOOT = "boot"
+    WEAPON = "weapon"
+    HELMET = "helmet"
+
+
+EQUIPMENT_TYPES: tuple[ItemType, ...] = (
+    ItemType.BODY,
+    ItemType.BOOT,
+    ItemType.WEAPON,
+    ItemType.HELMET,
+)
+EQUIPMENT_SLOT_TYPES: dict[int, ItemType] = {
+    BACKPACK_SLOT_COUNT + offset: item_type
+    for offset, item_type in enumerate(EQUIPMENT_TYPES)
+}
+
+
 @dataclass(frozen=True, slots=True)
 class InventoryItem:
-    """A named item stored in one player inventory slot."""
+    """A categorized item with player-facing descriptive details."""
 
     name: str
+    item_type: ItemType = ItemType.MISC
+    description: str = ""
+    attributes: tuple[tuple[str, str], ...] | Mapping[str, object] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.item_type, ItemType):
+            object.__setattr__(self, "item_type", ItemType(self.item_type))
+        object.__setattr__(self, "description", str(self.description or ""))
+        raw_attributes = self.attributes
+        if isinstance(raw_attributes, Mapping):
+            pairs = raw_attributes.items()
+        else:
+            pairs = raw_attributes or ()
+        object.__setattr__(
+            self,
+            "attributes",
+            tuple((str(label), str(value)) for label, value in pairs),
+        )
 
 
 def empty_inventory() -> list[InventoryItem | None]:
@@ -36,18 +80,47 @@ def inventory_slots(scene) -> list[InventoryItem | None]:
 
 
 def add_inventory_item(scene, item: InventoryItem) -> int | None:
-    """Put an item in the first open slot and return that slot's index."""
+    """Put an item in the first open backpack slot and return its index."""
 
     slots = inventory_slots(scene)
-    for index in range(INVENTORY_SLOT_COUNT):
+    for index in range(BACKPACK_SLOT_COUNT):
         if slots[index] is None:
             slots[index] = item
             return index
     return None
 
 
+def item_type(item) -> ItemType:
+    """Return an item's category while tolerating legacy dict-like items."""
+
+    if item is None:
+        return ItemType.MISC
+    if isinstance(item, dict):
+        value = item.get("item_type", item.get("type", ItemType.MISC))
+    else:
+        value = getattr(item, "item_type", getattr(item, "type", ItemType.MISC))
+    try:
+        return value if isinstance(value, ItemType) else ItemType(value)
+    except (TypeError, ValueError):
+        return ItemType.MISC
+
+
+def slot_accepts_item(slot: int, item) -> bool:
+    """Return whether a slot may contain an item of the supplied category."""
+
+    try:
+        slot = int(slot)
+    except (TypeError, ValueError):
+        return False
+    if not 0 <= slot < INVENTORY_SLOT_COUNT:
+        return False
+    if item is None or slot < BACKPACK_SLOT_COUNT:
+        return True
+    return item_type(item) is EQUIPMENT_SLOT_TYPES[slot]
+
+
 def move_inventory_item(scene, source: int, destination: int) -> bool:
-    """Move an item between slots, swapping when the destination is occupied."""
+    """Move or swap items when both destination slot constraints are valid."""
 
     if not (
         0 <= int(source) < INVENTORY_SLOT_COUNT
@@ -59,6 +132,10 @@ def move_inventory_item(scene, source: int, destination: int) -> bool:
     source = int(source)
     destination = int(destination)
     if source == destination or slots[source] is None:
+        return False
+    if not slot_accepts_item(destination, slots[source]):
+        return False
+    if not slot_accepts_item(source, slots[destination]):
         return False
     slots[source], slots[destination] = slots[destination], slots[source]
     return True

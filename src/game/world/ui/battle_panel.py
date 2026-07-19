@@ -205,6 +205,80 @@ class BattlePanel:
                 align="topleft",
             )
 
+    def draw_combat_notice(self, text) -> None:  # pragma: no cover - visual
+        combat = getattr(self.scene, "combat", None)
+        active_notice = getattr(combat, "active_combat_notice", None)
+        if not callable(active_notice):
+            return
+
+        notice = active_notice()
+        if not notice:
+            return
+
+        try:
+            label_w = text.font.size(notice)[0]
+        except Exception:
+            label_w = 210
+        plate_w = max(240.0, float(label_w) + 36.0)
+        plate_h = 38.0
+        x = float(WIDTH) * 0.5 - plate_w * 0.5
+        y = 96.0
+
+        glDisable(GL_TEXTURE_2D)
+        self.overlay_rect(x, y, plate_w, plate_h, (0.04, 0.025, 0.025, 0.92))
+        self.overlay_rect(
+            x + 4.0,
+            y + 4.0,
+            plate_w - 8.0,
+            plate_h - 8.0,
+            (0.42, 0.06, 0.04, 0.88),
+        )
+        glEnable(GL_TEXTURE_2D)
+        text.draw_text(
+            notice,
+            float(WIDTH) * 0.5,
+            y + plate_h * 0.5,
+            color=(255, 236, 218, 255),
+            align="center",
+        )
+
+    def draw_goblin_intent(self, text) -> None:  # pragma: no cover - visual
+        combat = getattr(self.scene, "combat", None)
+        intent_text = getattr(combat, "goblin_intent_text", None)
+        if not callable(intent_text):
+            return
+
+        intent = intent_text()
+        if not intent:
+            return
+
+        try:
+            label_w = text.font.size(intent)[0]
+        except Exception:
+            label_w = 250
+        plate_w = max(280.0, float(label_w) + 36.0)
+        plate_h = 38.0
+        x = float(WIDTH) * 0.5 - plate_w * 0.5
+        y = 52.0
+
+        glDisable(GL_TEXTURE_2D)
+        self.overlay_rect(x, y, plate_w, plate_h, (0.035, 0.03, 0.02, 0.94))
+        self.overlay_rect(
+            x + 4.0,
+            y + 4.0,
+            plate_w - 8.0,
+            plate_h - 8.0,
+            (0.48, 0.27, 0.04, 0.9),
+        )
+        glEnable(GL_TEXTURE_2D)
+        text.draw_text(
+            intent,
+            float(WIDTH) * 0.5,
+            y + plate_h * 0.5,
+            color=(255, 244, 205, 255),
+            align="center",
+        )
+
     def draw(self, text) -> None:  # pragma: no cover - visual
         hp_anchor = self.hp_anchor()
         text.begin()
@@ -213,6 +287,8 @@ class BattlePanel:
         if hp_anchor is not None:
             self.draw_hp_plate(text, hp_anchor)
         self.draw_player_stats(text)
+        self.draw_goblin_intent(text)
+        self.draw_combat_notice(text)
         battle_overlay = getattr(self.scene, "battle_overlay", None)
         if battle_overlay is not None:
             battle_overlay.draw(text)

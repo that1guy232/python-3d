@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Dict
 from engine.textures.texture_utils import load_texture, load_texture_atlas
 from game.resources.paths import (
+    BODY_SLOT_TEXTURE_PATH,
+    BOOT_SLOT_TEXTURE_PATH,
     DOOR_TEXTURE_PATH,
     FENCE1_TEXTURE_PATH,
     FENCE2_TEXTURE_PATH,
@@ -26,6 +28,7 @@ from game.resources.paths import (
     GRASS3_TEXTURE_PATH,
     GRASS4_TEXTURE_PATH,
     GRASS_TEXTURE_PATH,
+    HELMET_SLOT_TEXTURE_PATH,
     ROAD_TEXTURE_PATH,
     ROCK1_TEXTURE_PATH,
     ROCK2_TEXTURE_PATH,
@@ -44,6 +47,7 @@ from game.resources.paths import (
     TREE6_TEXTURE_PATH,
     TREE7_TEXTURE_PATH,
     WALL1_TEXTURE_PATH,
+    WEAPON_SLOT_TEXTURE_PATH,
     WINDOW_TEXTURE_PATH,
 )
 
@@ -72,6 +76,7 @@ def load_world_textures() -> Dict[str, object]:
       - rock_textures (list)
       - fence_textures (list)
       - item_textures (dict)
+      - equipment_slot_textures (dict)
       - wall_tex
       - torch_tex (animated frame regions when available)
       - door_tex
@@ -129,6 +134,12 @@ def load_world_textures() -> Dict[str, object]:
     item_textures = {
         "sword_texture": load_texture(SWORD_TEXTURE_PATH),
     }
+    equipment_slot_textures = {
+        "body": load_texture(BODY_SLOT_TEXTURE_PATH),
+        "boot": load_texture(BOOT_SLOT_TEXTURE_PATH),
+        "weapon": load_texture(WEAPON_SLOT_TEXTURE_PATH),
+        "helmet": load_texture(HELMET_SLOT_TEXTURE_PATH),
+    }
 
     # Wall texture
     wall_tex = load_texture(WALL1_TEXTURE_PATH)
@@ -156,6 +167,7 @@ def load_world_textures() -> Dict[str, object]:
         "rock_textures": rock_textures,
         "fence_textures": fence_textures,
         "item_textures": item_textures,
+        "equipment_slot_textures": equipment_slot_textures,
         "wall_tex": wall_tex,
         "torch_tex": torch_tex,
         "door_tex": door_tex,

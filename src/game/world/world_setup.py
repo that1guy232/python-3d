@@ -219,6 +219,7 @@ def load_assets(scene) -> None:
     resources.grasses_textures = tex.get("grasses_textures", [])
     resources.rock_textures = tex.get("rock_textures", [])
     resources.fence_textures = tex.get("fence_textures", [])
+    resources.equipment_slot_textures = tex.get("equipment_slot_textures", {})
     resources.wall_tex = tex.get("wall_tex")
     resources.torch_tex = tex.get("torch_tex")
     resources.door_tex = tex.get("door_tex")
@@ -278,6 +279,8 @@ def load_assets(scene) -> None:
     ui_state.active_battle_goblin = None
     ui_state.paused = False
     ui_state.inventory_open = False
+    ui_state.inventory_selected_slot = None
+    ui_state.inventory_drag_source = None
     ui_state.showing_settings_menu = False
     ui_state.last_mouse_pos = (0, 0)
     scene.log_timing("Initializing sky and HUD", start_time, time.perf_counter())

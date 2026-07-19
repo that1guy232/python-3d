@@ -82,4 +82,10 @@ SWORD_TEXTURE_PATH: str = _asset("textures", "items", "sword.png")
 COMPASS_BASE_TEXTURE_PATH: str = _asset("textures", "items", "compass_base.png")
 COMPASS_NEEDLE_TEXTURE_PATH: str = _asset("textures", "items", "compass_needle.png")
 
+# Inventory equipment slot backgrounds
+BODY_SLOT_TEXTURE_PATH: str = _asset("textures", "ui", "body.png")
+BOOT_SLOT_TEXTURE_PATH: str = _asset("textures", "ui", "boots.png")
+WEAPON_SLOT_TEXTURE_PATH: str = _asset("textures", "ui", "weapon.png")
+HELMET_SLOT_TEXTURE_PATH: str = _asset("textures", "ui", "helmet.png")
+
 LIGHT_TEXTURE_PATH: str = _asset("textures", "light.png")

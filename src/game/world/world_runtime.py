@@ -673,6 +673,7 @@ def handle_event(scene, event) -> None:
     if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
         if getattr(ui, "inventory_open", False):
             ui.inventory_selected_slot = None
+            ui.inventory_drag_source = None
             ui.inventory_open = False
             ui.paused = False
             ui.showing_settings_menu = False
@@ -690,6 +691,7 @@ def handle_event(scene, event) -> None:
         ui.inventory_open = not getattr(ui, "inventory_open", False)
         if not ui.inventory_open:
             ui.inventory_selected_slot = None
+            ui.inventory_drag_source = None
         ui.paused = ui.inventory_open
         ui.showing_settings_menu = False
         pygame.mouse.set_visible(ui.paused)
