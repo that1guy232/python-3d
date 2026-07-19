@@ -11,7 +11,8 @@ BACKPACK_SLOT_COUNT = 24
 EQUIPMENT_SLOT_COUNT = 4
 INVENTORY_SLOT_COUNT = BACKPACK_SLOT_COUNT + EQUIPMENT_SLOT_COUNT
 INVENTORY_NOTICE_SECONDS = 3.0
-TEST_GOBLIN_DROP_NAME = "Test Item"
+GOBLIN_FISTS_NAME = "Goblin fists"
+GOBLIN_FISTS_STRIKE_CARD_BONUS = 2
 
 
 class ItemType(str, Enum):
@@ -138,7 +139,25 @@ def move_inventory_item(scene, source: int, destination: int) -> bool:
     if not slot_accepts_item(source, slots[destination]):
         return False
     slots[source], slots[destination] = slots[destination], slots[source]
+    battle_cards = getattr(scene, "battle_cards", None)
+    sync_with_equipment = getattr(battle_cards, "sync_with_equipment", None)
+    if callable(sync_with_equipment):
+        sync_with_equipment()
     return True
+
+
+def equipped_item(scene, item_kind: ItemType):
+    """Return the item occupying the requested equipment slot, if any."""
+
+    try:
+        if not isinstance(item_kind, ItemType):
+            item_kind = ItemType(item_kind)
+    except (TypeError, ValueError):
+        return None
+    for slot, slot_kind in EQUIPMENT_SLOT_TYPES.items():
+        if slot_kind is item_kind:
+            return inventory_slots(scene)[slot]
+    return None
 
 
 def receive_inventory_item(

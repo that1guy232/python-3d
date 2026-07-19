@@ -7,9 +7,10 @@ from typing import TYPE_CHECKING
 
 from engine.entity import Entity
 from game.world.inventory import (
+    GOBLIN_FISTS_NAME,
+    GOBLIN_FISTS_STRIKE_CARD_BONUS,
     InventoryItem,
     ItemType,
-    TEST_GOBLIN_DROP_NAME,
     receive_inventory_item,
 )
 from game.world.player_stats import PlayerStats
@@ -52,6 +53,10 @@ class BattleController:
         scene.battle_mode = True
         scene.active_battle_goblin = goblin
         self._plan_goblin_turn()
+        battle_cards = getattr(scene, "battle_cards", None)
+        start_battle = getattr(battle_cards, "start_battle", None)
+        if callable(start_battle):
+            start_battle()
         scene.paused = False
         scene.inventory_open = False
         scene.inventory_selected_slot = None
@@ -122,9 +127,33 @@ class BattleController:
 
         if hp <= 0:
             self.remove_active_goblin()
-        else:
-            self.resolve_goblin_intent()
         return hp
+
+    def end_player_turn(self) -> bool:
+        """Discard the hand, resolve enemy intent, then start a new turn."""
+
+        scene = self.scene
+        if not getattr(scene, "battle_mode", False):
+            return False
+
+        battle_cards = getattr(scene, "battle_cards", None)
+        finish_player_turn = getattr(battle_cards, "finish_player_turn", None)
+        if callable(finish_player_turn):
+            finish_player_turn()
+
+        self.resolve_goblin_intent()
+        if not getattr(scene, "battle_mode", False):
+            return True
+
+        start_player_turn = getattr(battle_cards, "start_player_turn", None)
+        if callable(start_player_turn):
+            start_player_turn()
+        else:
+            stats = getattr(scene, "player_stats", None)
+            if stats is not None:
+                max_mana = max(1, int(getattr(stats, "max_mana", 5)))
+                setattr(stats, "mana", max_mana)
+        return True
 
     def _plan_goblin_turn(self) -> None:
         """Announce the active goblin's action before the player acts."""
@@ -214,10 +243,13 @@ class BattleController:
         receive_inventory_item(
             scene,
             InventoryItem(
-                TEST_GOBLIN_DROP_NAME,
+                GOBLIN_FISTS_NAME,
                 ItemType.WEAPON,
-                "A crude weapon recovered from a defeated goblin.",
-                {"Damage": "+1"},
+                (
+                    "The goblin's own fighting style. "
+                    "Equip it to add two Strike cards."
+                ),
+                {"Strike Cards": f"+{GOBLIN_FISTS_STRIKE_CARD_BONUS}"},
             ),
         )
         self.end()
@@ -230,6 +262,14 @@ class BattleController:
             max_hp = max(1, int(getattr(stats, "max_hp", 5)))
             setattr(stats, "max_hp", max_hp)
             setattr(stats, "hp", max_hp)
+            max_mana = max(1, int(getattr(stats, "max_mana", 5)))
+            setattr(stats, "max_mana", max_mana)
+            setattr(stats, "mana", max_mana)
+
+        battle_cards = getattr(scene, "battle_cards", None)
+        end_battle = getattr(battle_cards, "end_battle", None)
+        if callable(end_battle):
+            end_battle()
 
         scene.active_battle_goblin = None
         scene.battle_mode = False

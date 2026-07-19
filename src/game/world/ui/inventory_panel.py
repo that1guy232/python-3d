@@ -162,7 +162,7 @@ class InventoryPanel:
         strength = max(0, int(getattr(stats, "strength", 1)))
         dexterity = max(0, int(getattr(stats, "dexterity", 1)))
         elemental = max(0, int(getattr(stats, "elemental_damage", 0)))
-        card_draw = max(0, int(getattr(stats, "card_draw", 1)))
+        card_draw = max(0, int(getattr(stats, "card_draw", 3)))
 
         crit_percent = getattr(stats, "crit_percent", None)
         if callable(crit_percent):

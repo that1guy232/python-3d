@@ -16,7 +16,7 @@ class PlayerStats:
     dexterity: int = 1
     crit_chance: float = 0.0
     elemental_damage: int = 0
-    card_draw: int = 1
+    card_draw: int = 3
 
     def __post_init__(self) -> None:
         self.max_mana = max(1, int(self.max_mana))

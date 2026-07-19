@@ -30,6 +30,7 @@ class BattleResourceOverlay:
         self._active = False
         self._enter_s = 0.0
         self._target_id = None
+        self._end_turn_pressed = False
 
     @staticmethod
     def _clamp01(value: float) -> float:
@@ -54,6 +55,7 @@ class BattleResourceOverlay:
         self._active = False
         self._enter_s = 0.0
         self._target_id = None
+        self._end_turn_pressed = False
         self._reset_cards()
 
     def _reset_cards(self) -> None:
@@ -146,6 +148,16 @@ class BattleResourceOverlay:
             zone_h,
         )
 
+    @staticmethod
+    def _end_turn_rect() -> tuple[float, float, float, float]:
+        return float(WIDTH) - 166.0, 20.0, 142.0, 46.0
+
+    @staticmethod
+    def _contains(rect: tuple[float, float, float, float], pos) -> bool:
+        x, y, w, h = rect
+        px, py = pos
+        return x <= px <= x + w and y <= py <= y + h
+
     def _draw_play_zone(self) -> None:  # pragma: no cover - visual
         x, y, w, h = self._play_rect()
         glDisable(GL_TEXTURE_2D)
@@ -198,6 +210,20 @@ class BattleResourceOverlay:
             ("Mana", f"{mana}/{max_mana}", right_x, y, (0.10, 0.36, 0.98, 0.96)),
         )
 
+        try:
+            import pygame
+
+            mouse_pos = pygame.mouse.get_pos()
+        except Exception:
+            mouse_pos = getattr(self.scene, "_last_mouse_pos", (0, 0))
+
+        end_turn_rect = self._end_turn_rect()
+        end_turn_hovered = self._contains(end_turn_rect, mouse_pos)
+        end_x, end_y, end_w, end_h = end_turn_rect
+        battle_cards = getattr(self.scene, "battle_cards", None)
+        deck_count = max(0, int(getattr(battle_cards, "deck_count", 0)))
+        discard_count = max(0, int(getattr(battle_cards, "discard_count", 0)))
+
         glDisable(GL_TEXTURE_2D)
         for _label, _value, x, circle_y, color in circles:
             self._draw_circle(
@@ -230,6 +256,27 @@ class BattleResourceOverlay:
         if dragging_card:
             self._draw_play_zone()
 
+        self._draw_quad(
+            end_x + 4.0,
+            end_y + 5.0,
+            end_w,
+            end_h,
+            (0.0, 0.0, 0.0, 0.28),
+        )
+        self._draw_quad(end_x, end_y, end_w, end_h, (0.05, 0.04, 0.03, 0.96))
+        button_face = (
+            (0.66, 0.31, 0.08, 0.98)
+            if end_turn_hovered or self._end_turn_pressed
+            else (0.42, 0.20, 0.06, 0.94)
+        )
+        self._draw_quad(
+            end_x + 4.0,
+            end_y + 4.0,
+            end_w - 8.0,
+            end_h - 8.0,
+            button_face,
+        )
+
         glEnable(GL_TEXTURE_2D)
         for label, value, x, circle_y, _color in circles:
             text.draw_text(
@@ -247,12 +294,29 @@ class BattleResourceOverlay:
                 align="center",
             )
 
-        try:
-            import pygame
-
-            mouse_pos = pygame.mouse.get_pos()
-        except Exception:
-            mouse_pos = getattr(self.scene, "_last_mouse_pos", (0, 0))
+        text.draw_text(
+            "End Turn",
+            end_x + end_w * 0.5,
+            end_y + end_h * 0.5,
+            color=(255, 244, 218, 255),
+            align="center",
+        )
+        card_w = min(118.0, max(92.0, float(WIDTH) * 0.082))
+        pile_y = y - card_w * 1.38 * 0.5 - 18.0
+        text.draw_text(
+            f"Deck {deck_count}",
+            float(WIDTH) * 0.5 - 74.0,
+            pile_y,
+            color=(220, 226, 238, 255),
+            align="center",
+        )
+        text.draw_text(
+            f"Discard {discard_count}",
+            float(WIDTH) * 0.5 + 74.0,
+            pile_y,
+            color=(220, 226, 238, 255),
+            align="center",
+        )
 
         for card in cards:
             enabled = card.enabled_for(self.scene)
@@ -268,6 +332,9 @@ class BattleResourceOverlay:
     def handle_mouse_down(self, pos) -> bool:
         if not getattr(self.scene, "battle_mode", False):
             return False
+        if self._contains(self._end_turn_rect(), pos):
+            self._end_turn_pressed = True
+            return True
         cards = self._prepare_for_input()
         for card in reversed(cards):
             if card.handle_mouse_down(pos, self.scene):
@@ -278,14 +345,22 @@ class BattleResourceOverlay:
         if not getattr(self.scene, "battle_mode", False):
             return False
         cards = self._prepare_for_input()
-        handled = False
+        handled = self._end_turn_pressed or self._contains(self._end_turn_rect(), pos)
         for card in cards:
             handled = card.handle_mouse_motion(pos, self.scene) or handled
         return handled
 
     def handle_mouse_up(self, pos) -> bool:
         if not getattr(self.scene, "battle_mode", False):
+            self._end_turn_pressed = False
             return False
+        if self._end_turn_pressed:
+            self._end_turn_pressed = False
+            if self._contains(self._end_turn_rect(), pos):
+                end_player_turn = getattr(self.scene, "end_player_turn", None)
+                if callable(end_player_turn):
+                    end_player_turn()
+            return True
         cards = self._prepare_for_input()
         handled = False
         play_rect = self._play_rect()

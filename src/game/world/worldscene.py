@@ -421,6 +421,9 @@ class WorldScene(Scene):
     def damage_battle_goblin(self, amount: int | None = None) -> int:
         return self.combat.damage_active_goblin(amount)
 
+    def end_player_turn(self) -> bool:
+        return self.combat.end_player_turn()
+
     def remove_battle_goblin(self) -> bool:
         return self.combat.remove_active_goblin()
 

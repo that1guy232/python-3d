@@ -223,9 +223,9 @@ the lighting implementation is being changed.
 | `src/game/world/detail_pipeline.py` | Ground-detail and contact-shadow decal creation and batching. |
 | `src/game/world/world_runtime.py` | Per-frame runtime helpers: bounds checks, road checks, height queries, entity updates, interaction, pause/inventory input, and mouse delta forwarding. |
 | `src/game/world/world_renderer.py` | World render pipeline: fog/projection/camera setup, sky, terrain, object passes, and HUD text/panel delegation. |
-| `src/game/world/combat.py` | Battle-mode controller for entering/leaving combat, announced enemy intent, turn resolution, post-combat healing, player damage rolls, and battle mouse state. |
-| `src/game/world/player_stats.py` | Player health, mana, attributes, critical-hit chance, card draw, and attack-damage rolls. |
-| `src/game/world/battle_cards.py` | Builds the current battle-card loadout and connects card actions to combat. |
+| `src/game/world/combat.py` | Battle-mode controller for entering/leaving combat, announced enemy intent, explicit/zero-mana turn resolution, post-combat healing, player damage rolls, Goblin fists drops, and battle mouse state. |
+| `src/game/world/player_stats.py` | Player health, mana, attributes, critical-hit chance, initial card draw, and attack-damage rolls. |
+| `src/game/world/battle_cards.py` | Owns deck/hand/discard piles, draw-and-reshuffle rules, mana/exhaustion-based automatic turn endings, and Goblin fists bonus Strike synchronization. |
 | `src/game/world/collision_index.py` | Spatial collision candidate index for wall and polygon meshes, including dynamic/fallback mesh handling. |
 | `src/game/world/entity_registry.py` | Runtime entity registry that keeps entity lists, immediate draw lists, sprites, and collision meshes synchronized. |
 | `src/game/world/environment.py` | Typed indoor volumes and portals, point queries, and legacy covered-region projection during lighting migration. |
@@ -271,7 +271,7 @@ the lighting implementation is being changed.
 | `src/game/world/ui/interactions.py` | Screen-space hit boxes and input routing for pause/settings, inventory, and battle surfaces. |
 | `src/game/world/ui/inventory_panel.py` | Inventory overlay, item details, drag feedback, equipment backgrounds, and player-stat presentation. |
 | `src/game/world/ui/battle_panel.py` | Battle screen presentation, announced enemy intent/action feedback, active-enemy HP positioning, and player-stat text. |
-| `src/game/world/ui/battle_overlay.py` | Interactive battle resources and draggable/clickable card overlay. |
+| `src/game/world/ui/battle_overlay.py` | Interactive battle resources, draggable cards, deck/discard counts, and the End Turn control. |
 | `src/game/world/ui/battle_menu.py` | Battle menu model built from generic engine menu items. |
 | `src/game/world/ui/card.py` | Reusable battle-card data and OpenGL drawing primitive. |
 | `src/game/world/ui/pause_panel.py` | Screen-space rendering for the active pause or settings menu. |
