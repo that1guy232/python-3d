@@ -1,5 +1,42 @@
 # python-3d
-3D Python project from local workspace.
+
+A first-person 3D world built with Pygame Community Edition, PyOpenGL, and
+NumPy. The game
+includes procedural terrain and world dressing, buildings and interiors,
+interactive doors and chests, goblin encounters, inventory and battle UI, and
+packet-based lighting with directional and point-light shadows.
+
+## Quick start
+
+The source uses Python 3.10+ syntax. From the repository root, install the
+runtime dependencies and launch the game:
+
+```powershell
+py -m pip install pygame-ce PyOpenGL numpy
+py src/main.py
+```
+
+There is currently no pinned dependency manifest, so the command above installs
+the project's direct third-party dependencies.
+
+## Controls
+
+| Input | Action |
+| --- | --- |
+| `W`, `A`, `S`, `D` | Move |
+| Mouse | Look |
+| Left Shift | Sprint |
+| Space | Jump |
+| `E` | Interact with the focused door or chest |
+| `I` or Tab | Toggle inventory |
+| `M` | Toggle minimap |
+| Escape | Pause/resume; closes inventory first |
+| `F3` | Toggle performance logging |
+| `F4` | Reset the performance timing window |
+
+The main menu can be started with the mouse, Enter, keypad Enter, or Space.
+
+## Project structure
 
 Runtime code is split by ownership:
 
@@ -7,6 +44,9 @@ Runtime code is split by ownership:
   texture, sound, and engine config code.
 - `src/game/` contains the world game, game config, authored content, and asset
   resource catalogs.
+
+See [DOCUMENTATION.md](DOCUMENTATION.md) for runtime flow, subsystem ownership,
+extension points, lighting diagnostics, and a detailed source map.
 
 ## Performance logging
 
@@ -42,6 +82,10 @@ Run the lightweight architecture gate with:
 ```powershell
 py scripts/check_architecture.py
 ```
+
+The architecture gate compiles `src/game/world`, runs the complete unit-test
+suite, verifies that `engine` does not import `game`, and rejects wildcard
+imports under `src`.
 
 ## Declaring world content
 
