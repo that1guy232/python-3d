@@ -77,6 +77,7 @@ class WorldScene(Scene):
     grasses_textures = state_alias("render_resources", "grasses_textures")
     rock_textures = state_alias("render_resources", "rock_textures")
     fence_textures = state_alias("render_resources", "fence_textures")
+    item_textures = state_alias("render_resources", "item_textures")
     equipment_slot_textures = state_alias(
         "render_resources", "equipment_slot_textures"
     )

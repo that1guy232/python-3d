@@ -127,6 +127,7 @@ class WorldRenderResources:
     grasses_textures: list[Any] = field(default_factory=list)
     rock_textures: list[Any] = field(default_factory=list)
     fence_textures: list[Any] = field(default_factory=list)
+    item_textures: dict[str, Any] = field(default_factory=dict)
     equipment_slot_textures: dict[str, Any] = field(default_factory=dict)
     wall_tex: Any | None = None
     torch_tex: Any | None = None

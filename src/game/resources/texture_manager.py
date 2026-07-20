@@ -21,6 +21,7 @@ from game.resources.paths import (
     FENCE5_TEXTURE_PATH,
     FENCE6_TEXTURE_PATH,
     GOBLIN_BACK_TEXTURE_DIR_PATH,
+    GOBLIN_FIST_TEXTURE_PATH,
     GOBLIN_FRONT_TEXTURE_DIR_PATH,
     GOBLIN_RIGHT_TEXTURE_DIR_PATH,
     GRASS1_TEXTURE_PATH,
@@ -133,6 +134,7 @@ def load_world_textures() -> Dict[str, object]:
     # Item textures
     item_textures = {
         "sword_texture": load_texture(SWORD_TEXTURE_PATH),
+        "goblin_fist": load_texture(GOBLIN_FIST_TEXTURE_PATH),
     }
     equipment_slot_textures = {
         "body": load_texture(BODY_SLOT_TEXTURE_PATH),

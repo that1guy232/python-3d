@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from engine.entity import Entity
 from game.world.inventory import (
+    GOBLIN_FISTS_ICON,
     GOBLIN_FISTS_NAME,
     GOBLIN_FISTS_STRIKE_CARD_BONUS,
     InventoryItem,
@@ -250,6 +251,7 @@ class BattleController:
                     "Equip it to add two Strike cards."
                 ),
                 {"Strike Cards": f"+{GOBLIN_FISTS_STRIKE_CARD_BONUS}"},
+                GOBLIN_FISTS_ICON,
             ),
         )
         self.end()

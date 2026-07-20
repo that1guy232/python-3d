@@ -79,6 +79,7 @@ GOBLIN_SOUND_PATHS: tuple[str, ...] = tuple(
 
 # Items
 SWORD_TEXTURE_PATH: str = _asset("textures", "items", "sword.png")
+GOBLIN_FIST_TEXTURE_PATH: str = _asset("textures", "items", "goblin_fist.png")
 COMPASS_BASE_TEXTURE_PATH: str = _asset("textures", "items", "compass_base.png")
 COMPASS_NEEDLE_TEXTURE_PATH: str = _asset("textures", "items", "compass_needle.png")
 

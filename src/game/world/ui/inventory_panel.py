@@ -15,6 +15,7 @@ from OpenGL.GL import (
     GL_TEXTURE_2D,
 )
 
+from engine.textures.texture_utils import get_texture_aspect
 from game.config import HEIGHT, WIDTH
 from game.world.inventory import (
     BACKPACK_SLOT_COUNT,
@@ -86,6 +87,45 @@ class InventoryPanel:
         if name:
             return str(name)
         return str(item)
+
+    @staticmethod
+    def _item_icon(item) -> str:
+        if item is None:
+            return ""
+        if isinstance(item, dict):
+            return str(item.get("icon", item.get("icon_key", "")) or "")
+        return str(getattr(item, "icon", "") or "")
+
+    @staticmethod
+    def _icon_dimensions(texture, max_size: float) -> tuple[float, float]:
+        aspect = max(0.01, float(get_texture_aspect(texture)))
+        if aspect >= 1.0:
+            return max_size, max_size / aspect
+        return max_size * aspect, max_size
+
+    @staticmethod
+    def _tooltip_rect(
+        text,
+        label: str,
+        mouse_pos: tuple[float, float],
+        *,
+        width: int = WIDTH,
+        height: int = HEIGHT,
+    ) -> tuple[float, float, float, float]:
+        try:
+            label_w, label_h = text.font.size(label)
+        except Exception:
+            label_w, label_h = len(label) * 9, 18
+        tooltip_w = max(72.0, float(label_w) + 24.0)
+        tooltip_h = max(34.0, float(label_h) + 16.0)
+        mx, my = mouse_pos
+        x = float(mx) + 14.0
+        y = float(my) + 18.0
+        if x + tooltip_w > float(width) - 8.0:
+            x = float(mx) - tooltip_w - 14.0
+        if y + tooltip_h > float(height) - 8.0:
+            y = float(my) - tooltip_h - 14.0
+        return max(8.0, x), max(8.0, y), tooltip_w, tooltip_h
 
     @staticmethod
     def _fit_text_width(text, label: str, max_width: float) -> str:
@@ -338,6 +378,11 @@ class InventoryPanel:
                 "equipment_slot_textures",
                 {},
             ) or {}
+            item_textures = getattr(
+                getattr(self.scene, "render_resources", self.scene),
+                "item_textures",
+                {},
+            ) or {}
             for offset, item_kind in enumerate(EQUIPMENT_TYPES):
                 index = BACKPACK_SLOT_COUNT + offset
                 x, y, slot_w, slot_h = equipment_slot_rects[offset]
@@ -350,6 +395,21 @@ class InventoryPanel:
                     slot_w - inset * 2.0,
                     slot_h - inset * 2.0,
                     alpha=0.28 if filled else 0.62,
+                )
+
+            for index, item in enumerate(items[:slot_count]):
+                texture = item_textures.get(self._item_icon(item))
+                if not texture or index == drag_source:
+                    continue
+                x, y, slot_w, slot_h = slot_rects[index]
+                max_icon_size = min(42.0, slot_w - 12.0, slot_h - 12.0)
+                icon_w, icon_h = self._icon_dimensions(texture, max_icon_size)
+                self._draw_textured_rect(
+                    texture,
+                    x + (slot_w - icon_w) * 0.5,
+                    y + (slot_h - icon_h) * 0.5,
+                    icon_w,
+                    icon_h,
                 )
 
             text.draw_text(
@@ -393,7 +453,11 @@ class InventoryPanel:
 
             for index, item in enumerate(items[:slot_count]):
                 label = self._item_label(item)
-                if not label:
+                if (
+                    not label
+                    or index == drag_source
+                    or item_textures.get(self._item_icon(item))
+                ):
                     continue
                 x, y, slot_w, slot_h = slot_rects[index]
                 label = self._fit_text_width(text, label, slot_w - 10.0)
@@ -505,17 +569,66 @@ class InventoryPanel:
                 and 0 <= drag_source < len(items)
                 and items[drag_source] is not None
             ):
-                drag_label = self._fit_text_width(
+                dragged_item = items[drag_source]
+                drag_texture = item_textures.get(self._item_icon(dragged_item))
+                if drag_texture:
+                    icon_w, icon_h = self._icon_dimensions(drag_texture, 42.0)
+                    self._draw_textured_rect(
+                        drag_texture,
+                        mx - icon_w * 0.5,
+                        my - icon_h * 0.5,
+                        icon_w,
+                        icon_h,
+                    )
+                else:
+                    drag_label = self._fit_text_width(
+                        text,
+                        self._item_label(dragged_item),
+                        180.0,
+                    )
+                    text.draw_text(
+                        drag_label,
+                        mx + 14.0,
+                        my + 14.0,
+                        color=(255, 238, 195, 255),
+                        align="topleft",
+                    )
+
+            hovered_item = (
+                items[hovered_slot]
+                if isinstance(hovered_slot, int)
+                and 0 <= hovered_slot < len(items)
+                else None
+            )
+            if hovered_item is not None and drag_source is None:
+                tooltip_label = self._item_label(hovered_item)
+                tooltip_x, tooltip_y, tooltip_w, tooltip_h = self._tooltip_rect(
                     text,
-                    self._item_label(items[drag_source]),
-                    180.0,
+                    tooltip_label,
+                    (mx, my),
                 )
+                glDisable(GL_TEXTURE_2D)
+                self._draw_overlay_rect(
+                    tooltip_x,
+                    tooltip_y,
+                    tooltip_w,
+                    tooltip_h,
+                    (0.03, 0.028, 0.025, 0.98),
+                )
+                self._draw_overlay_rect(
+                    tooltip_x + 2.0,
+                    tooltip_y + 2.0,
+                    tooltip_w - 4.0,
+                    tooltip_h - 4.0,
+                    (0.19, 0.15, 0.10, 0.98),
+                )
+                glEnable(GL_TEXTURE_2D)
                 text.draw_text(
-                    drag_label,
-                    mx + 14.0,
-                    my + 14.0,
-                    color=(255, 238, 195, 255),
-                    align="topleft",
+                    tooltip_label,
+                    tooltip_x + tooltip_w * 0.5,
+                    tooltip_y + tooltip_h * 0.5,
+                    color=(255, 238, 202, 255),
+                    align="center",
                 )
         finally:
             text.end()

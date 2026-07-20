@@ -12,6 +12,7 @@ EQUIPMENT_SLOT_COUNT = 4
 INVENTORY_SLOT_COUNT = BACKPACK_SLOT_COUNT + EQUIPMENT_SLOT_COUNT
 INVENTORY_NOTICE_SECONDS = 3.0
 GOBLIN_FISTS_NAME = "Goblin fists"
+GOBLIN_FISTS_ICON = "goblin_fist"
 GOBLIN_FISTS_STRIKE_CARD_BONUS = 2
 
 
@@ -45,11 +46,13 @@ class InventoryItem:
     item_type: ItemType = ItemType.MISC
     description: str = ""
     attributes: tuple[tuple[str, str], ...] | Mapping[str, object] = ()
+    icon: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.item_type, ItemType):
             object.__setattr__(self, "item_type", ItemType(self.item_type))
         object.__setattr__(self, "description", str(self.description or ""))
+        object.__setattr__(self, "icon", str(self.icon or ""))
         raw_attributes = self.attributes
         if isinstance(raw_attributes, Mapping):
             pairs = raw_attributes.items()

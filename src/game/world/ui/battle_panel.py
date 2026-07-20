@@ -128,14 +128,61 @@ class BattlePanel:
         y = max(10.0, min(float(height) - plate_h - 10.0, anchor[1] - plate_h - 8.0))
         return x, y, plate_w, plate_h
 
+    @staticmethod
+    def notice_rect_avoiding(
+        rect: tuple[float, float, float, float],
+        avoid: tuple[float, float, float, float] | None,
+        *,
+        width: int = WIDTH,
+        height: int = HEIGHT,
+        gap: float = 8.0,
+    ) -> tuple[float, float, float, float]:
+        """Move a notice vertically around the enemy HP plate when needed."""
+
+        if avoid is None:
+            return rect
+
+        x, y, rect_w, rect_h = rect
+        avoid_x, avoid_y, avoid_w, avoid_h = avoid
+
+        def overlaps(candidate_x: float, candidate_y: float) -> bool:
+            return not (
+                candidate_x + rect_w <= avoid_x
+                or candidate_x >= avoid_x + avoid_w
+                or candidate_y + rect_h <= avoid_y
+                or candidate_y >= avoid_y + avoid_h
+            )
+
+        if not overlaps(x, y):
+            return rect
+
+        margin = 10.0
+        candidates = (
+            (x, avoid_y + avoid_h + gap),
+            (x, avoid_y - rect_h - gap),
+            (avoid_x + avoid_w + gap, y),
+            (avoid_x - rect_w - gap, y),
+        )
+        for candidate_x, candidate_y in candidates:
+            if (
+                candidate_x >= margin
+                and candidate_x + rect_w <= float(width) - margin
+                and candidate_y >= margin
+                and candidate_y + rect_h <= float(height) - margin
+                and not overlaps(candidate_x, candidate_y)
+            ):
+                return candidate_x, candidate_y, rect_w, rect_h
+
+        return rect
+
     def draw_hp_plate(
         self,
         text,
         anchor: tuple[float, float],
-    ) -> None:  # pragma: no cover - visual
+    ) -> tuple[float, float, float, float] | None:  # pragma: no cover - visual
         goblin = self.active_goblin()
         if goblin is None:
-            return
+            return None
 
         hp, max_hp = self.goblin_hp(goblin)
         label = f"HP {hp}/{max_hp}"
@@ -171,6 +218,7 @@ class BattlePanel:
             color=(255, 245, 230, 255),
             align="center",
         )
+        return x, y, plate_w, plate_h
 
     def draw_player_stats(self, text) -> None:  # pragma: no cover - visual
         lines = self.player_stat_lines()
@@ -205,15 +253,19 @@ class BattlePanel:
                 align="topleft",
             )
 
-    def draw_combat_notice(self, text) -> None:  # pragma: no cover - visual
+    def draw_combat_notice(
+        self,
+        text,
+        avoid_rect: tuple[float, float, float, float] | None = None,
+    ) -> bool:  # pragma: no cover - visual
         combat = getattr(self.scene, "combat", None)
         active_notice = getattr(combat, "active_combat_notice", None)
         if not callable(active_notice):
-            return
+            return False
 
         notice = active_notice()
         if not notice:
-            return
+            return False
 
         try:
             label_w = text.font.size(notice)[0]
@@ -222,7 +274,11 @@ class BattlePanel:
         plate_w = max(240.0, float(label_w) + 36.0)
         plate_h = 38.0
         x = float(WIDTH) * 0.5 - plate_w * 0.5
-        y = 96.0
+        y = 52.0
+        x, y, plate_w, plate_h = self.notice_rect_avoiding(
+            (x, y, plate_w, plate_h),
+            avoid_rect,
+        )
 
         glDisable(GL_TEXTURE_2D)
         self.overlay_rect(x, y, plate_w, plate_h, (0.04, 0.025, 0.025, 0.92))
@@ -236,11 +292,12 @@ class BattlePanel:
         glEnable(GL_TEXTURE_2D)
         text.draw_text(
             notice,
-            float(WIDTH) * 0.5,
+            x + plate_w * 0.5,
             y + plate_h * 0.5,
             color=(255, 236, 218, 255),
             align="center",
         )
+        return True
 
     def draw_goblin_intent(self, text) -> None:  # pragma: no cover - visual
         combat = getattr(self.scene, "combat", None)
@@ -284,11 +341,12 @@ class BattlePanel:
         text.begin()
         glDisable(GL_TEXTURE_2D)
 
+        hp_rect = None
         if hp_anchor is not None:
-            self.draw_hp_plate(text, hp_anchor)
+            hp_rect = self.draw_hp_plate(text, hp_anchor)
         self.draw_player_stats(text)
-        self.draw_goblin_intent(text)
-        self.draw_combat_notice(text)
+        if not self.draw_combat_notice(text, hp_rect):
+            self.draw_goblin_intent(text)
         battle_overlay = getattr(self.scene, "battle_overlay", None)
         if battle_overlay is not None:
             battle_overlay.draw(text)
