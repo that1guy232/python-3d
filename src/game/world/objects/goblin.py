@@ -44,9 +44,16 @@ from OpenGL.GL import (
     glVertex3f,
 )
 
-from engine.entity import Entity
 from engine.rendering.sprite import AnimatedWorldSprite
 from engine.sound.sound_utils import Sounds
+from game.world.creature import Creature
+from game.world.inventory import (
+    GOBLIN_FISTS_ICON,
+    GOBLIN_FISTS_NAME,
+    GOBLIN_FISTS_STRIKE_CARD_BONUS,
+    InventoryItem,
+    ItemType,
+)
 from game.resources.paths import (
     GOBLIN_BACK_TEXTURE_DIR_PATH,
     GOBLIN_FRONT_TEXTURE_DIR_PATH,
@@ -133,7 +140,7 @@ def _load_frames(directory: str) -> AnimationFrames:
     return tuple(load_texture_atlas(paths)) if paths else ()
 
 
-class Goblin(Entity):
+class Goblin(Creature):
     """A simple wandering forest creature with camera-aware directional art."""
 
     DEFAULT_HEIGHT = GOBLIN_SPRITE_HEIGHT
@@ -174,8 +181,6 @@ class Goblin(Entity):
         self.position_blocked = position_blocked
         self.player_in_building = player_in_building
         self.rng = rng or random.Random()
-        self.max_hp = max(1, int(max_hp))
-        self.hp = self.max_hp
         keys = GOBLIN_SOUND_KEYS if sound_keys is None else tuple(sound_keys)
         self.sound_keys = tuple(str(key) for key in keys if key)
         self._sound_channel = None
@@ -228,7 +233,10 @@ class Goblin(Entity):
                 self.spawn_position.x,
                 y + height * 0.5,
                 self.spawn_position.z,
-            )
+            ),
+            display_name="Goblin",
+            max_hp=max_hp,
+            attack_damage=1,
         )
 
         self.sprite = AnimatedWorldSprite(
@@ -301,13 +309,19 @@ class Goblin(Entity):
         self._sound_channel = None
         self._sound_key = None
 
-    def take_damage(self, amount: int = 1) -> int:
-        amount = max(0, int(amount))
-        self.hp = max(0, int(getattr(self, "hp", self.max_hp)) - amount)
-        return self.hp
-
-    def is_defeated(self) -> bool:
-        return int(getattr(self, "hp", self.max_hp)) <= 0
+    def combat_rewards(self, scene) -> tuple[InventoryItem, ...]:
+        return (
+            InventoryItem(
+                GOBLIN_FISTS_NAME,
+                ItemType.WEAPON,
+                (
+                    "The goblin's own fighting style. "
+                    "Equip it to add two Strike cards."
+                ),
+                {"Strike Cards": f"+{GOBLIN_FISTS_STRIKE_CARD_BONUS}"},
+                GOBLIN_FISTS_ICON,
+            ),
+        )
 
     def update(self, dt: float) -> None:
         dt = max(0.0, float(dt))

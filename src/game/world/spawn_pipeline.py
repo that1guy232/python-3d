@@ -190,16 +190,17 @@ def _build_goblins(scene) -> None:
     for goblin in getattr(scene, "goblins", ()) or ():
 
         try:
-
-            if goblin in scene.entities:
-
-                scene.entities.remove(goblin)
-
-            for sprite in goblin.get_sprites() or ():
-
-                if sprite in scene.sprite_items:
-
-                    scene.sprite_items.remove(sprite)
+            remove_entity = getattr(scene, "remove_entity", None)
+            if callable(remove_entity):
+                remove_entity(goblin)
+            else:
+                if goblin in scene.entities:
+                    scene.entities.remove(goblin)
+                if goblin in getattr(scene, "creatures", ()):
+                    scene.creatures.remove(goblin)
+                for sprite in goblin.get_sprites() or ():
+                    if sprite in scene.sprite_items:
+                        scene.sprite_items.remove(sprite)
 
         except Exception:
 
@@ -323,6 +324,9 @@ def _build_goblins(scene) -> None:
         else:
 
             scene.entities.append(goblin)
+
+            if goblin not in scene.creatures:
+                scene.creatures.append(goblin)
 
             scene.sprite_items.extend(goblin.get_sprites())
 

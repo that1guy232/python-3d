@@ -124,7 +124,7 @@ class BattleCardLoadout:
         self.draw_cards(draw_count)
 
     def finish_player_turn(self) -> None:
-        """Discard the unplayed hand before the goblin acts."""
+        """Discard the unplayed hand before the enemy acts."""
 
         for card in self._hand:
             card.reset_to_home()
@@ -174,9 +174,9 @@ class BattleCardLoadout:
         self._hand.remove(card)
         self._discard.append(card)
 
-        damage_battle_goblin = getattr(self.scene, "damage_battle_goblin", None)
-        if callable(damage_battle_goblin):
-            damage_battle_goblin(1)
+        damage_battle_creature = getattr(self.scene, "damage_battle_creature", None)
+        if callable(damage_battle_creature):
+            damage_battle_creature(1)
 
         should_end_turn = stats.mana <= 0 or self.all_cards_discarded
         if getattr(self.scene, "battle_mode", False) and should_end_turn:

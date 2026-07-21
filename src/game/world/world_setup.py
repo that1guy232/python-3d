@@ -14,6 +14,8 @@ from pygame.math import Vector3
 
 from game.config import (
     BASE_SPEED,
+    BATTLE_LOOK_SMOOTH_HZ,
+    BATTLE_TRIGGER_DISTANCE,
     CAMERA_FOLLOW_SMOOTH_HZ,
     CLOUDS_ENABLED,
     CLOUD_DENSITY,
@@ -21,8 +23,6 @@ from game.config import (
     CLOUD_SPEED,
     FOGDENSITY,
     FOV,
-    GOBLIN_BATTLE_LOOK_SMOOTH_HZ,
-    GOBLIN_BATTLE_TRIGGER_DISTANCE,
     GRAVITY,
     HEADBOB_AMPLITUDE,
     HEADBOB_AMPLITUDE_SIDE,
@@ -274,10 +274,10 @@ def load_assets(scene) -> None:
     ui_state.camera_follow_smooth_hz = CAMERA_FOLLOW_SMOOTH_HZ
     ui_state.setting_menu = SettingMenu(scene)
     ui_state.setting_menu.apply_saved_settings(scene)
-    scene.goblin_battle_trigger_distance = GOBLIN_BATTLE_TRIGGER_DISTANCE
-    scene.goblin_battle_look_smooth_hz = GOBLIN_BATTLE_LOOK_SMOOTH_HZ
+    scene.battle_trigger_distance = BATTLE_TRIGGER_DISTANCE
+    scene.battle_look_smooth_hz = BATTLE_LOOK_SMOOTH_HZ
     ui_state.battle_mode = False
-    ui_state.active_battle_goblin = None
+    ui_state.active_battle_creature = None
     ui_state.paused = False
     ui_state.inventory_open = False
     ui_state.inventory_selected_slot = None

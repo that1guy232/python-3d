@@ -37,6 +37,14 @@ class SceneEntityRegistry:
         ):
             resources.immediate_entities.append(entity)
 
+        creatures = getattr(self.build_state, "creatures", None)
+        if (
+            creatures is not None
+            and getattr(entity, "combat_enabled", False)
+            and entity not in creatures
+        ):
+            creatures.append(entity)
+
         get_sprites = getattr(entity, "get_sprites", None)
         if callable(get_sprites):
             for sprite in get_sprites() or ():
@@ -69,7 +77,7 @@ class SceneEntityRegistry:
         resources.entities = without_item(resources.entities)
         resources.immediate_entities = without_item(resources.immediate_entities)
         build_state = self.build_state
-        for attr_name in ("goblins", "chests", "showcase_chests"):
+        for attr_name in ("creatures", "goblins", "chests", "showcase_chests"):
             if hasattr(build_state, attr_name):
                 setattr(
                     build_state,

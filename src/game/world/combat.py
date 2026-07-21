@@ -5,15 +5,13 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from engine.entity import Entity
-from game.world.inventory import (
-    GOBLIN_FISTS_ICON,
-    GOBLIN_FISTS_NAME,
-    GOBLIN_FISTS_STRIKE_CARD_BONUS,
-    InventoryItem,
-    ItemType,
-    receive_inventory_item,
+from game.world.creature import (
+    CombatCreature,
+    CombatIntent,
+    creature_display_name,
+    is_combat_creature,
 )
+from game.world.inventory import receive_inventory_item
 from game.world.player_stats import PlayerStats
 
 if TYPE_CHECKING:
@@ -23,37 +21,41 @@ if TYPE_CHECKING:
 class BattleController:
     """Own battle flow while keeping scene attributes backward compatible."""
 
-    GOBLIN_ATTACK_DAMAGE = 1
+    DEFAULT_ATTACK_DAMAGE = 1
+    GOBLIN_ATTACK_DAMAGE = DEFAULT_ATTACK_DAMAGE
     COMBAT_NOTICE_SECONDS = 1.75
 
     def __init__(self, scene: WorldScene) -> None:
         self.scene = scene
         scene.battle_mode = False
-        scene.active_battle_goblin = None
+        scene.active_battle_creature = None
         scene.battle_cards = None
         scene.player_stats = PlayerStats()
         scene.last_player_attack: dict[str, int | bool] | None = None
-        self.goblin_intent: dict[str, str | int] | None = None
-        self.last_goblin_attack: dict[str, int] | None = None
+        self.enemy_intent: CombatIntent | None = None
+        self.last_enemy_attack: dict[str, int] | None = None
         self._combat_notice_text = ""
         self._combat_notice_expires_at = 0.0
 
-    def start(self, goblin: Entity) -> bool:
-        if goblin is None or not getattr(goblin, "enabled", True):
+    def start(self, creature: CombatCreature) -> bool:
+        if (
+            not is_combat_creature(creature)
+            or not getattr(creature, "enabled", True)
+        ):
             return False
 
-        max_hp = max(1, int(getattr(goblin, "max_hp", 5)))
-        setattr(goblin, "max_hp", max_hp)
-        if not hasattr(goblin, "hp"):
-            setattr(goblin, "hp", max_hp)
+        max_hp = max(1, int(getattr(creature, "max_hp", 5)))
+        setattr(creature, "max_hp", max_hp)
+        if not hasattr(creature, "hp"):
+            setattr(creature, "hp", max_hp)
 
         scene = self.scene
-        self.last_goblin_attack = None
+        self.last_enemy_attack = None
         self._combat_notice_text = ""
         self._combat_notice_expires_at = 0.0
         scene.battle_mode = True
-        scene.active_battle_goblin = goblin
-        self._plan_goblin_turn()
+        scene.active_battle_creature = creature
+        self._plan_enemy_turn()
         battle_cards = getattr(scene, "battle_cards", None)
         start_battle = getattr(battle_cards, "start_battle", None)
         if callable(start_battle):
@@ -67,7 +69,7 @@ class BattleController:
         controller = getattr(scene, "_camera_controller", None)
         look_at = getattr(controller, "look_at", None)
         if callable(look_at):
-            position = getattr(goblin, "position", None)
+            position = getattr(creature, "position", None)
             if position is not None:
                 look_at(position)
 
@@ -108,26 +110,26 @@ class BattleController:
         scene.last_player_attack = {"damage": damage, "critical": critical}
         return damage, critical
 
-    def damage_active_goblin(self, amount: int | None = None) -> int:
+    def damage_active_creature(self, amount: int | None = None) -> int:
         scene = self.scene
-        goblin = getattr(scene, "active_battle_goblin", None)
-        if goblin is None or not getattr(goblin, "enabled", True):
+        creature = getattr(scene, "active_battle_creature", None)
+        if creature is None or not getattr(creature, "enabled", True):
             return 0
 
         if amount is None:
             amount, _critical = self.roll_player_attack_damage()
 
-        take_damage = getattr(goblin, "take_damage", None)
+        take_damage = getattr(creature, "take_damage", None)
         if callable(take_damage):
             hp = int(take_damage(amount))
         else:
-            max_hp = max(1, int(getattr(goblin, "max_hp", 5)))
-            hp = max(0, int(getattr(goblin, "hp", max_hp)) - max(0, int(amount)))
-            setattr(goblin, "max_hp", max_hp)
-            setattr(goblin, "hp", hp)
+            max_hp = max(1, int(getattr(creature, "max_hp", 5)))
+            hp = max(0, int(getattr(creature, "hp", max_hp)) - max(0, int(amount)))
+            setattr(creature, "max_hp", max_hp)
+            setattr(creature, "hp", hp)
 
         if hp <= 0:
-            self.remove_active_goblin()
+            self.remove_active_creature()
         return hp
 
     def end_player_turn(self) -> bool:
@@ -142,7 +144,7 @@ class BattleController:
         if callable(finish_player_turn):
             finish_player_turn()
 
-        self.resolve_goblin_intent()
+        self.resolve_enemy_intent()
         if not getattr(scene, "battle_mode", False):
             return True
 
@@ -156,54 +158,71 @@ class BattleController:
                 setattr(stats, "mana", max_mana)
         return True
 
-    def _plan_goblin_turn(self) -> None:
-        """Announce the active goblin's action before the player acts."""
+    def _plan_enemy_turn(self) -> None:
+        """Ask the active creature to announce its next combat action."""
 
-        goblin = getattr(self.scene, "active_battle_goblin", None)
-        if goblin is None or not getattr(goblin, "enabled", True):
-            self.goblin_intent = None
+        creature = getattr(self.scene, "active_battle_creature", None)
+        if creature is None or not getattr(creature, "enabled", True):
+            self.enemy_intent = None
             return
-        self.goblin_intent = {
-            "action": "attack",
-            "damage": self.GOBLIN_ATTACK_DAMAGE,
-        }
+        plan_intent = getattr(creature, "plan_combat_intent", None)
+        intent = plan_intent(self.scene) if callable(plan_intent) else None
+        if not isinstance(intent, dict):
+            intent = {
+                "action": "attack",
+                "damage": max(
+                    0,
+                    int(getattr(creature, "attack_damage", self.DEFAULT_ATTACK_DAMAGE)),
+                ),
+            }
+        self.enemy_intent = dict(intent)
 
-    def goblin_intent_text(self) -> str | None:
-        """Return player-facing text for the goblin's announced action."""
+    def enemy_intent_text(self) -> str | None:
+        """Return player-facing text for the active creature's announced action."""
 
-        intent = self.goblin_intent
+        intent = self.enemy_intent
         if not intent:
             return None
+        creature = getattr(self.scene, "active_battle_creature", None)
+        format_intent = getattr(creature, "combat_intent_text", None)
+        if callable(format_intent):
+            text = format_intent(intent)
+            if text:
+                return str(text)
+        name = creature_display_name(creature)
         if intent.get("action") == "attack":
             damage = max(0, int(intent.get("damage", 0)))
-            return f"Goblin plans to attack for {damage} damage"
-        return "Goblin is preparing an action"
+            return f"{name} plans to attack for {damage} damage"
+        return f"{name} is preparing an action"
 
-    def resolve_goblin_intent(self) -> int:
+    def resolve_enemy_intent(self) -> int:
         """Perform the action announced before the player's turn."""
 
-        intent = self.goblin_intent
-        self.goblin_intent = None
+        intent = self.enemy_intent
+        self.enemy_intent = None
         stats = getattr(self.scene, "player_stats", None)
         if not intent:
             return max(0, int(getattr(stats, "hp", 0)))
 
         if intent.get("action") == "attack":
-            hp = self.goblin_attack_player(int(intent.get("damage", 0)))
+            hp = self.enemy_attack_player(int(intent.get("damage", 0)))
         else:
             hp = max(0, int(getattr(stats, "hp", 0)))
 
         if getattr(self.scene, "battle_mode", False):
-            self._plan_goblin_turn()
+            self._plan_enemy_turn()
         return hp
 
-    def goblin_attack_player(self, amount: int = GOBLIN_ATTACK_DAMAGE) -> int:
-        """Apply the active goblin's response and return the player's new HP."""
+    def enemy_attack_player(self, amount: int | None = None) -> int:
+        """Apply the active creature's response and return the player's new HP."""
 
         stats = getattr(self.scene, "player_stats", None)
         if stats is None:
             return 0
 
+        creature = getattr(self.scene, "active_battle_creature", None)
+        if amount is None:
+            amount = getattr(creature, "attack_damage", self.DEFAULT_ATTACK_DAMAGE)
         damage = max(0, int(amount))
         max_hp = max(1, int(getattr(stats, "max_hp", 5)))
         hp = max(0, min(max_hp, int(getattr(stats, "hp", max_hp))))
@@ -211,8 +230,9 @@ class BattleController:
         setattr(stats, "max_hp", max_hp)
         setattr(stats, "hp", hp)
 
-        self.last_goblin_attack = {"damage": damage, "player_hp": hp}
-        self._combat_notice_text = f"Goblin attacks for {damage} damage!"
+        self.last_enemy_attack = {"damage": damage, "player_hp": hp}
+        name = creature_display_name(creature)
+        self._combat_notice_text = f"{name} attacks for {damage} damage!"
         self._combat_notice_expires_at = (
             time.monotonic() + self.COMBAT_NOTICE_SECONDS
         )
@@ -228,34 +248,58 @@ class BattleController:
             return None
         return self._combat_notice_text
 
-    def remove_active_goblin(self) -> bool:
+    def remove_active_creature(self) -> bool:
         scene = self.scene
-        goblin = getattr(scene, "active_battle_goblin", None)
-        if goblin is None:
+        creature = getattr(scene, "active_battle_creature", None)
+        if creature is None:
             self.end()
             return False
 
-        max_hp = max(1, int(getattr(goblin, "max_hp", 5)))
-        hp = int(getattr(goblin, "hp", max_hp))
+        max_hp = max(1, int(getattr(creature, "max_hp", 5)))
+        hp = int(getattr(creature, "hp", max_hp))
         if hp > 0:
             return False
 
-        scene.remove_entity(goblin)
-        receive_inventory_item(
-            scene,
-            InventoryItem(
-                GOBLIN_FISTS_NAME,
-                ItemType.WEAPON,
-                (
-                    "The goblin's own fighting style. "
-                    "Equip it to add two Strike cards."
-                ),
-                {"Strike Cards": f"+{GOBLIN_FISTS_STRIKE_CARD_BONUS}"},
-                GOBLIN_FISTS_ICON,
-            ),
-        )
+        scene.remove_entity(creature)
+        reward_items = getattr(creature, "combat_rewards", None)
+        rewards = reward_items(scene) if callable(reward_items) else ()
+        for reward in rewards or ():
+            receive_inventory_item(scene, reward)
         self.end()
         return True
+
+    # Compatibility surface for code written against the original
+    # Goblin-only controller. All battle state and behavior above is generic.
+    @property
+    def goblin_intent(self) -> CombatIntent | None:
+        return self.enemy_intent
+
+    @goblin_intent.setter
+    def goblin_intent(self, value: CombatIntent | None) -> None:
+        self.enemy_intent = value
+
+    @property
+    def last_goblin_attack(self) -> dict[str, int] | None:
+        return self.last_enemy_attack
+
+    @last_goblin_attack.setter
+    def last_goblin_attack(self, value: dict[str, int] | None) -> None:
+        self.last_enemy_attack = value
+
+    def damage_active_goblin(self, amount: int | None = None) -> int:
+        return self.damage_active_creature(amount)
+
+    def goblin_intent_text(self) -> str | None:
+        return self.enemy_intent_text()
+
+    def resolve_goblin_intent(self) -> int:
+        return self.resolve_enemy_intent()
+
+    def goblin_attack_player(self, amount: int = GOBLIN_ATTACK_DAMAGE) -> int:
+        return self.enemy_attack_player(amount)
+
+    def remove_active_goblin(self) -> bool:
+        return self.remove_active_creature()
 
     def end(self) -> None:
         scene = self.scene
@@ -273,10 +317,10 @@ class BattleController:
         if callable(end_battle):
             end_battle()
 
-        scene.active_battle_goblin = None
+        scene.active_battle_creature = None
         scene.battle_mode = False
-        self.goblin_intent = None
-        self.last_goblin_attack = None
+        self.enemy_intent = None
+        self.last_enemy_attack = None
         self._combat_notice_text = ""
         self._combat_notice_expires_at = 0.0
 

@@ -42,7 +42,7 @@ class BattleResourceOverlay:
 
     def sync_state(self) -> None:
         active = bool(getattr(self.scene, "battle_mode", False))
-        target = getattr(self.scene, "active_battle_goblin", None)
+        target = getattr(self.scene, "active_battle_creature", None)
         target_id = id(target) if target is not None else None
         if active:
             if not self._active or self._target_id != target_id:

@@ -223,11 +223,12 @@ the lighting implementation is being changed.
 | `src/game/world/detail_pipeline.py` | Ground-detail and contact-shadow decal creation and batching. |
 | `src/game/world/world_runtime.py` | Per-frame runtime helpers: bounds checks, road checks, height queries, entity updates, interaction, pause/inventory input, and mouse delta forwarding. |
 | `src/game/world/world_renderer.py` | World render pipeline: fog/projection/camera setup, sky, terrain, object passes, and HUD text/panel delegation. |
-| `src/game/world/combat.py` | Battle-mode controller for entering/leaving combat, announced enemy intent, explicit/zero-mana turn resolution, post-combat healing, player damage rolls, Goblin fists drops, and battle mouse state. |
+| `src/game/world/creature.py` | Generic combat-creature contract and reusable base state for names, health, attacks, encounter ranges, intents, and creature-owned rewards. |
+| `src/game/world/combat.py` | Creature-agnostic battle controller for entering/leaving combat, announced enemy intent, explicit/zero-mana turn resolution, post-combat healing, player damage rolls, creature-owned drops, and battle mouse state. |
 | `src/game/world/player_stats.py` | Player health, mana, attributes, critical-hit chance, initial card draw, and attack-damage rolls. |
 | `src/game/world/battle_cards.py` | Owns deck/hand/discard piles, draw-and-reshuffle rules, mana/exhaustion-based automatic turn endings, and Goblin fists bonus Strike synchronization. |
 | `src/game/world/collision_index.py` | Spatial collision candidate index for wall and polygon meshes, including dynamic/fallback mesh handling. |
-| `src/game/world/entity_registry.py` | Runtime entity registry that keeps entity lists, immediate draw lists, sprites, and collision meshes synchronized. |
+| `src/game/world/entity_registry.py` | Runtime entity registry that keeps entity/creature lists, immediate draw lists, sprites, and collision meshes synchronized. |
 | `src/game/world/environment.py` | Typed indoor volumes and portals, point queries, and legacy covered-region projection during lighting migration. |
 | `src/game/world/lighting_controller.py` | Lighting snapshot adapter, packet-runtime cache, alias-free packet operation, explicit backend transition, exact packet static-geometry validation, rollback-only request guard, and migration diagnostics. |
 | `src/game/world/legacy_lighting_bridge.py` | Lazily imported rollback-only owner for scene aliases, local-light/covered-region dictionaries, door-region bindings, compatibility uploads, CPU exposure, and ground/road/wall/fence rebuild policy. |
@@ -304,6 +305,9 @@ the lighting implementation is being changed.
   `spawn_pipeline.py`, and decals/details in `detail_pipeline.py`.
 - Add per-frame behavior as an `Entity` when it needs update, interaction, or
   collision hooks.
+- Add a combat-capable enemy by subclassing `Creature` (or implementing its
+  combat capabilities), then register it with `scene.add_entity()`. Encounter
+  detection, battle UI, attacks, and creature-owned rewards are generic.
 - Add player movement changes in `game.world.player_controller` when they affect
   input or collision.
 - Add rendering-only world pass changes in `game.world.world_renderer`.

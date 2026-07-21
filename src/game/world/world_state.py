@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from game.world.objects.polygon import Polygon
     from game.world.objects.wall_tile import WallTile
     from game.world.inventory import InventoryItem
+    from game.world.creature import CombatCreature
 
 
 class Drawable(Protocol):
@@ -81,6 +82,7 @@ class WorldBuildState:
     windows: list[Window] = field(default_factory=list)
     walls: list[WallTile] = field(default_factory=list)
     torches: list[Torch] = field(default_factory=list)
+    creatures: list[CombatCreature] = field(default_factory=list)
     goblins: list[Goblin] = field(default_factory=list)
     chests: list[Chest] = field(default_factory=list)
     showcase_chests: list[Chest] = field(default_factory=list)
@@ -150,7 +152,7 @@ class WorldUIState:
     inventory_open: bool = False
     showing_settings_menu: bool = False
     battle_mode: bool = False
-    active_battle_goblin: Entity | None = None
+    active_battle_creature: Entity | None = None
     inventory_selected_slot: int | None = None
     inventory_drag_source: int | None = None
     inventory_notice_text: str = ""
@@ -178,6 +180,15 @@ class WorldUIState:
     jump_speed: float = JUMP_SPEED
     gravity: float = GRAVITY
     camera_follow_smooth_hz: float = CAMERA_FOLLOW_SMOOTH_HZ
+
+    @property
+    def active_battle_goblin(self) -> Entity | None:
+        """Compatibility alias for the former Goblin-only battle target."""
+        return self.active_battle_creature
+
+    @active_battle_goblin.setter
+    def active_battle_goblin(self, value: Entity | None) -> None:
+        self.active_battle_creature = value
 
 
 OwnerT = TypeVar("OwnerT")

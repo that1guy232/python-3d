@@ -3,7 +3,7 @@
 A first-person 3D world built with Pygame Community Edition, PyOpenGL, and
 NumPy. The game
 includes procedural terrain and world dressing, buildings and interiors,
-interactive doors and chests, goblin encounters, inventory and battle UI, and
+interactive doors and chests, creature encounters (currently goblins), inventory and battle UI, and
 packet-based lighting with directional and point-light shadows.
 
 ## Quick start

@@ -13,11 +13,11 @@ import pygame
 from pygame.math import Vector3
 
 from game.config import (
+    BATTLE_LOOK_SMOOTH_HZ,
+    BATTLE_TRIGGER_DISTANCE,
     CAMERA_FOLLOW_SMOOTH_HZ,
     CAMERA_GROUND_OFFSET,
     FOV,
-    GOBLIN_BATTLE_LOOK_SMOOTH_HZ,
-    GOBLIN_BATTLE_TRIGGER_DISTANCE,
     GRAVITY,
     HEIGHT,
     PLAYER_HEAD_CLEARANCE,
@@ -32,6 +32,7 @@ from engine.collision import (
 from engine.rendering.lighting import INDOOR_LIGHT_FACTOR, covered_region_factor_at
 from engine.sound.sound_utils import Sounds
 from game.world.environment import environment_factor_at
+from game.world.creature import is_combat_creature
 
 _BASE_ENTITY_UPDATE = Entity.update
 _AMBIENT_BIRDS_KEY = "ambient_birds"
@@ -215,54 +216,76 @@ def _sprite_update_callables(scene, sprites) -> tuple:
     return updates
 
 
-def _goblin_battle_candidate(scene):
+def _combat_creatures(scene) -> tuple:
+    creatures = getattr(scene, "creatures", None)
+    if creatures is None:
+        creatures = tuple(
+            entity
+            for entity in (getattr(scene, "entities", ()) or ())
+            if is_combat_creature(entity)
+        )
+    return tuple(creatures or ())
+
+
+def _battle_candidate(scene):
     camera = getattr(scene, "camera", None)
     player_position = getattr(camera, "position", None)
     if player_position is None:
         return None
 
-    trigger_distance = max(
+    default_trigger_distance = max(
         0.0,
         float(
             getattr(
                 scene,
-                "goblin_battle_trigger_distance",
-                GOBLIN_BATTLE_TRIGGER_DISTANCE,
+                "battle_trigger_distance",
+                getattr(
+                    scene,
+                    "goblin_battle_trigger_distance",
+                    BATTLE_TRIGGER_DISTANCE,
+                ),
             )
         ),
     )
-    trigger_distance_sq = trigger_distance * trigger_distance
 
-    best_goblin = None
-    best_distance_sq = trigger_distance_sq
-    for goblin in getattr(scene, "goblins", ()) or ():
-        if not getattr(goblin, "enabled", True):
+    best_creature = None
+    best_distance_sq = math.inf
+    for creature in _combat_creatures(scene):
+        if not is_combat_creature(creature) or not getattr(creature, "enabled", True):
             continue
-        position = getattr(goblin, "position", None)
+        position = getattr(creature, "position", None)
         if position is None:
             continue
+
+        creature_trigger = getattr(creature, "battle_trigger_distance", None)
+        trigger_distance = (
+            default_trigger_distance
+            if creature_trigger is None
+            else max(0.0, float(creature_trigger))
+        )
+        trigger_distance_sq = trigger_distance * trigger_distance
 
         dx = float(position.x) - float(player_position.x)
         dz = float(position.z) - float(player_position.z)
         distance_sq = dx * dx + dz * dz
-        if distance_sq <= best_distance_sq:
+        if distance_sq <= trigger_distance_sq and distance_sq < best_distance_sq:
             best_distance_sq = distance_sq
-            best_goblin = goblin
+            best_creature = creature
 
-    return best_goblin
+    return best_creature
 
 
-def _start_battle_if_goblin_close(scene) -> bool:
+def _start_battle_if_creature_close(scene) -> bool:
     if getattr(scene, "battle_mode", False):
         return True
-    goblin = _goblin_battle_candidate(scene)
-    if goblin is None:
+    creature = _battle_candidate(scene)
+    if creature is None:
         return False
 
     start_battle = getattr(scene, "start_battle", None)
     if not callable(start_battle):
         return False
-    return bool(start_battle(goblin))
+    return bool(start_battle(creature))
 
 
 def _update_battle_camera(scene, dt: float) -> None:
@@ -276,8 +299,12 @@ def _update_battle_camera(scene, dt: float) -> None:
         float(
             getattr(
                 scene,
-                "goblin_battle_look_smooth_hz",
-                GOBLIN_BATTLE_LOOK_SMOOTH_HZ,
+                "battle_look_smooth_hz",
+                getattr(
+                    scene,
+                    "goblin_battle_look_smooth_hz",
+                    BATTLE_LOOK_SMOOTH_HZ,
+                ),
             )
         ),
     )
@@ -583,7 +610,7 @@ def update(scene, dt: float) -> None:
         scene._sway_controller.update(dt)
     with _profile(scene, "update.entities"):
         _update_entities(scene, dt)
-        if _start_battle_if_goblin_close(scene):
+        if _start_battle_if_creature_close(scene):
             _update_battle_camera(scene, dt)
             try:
                 hud.update(dt)

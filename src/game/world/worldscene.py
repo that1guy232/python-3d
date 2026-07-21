@@ -96,6 +96,7 @@ class WorldScene(Scene):
     windows = state_alias("build_state", "windows")
     walls = state_alias("build_state", "walls")
     torches = state_alias("build_state", "torches")
+    creatures = state_alias("build_state", "creatures")
     goblins = state_alias("build_state", "goblins")
     chests = state_alias("build_state", "chests")
     showcase_chests = state_alias("build_state", "showcase_chests")
@@ -115,7 +116,9 @@ class WorldScene(Scene):
     inventory_open = state_alias("ui_state", "inventory_open")
     showing_settings_menu = state_alias("ui_state", "showing_settings_menu")
     battle_mode = state_alias("ui_state", "battle_mode")
-    active_battle_goblin = state_alias("ui_state", "active_battle_goblin")
+    active_battle_creature = state_alias("ui_state", "active_battle_creature")
+    # Compatibility alias for integrations written before combat was generalized.
+    active_battle_goblin = state_alias("ui_state", "active_battle_creature")
     inventory_selected_slot = state_alias("ui_state", "inventory_selected_slot")
     inventory_drag_source = state_alias("ui_state", "inventory_drag_source")
     inventory_notice_text = state_alias("ui_state", "inventory_notice_text")
@@ -410,8 +413,8 @@ class WorldScene(Scene):
         """Unregister a runtime entity and its scene-facing resources."""
         return self.entity_registry.remove(entity)
 
-    def start_battle(self, goblin: Entity) -> bool:
-        return self.combat.start(goblin)
+    def start_battle(self, creature: Entity) -> bool:
+        return self.combat.start(creature)
 
     def player_attack_damage_preview(self) -> int:
         return self.combat.player_attack_damage_preview()
@@ -419,14 +422,22 @@ class WorldScene(Scene):
     def roll_player_attack_damage(self) -> tuple[int, bool]:
         return self.combat.roll_player_attack_damage()
 
+    def damage_battle_creature(self, amount: int | None = None) -> int:
+        return self.combat.damage_active_creature(amount)
+
     def damage_battle_goblin(self, amount: int | None = None) -> int:
-        return self.combat.damage_active_goblin(amount)
+        """Compatibility wrapper; use damage_battle_creature()."""
+        return self.damage_battle_creature(amount)
 
     def end_player_turn(self) -> bool:
         return self.combat.end_player_turn()
 
+    def remove_battle_creature(self) -> bool:
+        return self.combat.remove_active_creature()
+
     def remove_battle_goblin(self) -> bool:
-        return self.combat.remove_active_goblin()
+        """Compatibility wrapper; use remove_battle_creature()."""
+        return self.remove_battle_creature()
 
     def end_battle(self) -> None:
         return self.combat.end()

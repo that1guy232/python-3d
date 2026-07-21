@@ -20,6 +20,8 @@ _EXPORTS = {
     "Torch": (".objects", "Torch"),
     "Door": (".objects", "Door"),
     "Chest": (".objects", "Chest"),
+    "Creature": (".creature", "Creature"),
+    "CombatCreature": (".creature", "CombatCreature"),
     "BuildingSpec": (".world_content", "BuildingSpec"),
     "WorldContent": (".world_content", "WorldContent"),
     "building": (".world_content", "building"),

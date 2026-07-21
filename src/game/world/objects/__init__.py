@@ -16,6 +16,7 @@ from .torch import Torch
 from .door import Door
 from .chest import Chest
 from .window import Window
+from game.world.creature import Creature
 from .goblin import Goblin
 
 __all__ = [
@@ -26,5 +27,6 @@ __all__ = [
     "Door",
     "Chest",
     "Window",
+    "Creature",
     "Goblin",
 ]

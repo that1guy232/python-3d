@@ -20,6 +20,7 @@ from OpenGL.GL import (
 from OpenGL.GLU import gluProject
 
 from game.config import HEIGHT, WIDTH
+from game.world.creature import creature_display_name
 from game.world.ui.inventory_panel import InventoryPanel
 
 
@@ -29,16 +30,16 @@ class BattlePanel:
     def __init__(self, scene) -> None:
         self.scene = scene
 
-    def active_goblin(self):
-        goblin = getattr(self.scene, "active_battle_goblin", None)
-        if goblin is None or not getattr(goblin, "enabled", True):
+    def active_creature(self):
+        creature = getattr(self.scene, "active_battle_creature", None)
+        if creature is None or not getattr(creature, "enabled", True):
             return None
-        return goblin
+        return creature
 
     @staticmethod
-    def goblin_hp(goblin) -> tuple[int, int]:
-        max_hp = max(1, int(getattr(goblin, "max_hp", 5)))
-        hp = max(0, min(max_hp, int(getattr(goblin, "hp", max_hp))))
+    def creature_hp(creature) -> tuple[int, int]:
+        max_hp = max(1, int(getattr(creature, "max_hp", 5)))
+        hp = max(0, min(max_hp, int(getattr(creature, "hp", max_hp))))
         return hp, max_hp
 
     def player_stat_lines(self) -> list[str]:
@@ -52,11 +53,11 @@ class BattlePanel:
         ]
 
     def hp_anchor(self) -> tuple[float, float] | None:
-        goblin = self.active_goblin()
-        if goblin is None:
+        creature = self.active_creature()
+        if creature is None:
             return None
 
-        position = getattr(goblin, "position", None)
+        position = getattr(creature, "position", None)
         if position is None:
             return None
 
@@ -65,9 +66,9 @@ class BattlePanel:
                 1.0,
                 float(
                     getattr(
-                        goblin,
+                        creature,
                         "_sprite_height",
-                        getattr(goblin, "DEFAULT_HEIGHT", 42.0),
+                        getattr(creature, "DEFAULT_HEIGHT", 42.0),
                     )
                 ),
             )
@@ -180,12 +181,12 @@ class BattlePanel:
         text,
         anchor: tuple[float, float],
     ) -> tuple[float, float, float, float] | None:  # pragma: no cover - visual
-        goblin = self.active_goblin()
-        if goblin is None:
+        creature = self.active_creature()
+        if creature is None:
             return None
 
-        hp, max_hp = self.goblin_hp(goblin)
-        label = f"HP {hp}/{max_hp}"
+        hp, max_hp = self.creature_hp(creature)
+        label = f"{creature_display_name(creature)}  HP {hp}/{max_hp}"
         try:
             label_w = text.font.size(label)[0]
         except Exception:
@@ -299,9 +300,9 @@ class BattlePanel:
         )
         return True
 
-    def draw_goblin_intent(self, text) -> None:  # pragma: no cover - visual
+    def draw_enemy_intent(self, text) -> None:  # pragma: no cover - visual
         combat = getattr(self.scene, "combat", None)
-        intent_text = getattr(combat, "goblin_intent_text", None)
+        intent_text = getattr(combat, "enemy_intent_text", None)
         if not callable(intent_text):
             return
 
@@ -346,7 +347,7 @@ class BattlePanel:
             hp_rect = self.draw_hp_plate(text, hp_anchor)
         self.draw_player_stats(text)
         if not self.draw_combat_notice(text, hp_rect):
-            self.draw_goblin_intent(text)
+            self.draw_enemy_intent(text)
         battle_overlay = getattr(self.scene, "battle_overlay", None)
         if battle_overlay is not None:
             battle_overlay.draw(text)
