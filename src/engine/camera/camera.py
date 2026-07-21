@@ -41,7 +41,7 @@ class Camera:
         default_brightness=0.1,
     ):
         # keep external API types the same (pygame.Vector3)
-        self.position = position or Vector3(0, 0, -300)
+        self.position = position if position is not None else Vector3(0, 0, -300)
         self.rotation = rotation or Vector3(0, 0, 0)  # pitch (x), yaw (y), roll (z)
         self.speed = 5
 
@@ -566,13 +566,13 @@ class Camera:
     def move_camera(self, keys, speed, dt):
         """Movement using precomputed direction vectors (keeps same calls/semantics)."""
         # keys is expected to be pygame.key.get_pressed() or similar mapping
-        if keys[pygame.K_w]:
-            self.position -= self._ground_forward * speed * dt
-        if keys[pygame.K_s]:
-            self.position += self._ground_forward * speed * dt
-        if keys[pygame.K_a]:
-            self.position -= self._right * speed * dt
-        if keys[pygame.K_d]:
-            self.position += self._right * speed * dt
+        forward_axis = int(bool(keys[pygame.K_s])) - int(bool(keys[pygame.K_w]))
+        strafe_axis = int(bool(keys[pygame.K_d])) - int(bool(keys[pygame.K_a]))
+        movement = (
+            self._ground_forward * forward_axis + self._right * strafe_axis
+        )
+        if movement.length_squared() > 1.0:
+            movement.normalize_ip()
+        self.position += movement * speed * dt
 
         return self.position

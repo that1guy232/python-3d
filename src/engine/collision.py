@@ -185,6 +185,136 @@ def movement_blocked_by_wall(
             j = i
         return inside
 
+    def closest_point_on_segment_2d(
+        point: tuple[float, float],
+        start: tuple[float, float],
+        end: tuple[float, float],
+    ) -> tuple[tuple[float, float], float]:
+        seg_x = end[0] - start[0]
+        seg_z = end[1] - start[1]
+        length_sq = seg_x * seg_x + seg_z * seg_z
+        if length_sq <= eps:
+            closest = start
+        else:
+            t = (
+                (point[0] - start[0]) * seg_x
+                + (point[1] - start[1]) * seg_z
+            ) / length_sq
+            t = max(0.0, min(1.0, t))
+            closest = (start[0] + seg_x * t, start[1] + seg_z * t)
+        dx = point[0] - closest[0]
+        dz = point[1] - closest[1]
+        return closest, dx * dx + dz * dz
+
+    def closest_points_on_segments_2d(
+        player_start: tuple[float, float],
+        player_end: tuple[float, float],
+        wall_start: tuple[float, float],
+        wall_end: tuple[float, float],
+    ) -> tuple[float, tuple[float, float], tuple[float, float]]:
+        player_dx = player_end[0] - player_start[0]
+        player_dz = player_end[1] - player_start[1]
+        wall_dx = wall_end[0] - wall_start[0]
+        wall_dz = wall_end[1] - wall_start[1]
+        offset_x = wall_start[0] - player_start[0]
+        offset_z = wall_start[1] - player_start[1]
+        denominator = player_dx * wall_dz - player_dz * wall_dx
+        if abs(denominator) > eps:
+            player_t = (offset_x * wall_dz - offset_z * wall_dx) / denominator
+            wall_t = (offset_x * player_dz - offset_z * player_dx) / denominator
+            if 0.0 <= player_t <= 1.0 and 0.0 <= wall_t <= 1.0:
+                intersection = (
+                    player_start[0] + player_dx * player_t,
+                    player_start[1] + player_dz * player_t,
+                )
+                return 0.0, intersection, intersection
+
+        candidates = []
+        wall_point, distance_sq = closest_point_on_segment_2d(
+            player_start, wall_start, wall_end
+        )
+        candidates.append((distance_sq, player_start, wall_point))
+        wall_point, distance_sq = closest_point_on_segment_2d(
+            player_end, wall_start, wall_end
+        )
+        candidates.append((distance_sq, player_end, wall_point))
+        player_point, distance_sq = closest_point_on_segment_2d(
+            wall_start, player_start, player_end
+        )
+        candidates.append((distance_sq, player_point, wall_start))
+        player_point, distance_sq = closest_point_on_segment_2d(
+            wall_end, player_start, player_end
+        )
+        candidates.append((distance_sq, player_point, wall_end))
+        return min(candidates, key=lambda candidate: candidate[0])
+
+    def wall_radius_collision_normal(
+        face_verts: list[Vector3], face_normal: Vector3
+    ) -> Optional[Vector3]:
+        """Sweep the player's horizontal circle against a finite wall face."""
+        player_start = (float(old_pos.x), float(old_pos.z))
+        player_end = (float(new_pos.x), float(new_pos.z))
+        wall_points = [(float(vertex.x), float(vertex.z)) for vertex in face_verts]
+        edges = list(zip(wall_points, wall_points[1:] + wall_points[:1]))
+        if not edges:
+            return None
+
+        def distance_to_face_sq(point: tuple[float, float]) -> float:
+            return min(
+                closest_point_on_segment_2d(point, edge_start, edge_end)[1]
+                for edge_start, edge_end in edges
+            )
+
+        closest = min(
+            (
+                closest_points_on_segments_2d(
+                    player_start,
+                    player_end,
+                    edge_start,
+                    edge_end,
+                )
+                for edge_start, edge_end in edges
+            ),
+            key=lambda candidate: candidate[0],
+        )
+        closest_distance_sq, player_point, wall_point = closest
+        radius_sq = max(0.0, float(player_radius)) ** 2
+        start_distance_sq = distance_to_face_sq(player_start)
+
+        if start_distance_sq > radius_sq + eps:
+            collides = closest_distance_sq <= radius_sq + eps
+        else:
+            # When already touching, block only motion that moves closer. This
+            # permits tangential movement and lets an overlapping player escape.
+            collides = closest_distance_sq < start_distance_sq - eps
+        if not collides:
+            return None
+
+        normal = Vector3(
+            player_point[0] - wall_point[0],
+            0.0,
+            player_point[1] - wall_point[1],
+        )
+        if normal.length_squared() <= eps:
+            normal = Vector3(
+                player_start[0] - wall_point[0],
+                0.0,
+                player_start[1] - wall_point[1],
+            )
+        if normal.length_squared() <= eps:
+            normal = Vector3(face_normal.x, 0.0, face_normal.z)
+        if normal.length_squared() <= eps:
+            return None
+        normal = normal.normalize()
+        movement = Vector3(
+            player_end[0] - player_start[0],
+            0.0,
+            player_end[1] - player_start[1],
+        )
+        if movement.dot(normal) > 0.0:
+            normal = -normal
+        return normal
+
     def check_face(face_verts: list[Vector3]) -> Optional[Vector3]:
         if len(face_verts) < 3:
             return None
@@ -214,6 +344,9 @@ def movement_blocked_by_wall(
             sample_y = (overlap_min + overlap_max) * 0.5
             test_old = Vector3(old_pos.x, sample_y, old_pos.z)
             test_new = Vector3(new_pos.x, sample_y, new_pos.z)
+            radius_normal = wall_radius_collision_normal(face_verts, n)
+            if radius_normal is not None:
+                return radius_normal
 
         seg = test_new - test_old
 

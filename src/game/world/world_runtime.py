@@ -39,6 +39,7 @@ _AMBIENT_BIRDS_OUTDOOR_VOLUME = 0.035
 _AMBIENT_BIRDS_INDOOR_VOLUME = 0.004
 _DOOR_INTERACTION_FOCUS_PADDING = 4.0
 _DOOR_INTERACTION_DEPTH_PADDING = 8.0
+_MAX_PLAYER_VERTICAL_STEP = 1.0 / 60.0
 
 
 def _profile(scene, name: str):
@@ -132,6 +133,23 @@ def _player_foot_offset(scene) -> float:
 
 def _player_head_offset(scene) -> float:
     return float(getattr(scene, "player_head_clearance", PLAYER_HEAD_CLEARANCE))
+
+
+def _integrate_vertical_motion(
+    position_y: float,
+    velocity_y: float,
+    gravity: float,
+    dt: float,
+) -> tuple[float, float]:
+    """Integrate constant downward acceleration without frame-rate drift."""
+    step = max(0.0, float(dt))
+    gravity = float(gravity)
+    velocity_y = float(velocity_y)
+    position_y = float(position_y)
+    return (
+        position_y + velocity_y * step - 0.5 * gravity * step * step,
+        velocity_y - gravity * step,
+    )
 
 
 def _update_entities(scene, dt: float) -> None:
@@ -589,11 +607,7 @@ def update(scene, dt: float) -> None:
         target_cam_y = support_y_here + foot_offset
 
         if scene.camera.is_jumping:
-            old_vertical_position = scene.camera.position.copy()
-            scene.camera.vertical_velocity -= (
-                float(getattr(scene, "gravity", GRAVITY)) * dt
-            )
-            scene.camera.position.y += scene.camera.vertical_velocity * dt
+            gravity = float(getattr(scene, "gravity", GRAVITY))
             player_radius = _player_radius(scene)
             vertical_candidates = scene.collision_meshes_at(
                 scene.camera.position.x,
@@ -601,22 +615,49 @@ def update(scene, dt: float) -> None:
                 player_radius,
                 include_polygons=False,
             )
+            remaining = max(0.0, float(dt))
+            while remaining > 1e-9 and scene.camera.is_jumping:
+                step = min(remaining, _MAX_PLAYER_VERTICAL_STEP)
+                old_vertical_position = scene.camera.position.copy()
+                (
+                    scene.camera.position.y,
+                    scene.camera.vertical_velocity,
+                ) = _integrate_vertical_motion(
+                    scene.camera.position.y,
+                    scene.camera.vertical_velocity,
+                    gravity,
+                    step,
+                )
 
-            vertical_hit = resolve_player_vertical_collision(
-                vertical_candidates,
-                old_vertical_position,
-                scene.camera.position,
-                foot_offset=foot_offset,
-                head_offset=head_offset,
-                player_radius=player_radius,
-            )
-            if vertical_hit is not None:
-                scene.camera.position.y = vertical_hit.camera_y
-                if vertical_hit.kind == "floor":
+                vertical_hit = resolve_player_vertical_collision(
+                    vertical_candidates,
+                    old_vertical_position,
+                    scene.camera.position,
+                    foot_offset=foot_offset,
+                    head_offset=head_offset,
+                    player_radius=player_radius,
+                )
+                if vertical_hit is not None:
+                    scene.camera.position.y = vertical_hit.camera_y
+                    if vertical_hit.kind == "floor":
+                        scene.camera.vertical_velocity = 0.0
+                        scene.camera.is_jumping = False
+                    elif scene.camera.vertical_velocity > 0.0:
+                        scene.camera.vertical_velocity = 0.0
+
+                foot_y = scene.camera.position.y - foot_offset
+                support_y_here = _support_height_at(
+                    scene,
+                    scene.camera.position.x,
+                    scene.camera.position.z,
+                    foot_y,
+                )
+                target_cam_y = support_y_here + foot_offset
+                if scene.camera.position.y <= target_cam_y:
+                    scene.camera.position.y = target_cam_y
                     scene.camera.vertical_velocity = 0.0
                     scene.camera.is_jumping = False
-                elif scene.camera.vertical_velocity > 0.0:
-                    scene.camera.vertical_velocity = 0.0
+                remaining -= step
 
             foot_y = scene.camera.position.y - foot_offset
             support_y_here = _support_height_at(
@@ -626,10 +667,6 @@ def update(scene, dt: float) -> None:
                 foot_y,
             )
             target_cam_y = support_y_here + foot_offset
-            if scene.camera.position.y <= target_cam_y:
-                scene.camera.position.y = target_cam_y
-                scene.camera.vertical_velocity = 0.0
-                scene.camera.is_jumping = False
         else:
             smooth_hz = float(
                 getattr(scene, "camera_follow_smooth_hz", CAMERA_FOLLOW_SMOOTH_HZ)

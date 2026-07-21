@@ -32,6 +32,7 @@ class PlayerCameraController:
         self.rot_target_x = float(camera.rotation.x)
         self.rot_target_y = float(camera.rotation.y)
         self.rot_smooth_hz = float(rot_smooth_hz)
+        self._jump_was_down = False
 
     @staticmethod
     def _wrap_pi(angle: float) -> float:
@@ -307,31 +308,33 @@ class PlayerCameraController:
         keys = pygame.key.get_pressed()
         # pygame ScancodeWrapper is not iterable in some builds; check relevant
         # keys explicitly instead of using any(keys).
-        moving = bool(
+        movement_requested = bool(
             keys[pygame.K_w] or keys[pygame.K_a] or keys[pygame.K_s] or keys[pygame.K_d]
         )
         sprinting = bool(keys[pygame.K_LSHIFT])
         jump_pressed = bool(keys[pygame.K_SPACE])
-        any_key_down = bool(moving or sprinting or jump_pressed)
+        jump_requested = jump_pressed and not self._jump_was_down
+        self._jump_was_down = jump_pressed
+        any_key_down = bool(movement_requested or sprinting or jump_pressed)
         # Inform headbob controller about keyboard activity so it can manage idle sway
         hb = getattr(self.scene, "_headbob", None)
         if hb is not None:
             hb.notify_input_active(any_key_down)
 
-        if not moving and not jump_pressed:
-            return False, sprinting
+        if not movement_requested and not jump_requested:
+            return False, False
 
         road_multi = float(getattr(self.scene, "road_speed_multiplier", 1.5))
         base_speed = float(getattr(self.scene, "walk_speed", BASE_SPEED))
         sprint_speed = float(getattr(self.scene, "sprint_speed", SPRINT_SPEED))
         speed = sprint_speed if sprinting else base_speed
-        if moving and self.scene.is_on_road(
+        if movement_requested and self.scene.is_on_road(
             self.camera.position.x, self.camera.position.z
         ):
             speed *= road_multi
         # speed is in world units/sec; Camera.move_camera applies dt internally
 
-        if jump_pressed and not self.camera.is_jumping:
+        if jump_requested and not self.camera.is_jumping:
             desired_ground_y = (
                 self._support_height_at_current_position() + self._eye_to_foot_offset()
             )
@@ -343,14 +346,20 @@ class PlayerCameraController:
             )
 
         old_position = self.camera.position.copy()
-        if moving:
+        if movement_requested:
             self.camera.move_camera(keys, speed, dt)
             if self._attempt_boundary_slide(old_position):
                 pass
             else:
                 self._attempt_wall_slide(old_position)
 
-        return moving, sprinting
+        horizontal_delta = self.camera.position - old_position
+        horizontal_delta.y = 0.0
+        moving = (
+            horizontal_delta.length_squared() > 1e-8
+            and not self.camera.is_jumping
+        )
+        return moving, bool(sprinting and moving)
 
 
 CameraController = PlayerCameraController
