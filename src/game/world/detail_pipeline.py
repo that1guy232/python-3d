@@ -27,6 +27,7 @@ from engine.textures.texture_utils import (
 )
 
 from game.world.builder_support import _dispose_value, _dispose_values
+from game.world.tree_shadow import TreeSunShadowCaster
 
 SHADOW_BUILDING_CLIP_MARGIN = 2.0
 
@@ -93,14 +94,11 @@ def _build_shadow_decals(scene) -> Iterator[float]:
 
     start_time = time.perf_counter()
 
-    tree_shadow_texture = create_shadow_texture(
-        width_px=160,
-        height_px=128,
-        max_alpha=0.46,
-        inner_ratio=0.16,
-        outer_ratio=0.96,
-        falloff_exp=1.55,
-        pixelated=False,
+    resources = getattr(scene, "render_resources", scene)
+    _dispose_value(getattr(resources, "tree_shadow_caster", None))
+    resources.tree_shadow_caster = TreeSunShadowCaster(
+        scene.trees,
+        scene.lighting,
     )
 
     yield 0.03
@@ -182,31 +180,6 @@ def _build_shadow_decals(scene) -> Iterator[float]:
             build_vbo=False,
         )
 
-    def make_tree_shadow_decal_for_sprite(sprite: WorldSprite) -> Decal:
-
-        w, h = sprite.size
-
-        base_width = max(20.0, min(78.0, w * rng.uniform(0.55, 0.82)))
-
-        base_depth = max(14.0, min(54.0, h * rng.uniform(0.18, 0.32)))
-
-        center_y = scene.ground_height_at(sprite.position.x, sprite.position.z)
-
-        return Decal(
-            center=Vector3(sprite.position.x, center_y, sprite.position.z),
-            size=(base_width, base_depth),
-            texture=tree_shadow_texture,
-            rotation_deg=rng.uniform(0.0, 360.0),
-            subdiv_u=3,
-            subdiv_v=3,
-            height_fn=scene.ground_height_at,
-            elevation=0.68,
-            uv_repeat=(1.0, 1.0),
-            color=(1.0, 1.0, 1.0),
-            receiver_fn=shadow_receiver,
-            build_vbo=False,
-        )
-
     def make_contact_decal_for_sprite(
         sprite: WorldSprite,
         *,
@@ -246,7 +219,7 @@ def _build_shadow_decals(scene) -> Iterator[float]:
     trees = list(scene.trees)
     grasses = list(getattr(scene, "grasses", ()))
     rocks = list(getattr(scene, "rocks", ()))
-    decal_count = len(trees) * 2 + len(grasses) + len(rocks)
+    decal_count = len(trees) + len(grasses) + len(rocks)
     completed_decals = 0
 
     def batch_progress() -> float:
@@ -256,11 +229,9 @@ def _build_shadow_decals(scene) -> Iterator[float]:
 
     for index, sprite in enumerate(trees, 1):
 
-        decals.append(make_tree_shadow_decal_for_sprite(sprite))
-
         decals.append(make_tree_detail_decal_for_sprite(sprite))
 
-        completed_decals += 2
+        completed_decals += 1
         if index % 100 == 0:
             yield batch_progress()
 
@@ -291,7 +262,7 @@ def _build_shadow_decals(scene) -> Iterator[float]:
     yield 0.90
 
     print(
-        f"Created {len(scene.trees)} tree shadow/detail pairs, "
+        f"Created {len(scene.trees)} sun-cast tree shadows/floor details, "
         f"{len(getattr(scene, 'grasses', ()))} grass, "
         f"and {len(getattr(scene, 'rocks', ()))} rock shadow decals."
     )

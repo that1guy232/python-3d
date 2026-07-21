@@ -184,6 +184,8 @@ class WorldRenderer:
         resources = self.resources
         if resources.ground_mesh is not None:
             yield resources.ground_mesh
+        if resources.tree_shadow_caster is not None:
+            yield resources.tree_shadow_caster
         for attr_name in (
             "fence_meshes",
             "wall_tile_batches",
@@ -236,6 +238,8 @@ class WorldRenderer:
             tuple(float(value) for value in center) if center is not None else None,
             float(getattr(mesh, "bounds_radius", 0.0)),
             bool(getattr(mesh, "casts_shadows", True)),
+            bool(getattr(mesh, "casts_sun_shadows", True)),
+            bool(getattr(mesh, "casts_point_shadows", True)),
             bool(getattr(mesh, "alpha_test", False)),
             float(getattr(mesh, "alpha_cutoff", 0.0)),
             int(getattr(mesh, "texture", 0) or 0),
@@ -498,7 +502,8 @@ class WorldRenderer:
             caster_records = tuple(
                 (mesh, source_revision)
                 for mesh, source_revision in shadow_records
-                if self._mesh_intersects_point_light(mesh, position, light_range)
+                if getattr(mesh, "casts_point_shadows", True)
+                and self._mesh_intersects_point_light(mesh, position, light_range)
             )
             casters_by_map[map_index] = tuple(
                 mesh for mesh, _source_revision in caster_records

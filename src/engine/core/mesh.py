@@ -71,6 +71,7 @@ class BatchedMesh:
     alpha_cutoff: float = 0.01
     casts_shadows: bool = True
     casts_sun_shadows: bool = True
+    casts_point_shadows: bool = True
     environment_lighting: bool = True
     owns_vbo: bool = True
     exposure_baseline: float = 1.0
@@ -143,6 +144,7 @@ class BatchedMesh:
         alpha_cutoff: float = 0.01,
         casts_shadows: bool = True,
         casts_sun_shadows: bool = True,
+        casts_point_shadows: bool = True,
         height_sampler: Optional[object] = None,
         exposure_baseline: float = 1.0,
         keep_vertex_data: bool = True,
@@ -183,6 +185,7 @@ class BatchedMesh:
             alpha_cutoff=max(0.0, min(1.0, float(alpha_cutoff))),
             casts_shadows=bool(casts_shadows),
             casts_sun_shadows=bool(casts_sun_shadows),
+            casts_point_shadows=bool(casts_point_shadows),
             environment_lighting=bool(environment_lighting),
             exposure_baseline=baseline,
             vertex_width=int(upload_data.shape[1]) if upload_data.ndim == 2 else 0,

@@ -9,7 +9,13 @@ from game.world.world_state import WorldBuildState, WorldRenderResources, WorldU
 class SceneResourceDisposer:
     """Dispose explicit world resource owners without requiring a scene."""
 
-    SINGLE_RESOURCE_ATTRS = ("ground_mesh", "sky", "road", "decal_batch")
+    SINGLE_RESOURCE_ATTRS = (
+        "ground_mesh",
+        "sky",
+        "road",
+        "decal_batch",
+        "tree_shadow_caster",
+    )
     COLLECTION_RESOURCE_ATTRS = (
         "fence_meshes",
         "wall_tile_batches",
@@ -113,6 +119,7 @@ class SceneResourceDisposer:
             resources._ground_height_sampler = None
         resources.road = None
         resources.decal_batch = None
+        resources.tree_shadow_caster = None
         if hasattr(resources, "collision_spatial_index"):
             resources.collision_spatial_index = None
         else:

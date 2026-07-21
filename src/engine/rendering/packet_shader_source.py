@@ -107,6 +107,7 @@ uniform float u_light_ambient;
 uniform float u_light_diffuse;
 uniform float u_light_max_factor;
 uniform int u_sun_shadow_enabled;
+uniform int u_receive_sun_shadows;
 uniform sampler2D u_sun_shadow_map;
 uniform vec2 u_sun_shadow_texel_size;
 uniform float u_sun_shadow_bias;
@@ -347,7 +348,7 @@ float brightness_at(vec3 world_pos, float receiver_factor, vec3 surface_normal)
 
 float sun_visibility(vec3 surface_normal)
 {
-    if (u_sun_shadow_enabled == 0) {
+    if (u_sun_shadow_enabled == 0 || u_receive_sun_shadows == 0) {
         return 1.0;
     }
     vec3 shadow_coord = v_sun_shadow_coord.xyz / v_sun_shadow_coord.w;

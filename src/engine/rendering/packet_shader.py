@@ -237,6 +237,10 @@ class PacketTextureLightingShader:
             int(dynamic and receiver.directional),
         )
         self._uniform1i(
+            "u_receive_sun_shadows",
+            int(receiver.receives_sun_shadows),
+        )
+        self._uniform1i(
             "u_clamp_directional_material",
             int(receiver.clamp_directional_material),
         )
@@ -448,6 +452,7 @@ def get_packet_texture_lighting_shader() -> PacketTextureLightingShader | None:
             "u_light_diffuse",
             "u_light_max_factor",
             "u_sun_shadow_enabled",
+            "u_receive_sun_shadows",
             "u_sun_shadow_map",
             "u_sun_shadow_texel_size",
             "u_sun_shadow_bias",

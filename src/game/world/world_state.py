@@ -119,6 +119,7 @@ class WorldRenderResources:
     sky: RenderValue | None = None
     road: RenderValue | None = None
     decal_batch: RenderValue | None = None
+    tree_shadow_caster: Disposable | None = None
     ground_height_sampler: Callable[[float, float], float] | None = None
     collision_cell_size: float = 128.0
     collision_spatial_index: dict[str, Any] | None = None

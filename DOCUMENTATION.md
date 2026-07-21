@@ -167,7 +167,7 @@ separately releases its directional and point-shadow GPU resources.
 | `src/engine/__init__.py` | Engine-layer public exports. |
 | `src/engine/entity.py` | Runtime entity base class for update/draw/interact/collision hooks. |
 | `src/engine/collision.py` | Mesh collision helpers for wall blocking, floor support, and vertical collision resolution. |
-| `src/engine/lighting_receiver.py` | Immutable six-channel lighting receiver contract, local-light evaluation policy, material clamps, and compatibility-shader projection. |
+| `src/engine/lighting_receiver.py` | Immutable lighting receiver contract, local-light evaluation policy, sun-shadow reception, material clamps, and compatibility-shader projection. |
 | `src/engine/render_style_state.py` | Process-wide fog and vibrance state shared by fixed-function and programmable render paths. |
 
 ### Lighting Backends
@@ -193,7 +193,7 @@ the lighting implementation is being changed.
 | `src/engine/rendering/frame_comparison.py` | Stable-pixel masking and quantitative RGB parity metrics for renderer A/B gates. |
 | `src/engine/rendering/geometry_lighting.py` | Resolves explicit packet/legacy vertex representation, retaining lazy shader probing only for standalone compatibility callers. |
 | `src/engine/rendering/render_environment.py` | Immutable render-facing environment regions and portals. |
-| `src/engine/rendering/sprite.py` | Camera-facing world sprites and animated sprites. |
+| `src/engine/rendering/sprite.py` | Camera-facing world sprites and animated sprites, with billboard-safe sun-shadow reception policy. |
 | `src/engine/rendering/sky_renderer.py` | Sky, sun/moon/star, and cloud render orchestration. |
 | `src/engine/rendering/cloud_renderer.py` | Batched pixel-art cloud rendering. |
 | `src/engine/rendering/decal.py` | Terrain-conforming textured decal mesh. |
@@ -222,7 +222,8 @@ the lighting implementation is being changed.
 | `src/game/world/terrain_pipeline.py` | Terrain and boundary construction: ground mesh generation and fence ring rebuilding. |
 | `src/game/world/road_pipeline.py` | Road construction and batching for the main road plus building access roads. |
 | `src/game/world/spawn_pipeline.py` | Tree/grass/rock sprite spawning and goblin placement/registration. |
-| `src/game/world/detail_pipeline.py` | Ground-detail and contact-shadow decal creation and batching. |
+| `src/game/world/detail_pipeline.py` | Ground-detail/contact-shadow decal batching and tree sun-caster creation. |
+| `src/game/world/tree_shadow.py` | Alpha-cutout tree silhouettes submitted to the directional shadow map. |
 | `src/game/world/world_runtime.py` | Per-frame runtime helpers: bounds checks, road checks, height queries, entity updates, interaction, pause/inventory input, and mouse delta forwarding. |
 | `src/game/world/world_renderer.py` | World render pipeline: fog/projection/camera setup, sky, terrain, object passes, and HUD text/panel delegation. |
 | `src/game/world/collision_index.py` | Spatial collision candidate index for wall and polygon meshes, including dynamic/fallback mesh handling. |

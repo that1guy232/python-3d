@@ -69,6 +69,9 @@ DEFAULT_SPRITE_LIGHTING_RECEIVER = LightingReceiver(
     fog=True,
     shine=True,
     point=True,
+    # Camera-facing billboard geometry does not match its fixed sun-caster
+    # plane. Sampling that plane here creates a yaw-dependent vertical stripe.
+    receives_sun_shadows=False,
 )
 
 

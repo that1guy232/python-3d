@@ -48,6 +48,7 @@ class LightingReceiver:
     fog: bool
     shine: bool
     point: bool = False
+    receives_sun_shadows: bool = True
     evaluation: LightingEvaluation = LightingEvaluation.DYNAMIC
     clamp_directional_material: bool = False
     clamp_lit_material: bool = False
