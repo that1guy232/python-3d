@@ -232,11 +232,15 @@ class PlayerCameraController:
             dot = attempted.dot(n)
             slide = attempted - n * dot
             new_pos = old_position + slide
-            # If projection made no meaningful progress, stop to avoid loop.
-            if (new_pos - self.camera.position).length_squared() <= eps:
-                # Ensure we don't leave the camera stuck inside the wall.
+            if (new_pos - old_position).length_squared() <= eps:
+                # The collision removes the entire attempted movement.
                 self.camera.position = old_position
                 slid = True
+                break
+
+            if (new_pos - self.camera.position).length_squared() <= eps:
+                # The attempted movement is already tangent to this contact.
+                # Keep it instead of treating a zero correction as a blockage.
                 break
 
             self.camera.position = new_pos
