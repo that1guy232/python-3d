@@ -25,17 +25,18 @@ from game.config import (
     MOUSE_SENSITIVITY,
     SPRINT_SPEED,
 )
-from game.world.inventory import empty_inventory
+from game.inventory import empty_inventory
 
 if TYPE_CHECKING:
     from engine.rendering.lighting_state import LocalBrightnessLight
     from game.world.environment import EnvironmentVolume
-    from game.world.objects import Chest, Door, Goblin, Road, Torch, Window
+    from game.actors.creature import CombatCreature
+    from game.actors.goblin import Goblin
+    from game.inventory import InventoryItem
+    from game.world.objects import Chest, Door, Road, Torch, Window
     from game.world.objects.building import Building
     from game.world.objects.polygon import Polygon
     from game.world.objects.wall_tile import WallTile
-    from game.world.inventory import InventoryItem
-    from game.world.creature import CombatCreature
 
 
 class Drawable(Protocol):

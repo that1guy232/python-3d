@@ -14,7 +14,7 @@ from OpenGL.GL import (
 )
 
 from game.config import HEIGHT, WIDTH
-from game.world.ui.interactions import WorldUIInteractions
+from game.ui.interactions import WorldUIInteractions
 
 
 class PauseMenuPanel:

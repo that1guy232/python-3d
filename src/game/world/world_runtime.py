@@ -32,7 +32,7 @@ from engine.collision import (
 from engine.rendering.lighting import INDOOR_LIGHT_FACTOR, covered_region_factor_at
 from engine.sound.sound_utils import Sounds
 from game.world.environment import environment_factor_at
-from game.world.creature import is_combat_creature
+from game.actors.creature import is_combat_creature
 
 _BASE_ENTITY_UPDATE = Entity.update
 _AMBIENT_BIRDS_KEY = "ambient_birds"

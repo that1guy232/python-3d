@@ -52,13 +52,13 @@ from game.resources.paths import (
     STEP1_SOUND_PATH,
 )
 from game.resources.texture_manager import load_world_textures
-from game.world.battle_cards import BattleCardLoadout
-from game.world.player_controller import PlayerCameraController
-from game.world.ui.battle_menu import BattleMenu
-from game.world.ui.battle_overlay import BattleResourceOverlay
-from game.world.ui.pause_menu import PauseMenu
-from game.world.ui.setting_menu import SettingMenu
-from game.world.ui.world_hud import WorldHUD
+from game.combat.cards import BattleCardLoadout
+from game.player.controller import PlayerCameraController
+from game.ui.battle_menu import BattleMenu
+from game.ui.battle_overlay import BattleResourceOverlay
+from game.ui.pause_menu import PauseMenu
+from game.ui.setting_menu import SettingMenu
+from game.ui.world_hud import WorldHUD
 
 from OpenGL.GL import (
     glEnable,

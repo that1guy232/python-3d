@@ -43,8 +43,12 @@ Runtime code is split by ownership:
 
 - `src/engine/` contains reusable loop, scene, camera, rendering, collision, UI,
   texture, sound, and engine config code.
-- `src/game/` contains the world game, game config, authored content, and asset
-  resource catalogs.
+- `src/game/world/` contains only world construction, content, objects,
+  rendering, lighting, runtime, and scene orchestration.
+- `src/game/actors/`, `combat/`, `player/`, and `ui/` contain their respective
+  game systems; `src/game/inventory.py` owns item and equipment state.
+- `src/game/resources/` and `src/game/config.py` contain asset catalogs and game
+  tuning.
 
 See [DOCUMENTATION.md](DOCUMENTATION.md) for runtime flow, subsystem ownership,
 extension points, lighting architecture, and a detailed source map.

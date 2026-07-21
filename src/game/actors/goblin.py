@@ -46,8 +46,8 @@ from OpenGL.GL import (
 
 from engine.rendering.sprite import AnimatedWorldSprite
 from engine.sound.sound_utils import Sounds
-from game.world.creature import Creature
-from game.world.inventory import (
+from game.actors.creature import Creature
+from game.inventory import (
     GOBLIN_FISTS_ICON,
     GOBLIN_FISTS_NAME,
     GOBLIN_FISTS_STRIKE_CARD_BONUS,

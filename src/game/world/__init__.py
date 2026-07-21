@@ -20,19 +20,14 @@ _EXPORTS = {
     "Torch": (".objects", "Torch"),
     "Door": (".objects", "Door"),
     "Chest": (".objects", "Chest"),
-    "Creature": (".creature", "Creature"),
-    "CombatCreature": (".creature", "CombatCreature"),
     "BuildingSpec": (".world_content", "BuildingSpec"),
     "WorldContent": (".world_content", "WorldContent"),
     "building": (".world_content", "building"),
-    "BattleController": (".combat", "BattleController"),
     "SceneCollisionIndex": (".collision_index", "SceneCollisionIndex"),
     "SceneEntityRegistry": (".entity_registry", "SceneEntityRegistry"),
     "StaticLightingController": (".lighting_controller", "StaticLightingController"),
     "SceneResourceDisposer": (".scene_resources", "SceneResourceDisposer"),
-    "PlayerStats": (".player_stats", "PlayerStats"),
     "spawn_world_sprites": (".world_spawner", "spawn_world_sprites"),
-    "WorldHUD": (".ui.world_hud", "WorldHUD"),
 }
 
 __all__ = list(_EXPORTS)

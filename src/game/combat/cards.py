@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import random
 
-from game.world.inventory import (
+from game.inventory import (
     GOBLIN_FISTS_NAME,
     GOBLIN_FISTS_STRIKE_CARD_BONUS,
     ItemType,
     equipped_item,
 )
-from game.world.ui.card import Card
+from game.ui.card import Card
 
 
 class BattleCardLoadout:

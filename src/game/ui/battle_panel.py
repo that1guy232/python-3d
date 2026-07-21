@@ -20,8 +20,8 @@ from OpenGL.GL import (
 from OpenGL.GLU import gluProject
 
 from game.config import HEIGHT, WIDTH
-from game.world.creature import creature_display_name
-from game.world.ui.inventory_panel import InventoryPanel
+from game.actors.creature import creature_display_name
+from game.ui.inventory_panel import InventoryPanel
 
 
 class BattlePanel:

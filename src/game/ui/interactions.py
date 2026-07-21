@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from game.config import HEIGHT, WIDTH
-from game.world.inventory import (
+from game.inventory import (
     BACKPACK_SLOT_COUNT,
     EQUIPMENT_SLOT_COUNT,
     inventory_slots,

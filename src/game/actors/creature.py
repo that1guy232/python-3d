@@ -1,4 +1,4 @@
-"""Generic world creatures that can participate in turn-based combat."""
+"""Generic game creatures that can participate in turn-based combat."""
 
 from __future__ import annotations
 

@@ -9,8 +9,8 @@ from contextlib import nullcontext
 import random
 from pygame.math import Vector3
 from engine.rendering.sprite import WorldSprite
-from game.world.ui.compass_overlay import CompassOverlay
-from game.world.ui.minimap_overlay import MiniMapOverlay
+from game.ui.compass_overlay import CompassOverlay
+from game.ui.minimap_overlay import MiniMapOverlay
 from engine.textures.texture_utils import load_texture
 from game.resources.paths import (
     COMPASS_BASE_TEXTURE_PATH,

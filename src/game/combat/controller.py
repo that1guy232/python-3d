@@ -1,18 +1,18 @@
-"""Battle-mode orchestration for world scenes."""
+"""Battle-mode orchestration for game scenes."""
 
 from __future__ import annotations
 
 import time
 from typing import TYPE_CHECKING
 
-from game.world.creature import (
+from game.actors.creature import (
     CombatCreature,
     CombatIntent,
     creature_display_name,
     is_combat_creature,
 )
-from game.world.inventory import receive_inventory_item
-from game.world.player_stats import PlayerStats
+from game.inventory import receive_inventory_item
+from game.player.stats import PlayerStats
 
 if TYPE_CHECKING:
     from game.world.worldscene import WorldScene

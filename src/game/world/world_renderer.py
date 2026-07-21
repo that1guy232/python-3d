@@ -69,11 +69,11 @@ from game.world.lighting_receivers import (
     SKY_SUN_LIGHTING_RECEIVER,
     SPRITE_LIGHTING_RECEIVER,
 )
-from game.world.inventory import active_inventory_notice
-from game.world.objects.goblin import draw_goblin_shadows_batched
-from game.world.ui.battle_panel import BattlePanel
-from game.world.ui.inventory_panel import InventoryPanel
-from game.world.ui.pause_panel import PauseMenuPanel
+from game.actors.goblin import draw_goblin_shadows_batched
+from game.inventory import active_inventory_notice
+from game.ui.battle_panel import BattlePanel
+from game.ui.inventory_panel import InventoryPanel
+from game.ui.pause_panel import PauseMenuPanel
 from game.world.world_state import WorldRenderResources, WorldUIState
 
 

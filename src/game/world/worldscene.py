@@ -28,12 +28,12 @@ from engine.camera import Camera
 from engine.core.scene import Scene
 from engine.entity import Entity
 from game.world import world_builder, world_runtime, world_setup
-from game.world.combat import BattleController
+from game.combat.controller import BattleController
 from game.world.collision_index import SceneCollisionIndex
 from game.world.entity_registry import SceneEntityRegistry
 from game.world.lighting_controller import StaticLightingController
 from game.world.scene_resources import SceneResourceDisposer
-from game.world.ui.interactions import WorldUIInteractions
+from game.ui.interactions import WorldUIInteractions
 from game.world.world_content import WorldContent
 from game.world.world_renderer import WorldRenderer
 from game.world.world_road_planner import create_building_access_roads

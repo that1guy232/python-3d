@@ -1,16 +1,18 @@
 # Program Documentation
 
 This project is a Pygame/OpenGL first-person 3D world. The code is organized
-around a small reusable engine package and a game package that owns the world,
-terrain, buildings, roads, sprites, player movement, UI, and runtime entities.
+around a small reusable engine package and focused game packages for the world,
+actors, combat, player state and movement, inventory, UI, and resources.
 
 The package boundary is intentional:
 
 - `engine.*` contains reusable runtime services: the main loop, scene protocol,
   camera helpers, rendering primitives, collision helpers, generic UI widgets,
   texture utilities, sound helpers, and engine-level config.
-- `game.*` contains project-specific code: world construction/runtime/rendering,
-  authored content, world objects, world UI, game tuning, and asset catalogs.
+- `game.world.*` is limited to world construction/runtime/rendering, authored
+  content, environmental objects, lighting, and world-scene orchestration.
+- The sibling `game.actors`, `game.combat`, `game.player`, `game.ui`,
+  `game.inventory`, and `game.resources` modules own the other game domains.
 - Dependency direction should stay one-way: game code can import engine code,
   but engine code should not import game code.
 
@@ -62,10 +64,10 @@ The main menu accepts a mouse click, Enter, keypad Enter, or Space to start.
    owners from `world_state.py`: build state, render resources, and UI state. It
    keeps temporary compatibility aliases for older callers and delegates most work:
    setup to `world_setup.py`, object construction orchestration to `world_builder.py`,
-   runtime behavior to `world_runtime.py`, combat to `combat.py`, entity
+   runtime behavior to `world_runtime.py`, combat to `game.combat.controller`, entity
    registration to `entity_registry.py`, collision indexing to
    `collision_index.py`, static lighting refresh to `lighting_controller.py`,
-   UI event routing to `ui/interactions.py`, resource cleanup to
+   UI event routing to `game.ui.interactions`, resource cleanup to
    `scene_resources.py`, road planning to `world_road_planner.py`, and drawing to
    `world_renderer.py`.
 
@@ -137,7 +139,7 @@ separately releases its directional and point-shadow GPU resources.
 | File | Quick docs |
 | --- | --- |
 | `src/main.py` | Minimal launch file. Builds the first scene and starts `Engine.run()`. |
-| `src/game/__init__.py` | Game package marker for project-specific world code and resources. |
+| `src/game/__init__.py` | Game package marker for actors, combat, inventory, player systems, UI, resources, and worlds. |
 | `src/game/main_menu.py` | Boot menu scene with a visible cursor and Start Game button that transitions into the loading/world flow. |
 | `src/engine/config.py` | Engine display, view, audio mute, and performance defaults. Reads `PY3D_*` environment flags. |
 | `src/game/config.py` | Game movement, sky, player, and goblin tuning. Re-exports engine defaults for game modules. |
@@ -223,10 +225,6 @@ the lighting implementation is being changed.
 | `src/game/world/detail_pipeline.py` | Ground-detail and contact-shadow decal creation and batching. |
 | `src/game/world/world_runtime.py` | Per-frame runtime helpers: bounds checks, road checks, height queries, entity updates, interaction, pause/inventory input, and mouse delta forwarding. |
 | `src/game/world/world_renderer.py` | World render pipeline: fog/projection/camera setup, sky, terrain, object passes, and HUD text/panel delegation. |
-| `src/game/world/creature.py` | Generic combat-creature contract and reusable base state for names, health, attacks, encounter ranges, intents, and creature-owned rewards. |
-| `src/game/world/combat.py` | Creature-agnostic battle controller for entering/leaving combat, announced enemy intent, explicit/zero-mana turn resolution, post-combat healing, player damage rolls, creature-owned drops, and battle mouse state. |
-| `src/game/world/player_stats.py` | Player health, mana, attributes, critical-hit chance, initial card draw, and attack-damage rolls. |
-| `src/game/world/battle_cards.py` | Owns deck/hand/discard piles, draw-and-reshuffle rules, mana/exhaustion-based automatic turn endings, and Goblin fists bonus Strike synchronization. |
 | `src/game/world/collision_index.py` | Spatial collision candidate index for wall and polygon meshes, including dynamic/fallback mesh handling. |
 | `src/game/world/entity_registry.py` | Runtime entity registry that keeps entity/creature lists, immediate draw lists, sprites, and collision meshes synchronized. |
 | `src/game/world/environment.py` | Typed indoor volumes and portals, point queries, and legacy covered-region projection during lighting migration. |
@@ -239,7 +237,6 @@ the lighting implementation is being changed.
 | `src/game/world/world_lighting_plan.py` | Authors typed indoor environment and stable-ID opening-light records; projects compatibility dictionaries only for legacy construction. |
 | `src/game/world/world_road_planner.py` | Plans non-overlapping driveway routes from buildings to the road network. |
 | `src/game/world/world_spawner.py` | Spawns static billboard sprites inside world bounds while avoiding roads, buildings, and other sprites. |
-| `src/game/world/player_controller.py` | Player camera input controller for mouse look, WASD/sprint/jump, terrain support, wall collision, and boundary sliding. |
 
 ### Game World Objects
 
@@ -256,28 +253,36 @@ the lighting implementation is being changed.
 | `src/game/world/objects/chest.py` | Interactive chest with legacy CPU-baked and explicitly declared dynamic packet receiver representations. |
 | `src/game/world/objects/window.py` | Fixed window entity with slab rendering, wall backing, and batching. |
 | `src/game/world/objects/torch.py` | Building-mounted torch sprite plus typed local-light authoring and legacy modifier projections. |
-| `src/game/world/objects/goblin.py` | Runtime roaming/chasing sprite entity with directional animation frames and batched shadows. |
 | `src/game/world/objects/polygon.py` | Extruded polygon primitive plus legacy CPU-baked and camera-independent packet render batching. |
 | `src/game/world/objects/slab.py` | Shared geometry, UV, collision, and draw helpers for textured rectangular slab entities. |
 
-### Game World UI
+### Game Actors, Combat, Player, Inventory, and UI
 
 | File | Quick docs |
 | --- | --- |
-| `src/game/world/inventory.py` | Detailed item records, backpack and typed equipment slots, constrained movement/swapping, goblin test drops, and timed receipt state. |
-| `src/game/world/ui/__init__.py` | World UI package exports. |
-| `src/game/world/ui/world_hud.py` | World HUD owner for compass, minimap, held item, sway/headbob offsets, shade overlay, and HUD updates/drawing. |
-| `src/game/world/ui/compass_overlay.py` | Compass overlay using base/needle textures in screen space. |
-| `src/game/world/ui/minimap_overlay.py` | Camera-facing world-space minimap billboard with layered roads, building footprints, goblin markers, and player heading. |
-| `src/game/world/ui/interactions.py` | Screen-space hit boxes and input routing for pause/settings, inventory, and battle surfaces. |
-| `src/game/world/ui/inventory_panel.py` | Inventory overlay, item details, drag feedback, equipment backgrounds, and player-stat presentation. |
-| `src/game/world/ui/battle_panel.py` | Battle screen presentation, announced enemy intent/action feedback, active-enemy HP positioning, and player-stat text. |
-| `src/game/world/ui/battle_overlay.py` | Interactive battle resources, draggable cards, deck/discard counts, and the End Turn control. |
-| `src/game/world/ui/battle_menu.py` | Battle menu model built from generic engine menu items. |
-| `src/game/world/ui/card.py` | Reusable battle-card data and OpenGL drawing primitive. |
-| `src/game/world/ui/pause_panel.py` | Screen-space rendering for the active pause or settings menu. |
-| `src/game/world/ui/pause_menu.py` | Pause-menu options and actions. |
-| `src/game/world/ui/setting_menu.py` | Settings menu sliders/toggles that update scene config live. |
+| `src/game/actors/__init__.py` | Shared actor contract exports without pulling actor implementations into the world-object package. |
+| `src/game/actors/creature.py` | Generic combat-creature contract and reusable base state for names, health, attacks, encounter ranges, intents, and creature-owned rewards. |
+| `src/game/actors/goblin.py` | Runtime roaming/chasing sprite entity with directional animation frames and batched shadows. |
+| `src/game/combat/__init__.py` | Combat controller and card-loadout exports. |
+| `src/game/combat/controller.py` | Creature-agnostic battle controller for entering/leaving combat, announced enemy intent, turn resolution, healing, damage rolls, rewards, and battle mouse state. |
+| `src/game/combat/cards.py` | Owns deck/hand/discard piles, draw-and-reshuffle rules, automatic turn endings, and equipment-driven Strike synchronization. |
+| `src/game/player/__init__.py` | Player controller and stats exports. |
+| `src/game/player/controller.py` | Player camera input controller for mouse look, WASD/sprint/jump, terrain support, wall collision, and boundary sliding. |
+| `src/game/player/stats.py` | Player health, mana, attributes, critical-hit chance, initial card draw, and attack-damage rolls. |
+| `src/game/inventory.py` | Detailed item records, backpack and typed equipment slots, constrained movement/swapping, goblin test drops, and timed receipt state. |
+| `src/game/ui/__init__.py` | Game UI package exports. |
+| `src/game/ui/world_hud.py` | World HUD owner for compass, minimap, held item, sway/headbob offsets, shade overlay, and HUD updates/drawing. |
+| `src/game/ui/compass_overlay.py` | Compass overlay using base/needle textures in screen space. |
+| `src/game/ui/minimap_overlay.py` | Camera-facing world-space minimap billboard with layered roads, building footprints, goblin markers, and player heading. |
+| `src/game/ui/interactions.py` | Screen-space hit boxes and input routing for pause/settings, inventory, and battle surfaces. |
+| `src/game/ui/inventory_panel.py` | Inventory overlay, item details, drag feedback, equipment backgrounds, and player-stat presentation. |
+| `src/game/ui/battle_panel.py` | Battle screen presentation, announced enemy intent/action feedback, active-enemy HP positioning, and player-stat text. |
+| `src/game/ui/battle_overlay.py` | Interactive battle resources, draggable cards, deck/discard counts, and the End Turn control. |
+| `src/game/ui/battle_menu.py` | Battle menu model built from generic engine menu items. |
+| `src/game/ui/card.py` | Reusable battle-card data and OpenGL drawing primitive. |
+| `src/game/ui/pause_panel.py` | Screen-space rendering for the active pause or settings menu. |
+| `src/game/ui/pause_menu.py` | Pause-menu options and actions. |
+| `src/game/ui/setting_menu.py` | Settings menu sliders/toggles that update scene config live. |
 
 ### Engine Services and Game Resources
 
@@ -308,10 +313,10 @@ the lighting implementation is being changed.
 - Add a combat-capable enemy by subclassing `Creature` (or implementing its
   combat capabilities), then register it with `scene.add_entity()`. Encounter
   detection, battle UI, attacks, and creature-owned rewards are generic.
-- Add player movement changes in `game.world.player_controller` when they affect
+- Add player movement changes in `game.player.controller` when they affect
   input or collision.
 - Add rendering-only world pass changes in `game.world.world_renderer`.
-- Add screen-space UI input behavior in `game.world.ui.interactions` and visual
+- Add screen-space UI input behavior in `game.ui.interactions` and visual
   presentation in the matching panel or overlay module.
 - Add minimap markers by registering a layer on `WorldHUD.minimap`; layer draw
   callbacks receive a `MiniMapContext` with world-to-map coordinate helpers.

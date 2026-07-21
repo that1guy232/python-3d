@@ -1,1 +1,1 @@
-"""Game package containing the world scene and game-specific resources."""
+"""Game-specific actors, combat, player systems, UI, resources, and worlds."""

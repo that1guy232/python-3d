@@ -23,7 +23,7 @@ from game.config import (
     GOBLIN_SPAWN_TREE_RADIUS,
 )
 
-from game.world.objects import Goblin
+from game.actors.goblin import Goblin
 
 from game.world.road_pipeline import _build_roads
 

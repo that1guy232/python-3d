@@ -17,13 +17,13 @@ from OpenGL.GL import (
 
 from engine.textures.texture_utils import get_texture_aspect
 from game.config import HEIGHT, WIDTH
-from game.world.inventory import (
+from game.inventory import (
     BACKPACK_SLOT_COUNT,
     EQUIPMENT_TYPES,
     item_type,
     slot_accepts_item,
 )
-from game.world.ui.interactions import WorldUIInteractions
+from game.ui.interactions import WorldUIInteractions
 
 
 class InventoryPanel:
