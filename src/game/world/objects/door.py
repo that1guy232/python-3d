@@ -590,6 +590,17 @@ class DoorRenderBatch:
             for door in self.doors
         )
 
+    @property
+    def shadow_revision(self) -> tuple:
+        """Identify the door poses represented by this shadow caster.
+
+        Door slabs are combined into a small number of meshes.  Their aggregate
+        bounds can stay unchanged while one slab swings, so the renderer cannot
+        reliably infer a geometry change from the combined mesh alone.
+        """
+
+        return self._current_cache_key(dynamic_lighting=True)
+
     def _rebuild(self, dynamic_lighting: bool = False) -> None:
         self.dispose()
         groups = {}
