@@ -35,8 +35,8 @@ class Camera:
         self,
         position=None,
         rotation=None,
-        width=800,
-        height=600,
+        width=WIDTH,
+        height=HEIGHT,
         fov=75,
         default_brightness=0.1,
     ):
@@ -50,8 +50,12 @@ class Camera:
         self._brightness_default = float(default_brightness)
         self._brightness_source_revision: int | None = None
 
-        # FOV scale (same formula you used)
-        self._fov_scale = (height / 2) / math.tan(math.radians(fov / 2))
+        # Authoritative projection state shared by rendering and culling.
+        self.viewport_width = max(1.0, float(width))
+        self.viewport_height = max(1.0, float(height))
+        self._fov = 75.0
+        self._fov_scale = 1.0
+        self.set_projection(fov=fov, width=width, height=height)
 
         # cached trig & direction vectors (kept as Vector3 where movement uses them)
         self._yaw_cos = 1.0
@@ -498,9 +502,34 @@ class Camera:
         dz = pz - float(self.position.z)
         return self.world_delta_to_view(dx, dy, dz)
 
-    def tan_half_fov(self, viewport_height: float = HEIGHT) -> float:
-        fov_scale = max(1e-6, float(getattr(self, "_fov_scale", HEIGHT * 0.5)))
-        return (float(viewport_height) * 0.5) / fov_scale
+    @property
+    def fov(self) -> float:
+        return self._fov
+
+    @fov.setter
+    def fov(self, value: float) -> None:
+        self.set_projection(fov=value)
+
+    def set_projection(
+        self,
+        *,
+        fov: float | None = None,
+        width: float | None = None,
+        height: float | None = None,
+    ) -> None:
+        """Update the projection values consumed by rendering and culling."""
+        if width is not None:
+            self.viewport_width = max(1.0, float(width))
+        if height is not None:
+            self.viewport_height = max(1.0, float(height))
+        if fov is not None:
+            self._fov = max(1e-3, min(179.0, float(fov)))
+        self._fov_scale = (self.viewport_height * 0.5) / math.tan(
+            math.radians(self._fov * 0.5)
+        )
+
+    def tan_half_fov(self, viewport_height: float | None = None) -> float:
+        return math.tan(math.radians(self._fov * 0.5))
 
     def sphere_in_frustum(
         self,
@@ -509,8 +538,8 @@ class Camera:
         *,
         far_distance: float | None = None,
         near_distance: float = 0.0,
-        viewport_width: float = WIDTH,
-        viewport_height: float = HEIGHT,
+        viewport_width: float | None = None,
+        viewport_height: float | None = None,
         extra_margin: float = 0.0,
     ) -> bool:
         """Conservative camera-frustum test for a world-space bounding sphere."""
@@ -546,11 +575,15 @@ class Camera:
 
         if far_distance is not None:
             far = max(near, float(far_distance))
-            if depth > far + radius:
+            far_with_radius = far + radius
+            if dx * dx + dy * dy + dz * dz > far_with_radius * far_with_radius:
                 return False
 
-        fov_scale = max(1e-6, float(getattr(self, "_fov_scale", HEIGHT * 0.5)))
-        tan_half = (float(viewport_height) * 0.5) / fov_scale
+        if viewport_width is None:
+            viewport_width = self.viewport_width
+        if viewport_height is None:
+            viewport_height = self.viewport_height
+        tan_half = self.tan_half_fov()
         aspect = float(viewport_width) / max(1e-6, float(viewport_height))
         depth_for_extent = max(0.0, depth)
         half_v = depth_for_extent * tan_half

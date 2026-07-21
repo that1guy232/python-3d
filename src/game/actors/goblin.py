@@ -859,9 +859,9 @@ def draw_goblin_shadows_batched(
     groups: dict[int, list[Goblin]] = {}
     cam_pos = getattr(camera, "position", None)
     frustum_test = getattr(camera, "sphere_in_frustum", None)
-    view_distance_sq = None
+    use_distance_fallback = False
     if cam_pos is not None and view_distance is not None and not callable(frustum_test):
-        view_distance_sq = float(view_distance) * float(view_distance)
+        use_distance_fallback = True
 
     for goblin in goblins or ():
         if not getattr(goblin, "enabled", True) or not getattr(
@@ -876,9 +876,9 @@ def draw_goblin_shadows_batched(
         position = getattr(goblin, "position", None)
         if position is None:
             continue
+        width, shadow_depth = getattr(goblin, "shadow_size", GOBLIN_SHADOW_SIZE)
+        radius = max(float(width), float(shadow_depth)) * 0.75
         if callable(frustum_test):
-            width, depth = getattr(goblin, "shadow_size", GOBLIN_SHADOW_SIZE)
-            radius = max(float(width), float(depth)) * 0.75
             ground_y = float(getattr(goblin, "_ground_y", position.y))
             center = (
                 float(position.x),
@@ -887,11 +887,12 @@ def draw_goblin_shadows_batched(
             )
             if not frustum_test(center, radius, far_distance=view_distance):
                 continue
-        if view_distance_sq is not None:
+        if use_distance_fallback:
             dx = float(position.x) - float(cam_pos.x)
             dy = float(position.y) - float(cam_pos.y)
             dz = float(position.z) - float(cam_pos.z)
-            if (dx * dx + dy * dy + dz * dz) > view_distance_sq:
+            max_distance = float(view_distance) + radius
+            if (dx * dx + dy * dy + dz * dz) > max_distance * max_distance:
                 continue
         groups.setdefault(texture, []).append(goblin)
 

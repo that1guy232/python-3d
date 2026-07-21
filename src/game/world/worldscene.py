@@ -228,6 +228,11 @@ class WorldScene(Scene):
             fov=FOV,
             default_brightness=0.8,
         )
+        set_projection = getattr(self.camera, "set_projection", None)
+        if callable(set_projection):
+            if camera is not None:
+                self.fov = float(getattr(self.camera, "fov", self.fov))
+            set_projection(fov=self.fov, width=WIDTH, height=HEIGHT)
 
         self.ground_bounds = (
             0 + half,

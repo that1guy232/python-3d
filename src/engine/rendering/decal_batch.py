@@ -237,9 +237,20 @@ class DecalBatch:
             forward = camera._forward
             right = camera._right
             up = camera._up
-            fov_scale = max(1e-6, float(getattr(camera, "_fov_scale", HEIGHT * 0.5)))
-            tan_half = (HEIGHT * 0.5) / fov_scale
-            aspect = WIDTH / HEIGHT
+            viewport_width = float(getattr(camera, "viewport_width", WIDTH))
+            viewport_height = max(
+                1.0, float(getattr(camera, "viewport_height", HEIGHT))
+            )
+            tan_half_getter = getattr(camera, "tan_half_fov", None)
+            if callable(tan_half_getter):
+                tan_half = float(tan_half_getter())
+            else:
+                fov_scale = max(
+                    1e-6,
+                    float(getattr(camera, "_fov_scale", viewport_height * 0.5)),
+                )
+                tan_half = (viewport_height * 0.5) / fov_scale
+            aspect = viewport_width / viewport_height
             tan_half_h = tan_half * aspect
             return (
                 float(cam_pos.x),
@@ -291,7 +302,11 @@ class DecalBatch:
         dz = float(center[2]) - cz
         radius = max(0.0, float(radius))
         depth = dx * fx + dy * fy + dz * fz
-        if depth < -radius or depth > VIEWDISTANCE + radius:
+        max_distance = VIEWDISTANCE + radius
+        if (
+            depth < -radius
+            or dx * dx + dy * dy + dz * dz > max_distance * max_distance
+        ):
             return False
 
         x_cam = dx * rx + dy * ry + dz * rz
@@ -414,7 +429,12 @@ class DecalBatch:
                             dz = float(center[2]) - cz
                             radius = max(0.0, float(radius))
                             depth = dx * fx + dy * fy + dz * fz
-                            if depth < -radius or depth > VIEWDISTANCE + radius:
+                            max_distance = VIEWDISTANCE + radius
+                            if (
+                                depth < -radius
+                                or dx * dx + dy * dy + dz * dz
+                                > max_distance * max_distance
+                            ):
                                 continue
 
                             x_cam = dx * rx + dy * ry + dz * rz

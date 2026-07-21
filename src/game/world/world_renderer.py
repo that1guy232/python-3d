@@ -726,8 +726,13 @@ class WorldRenderer:
 
             glMatrixMode(GL_PROJECTION)
             glLoadIdentity()
+            camera = scene.camera
             gluPerspective(
-                float(getattr(scene, "fov", FOV)), WIDTH / HEIGHT, 1, 1_000_000.0
+                float(getattr(camera, "fov", getattr(scene, "fov", FOV))),
+                float(getattr(camera, "viewport_width", WIDTH))
+                / max(1.0, float(getattr(camera, "viewport_height", HEIGHT))),
+                1,
+                1_000_000.0,
             )
 
             glMatrixMode(GL_MODELVIEW)

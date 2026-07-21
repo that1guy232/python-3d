@@ -520,9 +520,13 @@ class SettingMenu(ButtonMenu):
         if camera is None:
             return
         try:
-            camera._fov_scale = (HEIGHT * 0.5) / math.tan(
-                math.radians(float(fov) * 0.5)
-            )
+            setter = getattr(camera, "set_projection", None)
+            if callable(setter):
+                setter(fov=fov, width=WIDTH, height=HEIGHT)
+            else:
+                camera._fov_scale = (HEIGHT * 0.5) / math.tan(
+                    math.radians(float(fov) * 0.5)
+                )
         except Exception:
             pass
 

@@ -43,6 +43,69 @@ class TerrainFlattenPad:
         )
 
 
+class GroundMeshBatch:
+    """Spatially chunked ground renderable with one shared height sampler."""
+
+    def __init__(self, meshes, *, height_sampler=None) -> None:
+        self._meshes = tuple(mesh for mesh in meshes if mesh is not None)
+        self.height_sampler = height_sampler
+        first = self._meshes[0] if self._meshes else None
+        self.texture = getattr(first, "texture", None)
+        self.lighting_receiver = getattr(first, "lighting_receiver", None)
+        self.vertex_width = max(
+            (int(getattr(mesh, "vertex_width", 0)) for mesh in self._meshes),
+            default=0,
+        )
+        self.vertex_count = sum(
+            int(getattr(mesh, "vertex_count", 0)) for mesh in self._meshes
+        )
+        self.casts_shadows = any(
+            bool(getattr(mesh, "casts_shadows", False)) for mesh in self._meshes
+        )
+        self.casts_sun_shadows = any(
+            bool(getattr(mesh, "casts_sun_shadows", False)) for mesh in self._meshes
+        )
+
+    def draw(
+        self,
+        camera=None,
+        *,
+        view_distance: float | None = None,
+        lighting_packet=None,
+        packet_shader=None,
+    ) -> None:
+        packets = None
+        require_packets = False
+        receiver = self.lighting_receiver
+        if lighting_packet is not None and receiver is not None:
+            packets = {receiver.receiver_id: lighting_packet}
+            require_packets = packet_shader is not None
+        BatchedMesh.draw_many(
+            self._meshes,
+            camera=camera,
+            view_distance=view_distance,
+            lighting_packets=packets,
+            packet_shader=packet_shader,
+            require_lighting_packets=require_packets,
+        )
+
+    def shadow_meshes(self, camera=None) -> tuple[BatchedMesh, ...]:
+        return tuple(
+            mesh
+            for mesh in self._meshes
+            if bool(getattr(mesh, "casts_shadows", False))
+            and int(getattr(mesh, "vertex_count", 0)) > 0
+        )
+
+    def set_exposure(self, exposure: float, *, baseline: float | None = None) -> None:
+        for mesh in self._meshes:
+            mesh.set_exposure(exposure, baseline=baseline)
+
+    def dispose(self) -> None:
+        for mesh in self._meshes:
+            mesh.dispose()
+
+
 class TexturedGroundGridBuilder:
     def __init__(
         self,
@@ -57,6 +120,7 @@ class TexturedGroundGridBuilder:
         covered_regions=None,
         environment_volumes=None,
         dynamic_lighting: bool | None = None,
+        render_chunk_tiles: int = 64,
     ):
         self.count = count
         self.tile_size = tile_size
@@ -75,6 +139,7 @@ class TexturedGroundGridBuilder:
             None if environment_volumes is None else list(environment_volumes)
         )
         self.dynamic_lighting = dynamic_lighting
+        self.render_chunk_tiles = max(1, int(render_chunk_tiles))
 
         tile = GroundTile(
             position=Vector3(0, 0, 0), width=self.w, height=self.h, depth=self.d
@@ -124,6 +189,37 @@ class TexturedGroundGridBuilder:
                 r, g, b = [c / 255.0 for c in color]
                 tile_vertices_local.append((v.x, v.y, v.z, r, g, b, uv[0], uv[1]))
         return np.array(tile_vertices_local, dtype=np.float32)
+
+    def _render_chunks(self, vertex_data: np.ndarray) -> tuple[np.ndarray, ...]:
+        """Partition triangle rows into stable square render chunks."""
+        triangle_vertex_count = (len(vertex_data) // 3) * 3
+        if triangle_vertex_count <= 0:
+            return ()
+
+        triangles = vertex_data[:triangle_vertex_count].reshape(
+            -1, 3, vertex_data.shape[1]
+        )
+        centers = triangles[:, :, (0, 2)].mean(axis=1)
+        tile_x = np.floor((centers[:, 0] + self.w) / self.spacing).astype(np.int64)
+        tile_z = np.floor((centers[:, 1] + self.d) / self.spacing).astype(np.int64)
+        tile_x = np.clip(tile_x, 0, self.count - 1)
+        tile_z = np.clip(tile_z, 0, self.count - 1)
+        chunks_per_axis = max(
+            1,
+            int(math.ceil(float(self.count) / float(self.render_chunk_tiles))),
+        )
+        chunk_ids = (
+            (tile_x // self.render_chunk_tiles) * chunks_per_axis
+            + (tile_z // self.render_chunk_tiles)
+        )
+        order = np.argsort(chunk_ids, kind="stable")
+        sorted_ids = chunk_ids[order]
+        split_points = np.flatnonzero(sorted_ids[1:] != sorted_ids[:-1]) + 1
+        return tuple(
+            np.ascontiguousarray(group.reshape(-1, vertex_data.shape[1]))
+            for group in np.split(triangles[order], split_points)
+            if len(group) > 0
+        )
 
     def _load_heightmap(self):
         try:
@@ -718,7 +814,7 @@ class TexturedGroundGridBuilder:
             return np.zeros((0, 8), dtype=np.float32), corner_coords_list
         return np.array(rows, dtype=np.float32), corner_coords_list
 
-    def build(self) -> BatchedMesh:
+    def build(self) -> BatchedMesh | GroundMeshBatch:
         tile_vertex_array = self._make_tile_vertex_array()
         heightmap_data = self._load_heightmap()
         terrain_pads = self._build_terrain_flatten_pads(heightmap_data)
@@ -846,14 +942,7 @@ class TexturedGroundGridBuilder:
         for i, (gx, gz, corner_idx, _, _) in enumerate(corner_coords_list):
             corner_heights[gx, gz, corner_idx] = corner_heights_flat[i]
 
-        mesh = BatchedMesh.from_vertex_data(
-            vertex_data,
-            texture=self.texture,
-            casts_sun_shadows=False,
-            exposure_baseline=self.default_brightness,
-            lighting_receiver=GROUND_LIGHTING_RECEIVER,
-        )
-        mesh.height_sampler = GroundHeightSampler(
+        height_sampler = GroundHeightSampler(
             count=self.count,
             spacing=self.spacing,
             half=self.w,
@@ -861,6 +950,17 @@ class TexturedGroundGridBuilder:
             height_adjustments=[pad.sampler_tuple() for pad in terrain_pads],
             surface_vertices=vertex_data[:, :3],
         )
+        meshes = tuple(
+            BatchedMesh.from_vertex_data(
+                chunk,
+                texture=self.texture,
+                casts_sun_shadows=False,
+                exposure_baseline=self.default_brightness,
+                lighting_receiver=GROUND_LIGHTING_RECEIVER,
+            )
+            for chunk in self._render_chunks(vertex_data)
+        )
+        mesh = GroundMeshBatch(meshes, height_sampler=height_sampler)
         # Store the template tile vertex array and grid params so the mesh can
         # be updated at runtime when heights change.
         mesh._tile_vertex_array = tile_vertex_array

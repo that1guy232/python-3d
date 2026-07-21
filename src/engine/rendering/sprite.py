@@ -166,7 +166,7 @@ def _sprite_data_cache(
         "dynamic_indices": [
             i
             for i, sprite in enumerate(sprites)
-            if not getattr(sprite, "sprite_data_static", True)
+            if not getattr(sprite, "sprite_data_static", False)
         ],
     }
     _refresh_sprite_data_cache(cache, sprites)
@@ -249,6 +249,7 @@ class WorldSprite:
     uv_rect: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0)
     lighting_receiver: LightingReceiver = DEFAULT_SPRITE_LIGHTING_RECEIVER
     emissive: bool = False
+    cache_static: bool = False
 
     def __post_init__(self) -> None:
         texture_id = getattr(self.texture, "texture", None)
@@ -258,7 +259,8 @@ class WorldSprite:
 
     @property
     def sprite_data_static(self) -> bool:
-        return True
+        """Whether callers promise not to mutate cached render data."""
+        return bool(self.cache_static)
 
     @property
     def faces(self):
@@ -502,9 +504,18 @@ def draw_sprites_batched(
             use_numpy_transform = False
 
     # frustum/culling params
-    fov_scale = getattr(camera, "_fov_scale", (HEIGHT * 0.5) / 1.0)
-    tan_half_fov = (HEIGHT * 0.5) / fov_scale
-    aspect = WIDTH / HEIGHT
+    viewport_width = float(getattr(camera, "viewport_width", WIDTH))
+    viewport_height = max(1.0, float(getattr(camera, "viewport_height", HEIGHT)))
+    tan_half_getter = getattr(camera, "tan_half_fov", None)
+    if callable(tan_half_getter):
+        tan_half_fov = float(tan_half_getter())
+    else:
+        fov_scale = max(
+            1e-6,
+            float(getattr(camera, "_fov_scale", viewport_height * 0.5)),
+        )
+        tan_half_fov = (viewport_height * 0.5) / fov_scale
+    aspect = viewport_width / viewport_height
 
     brightness_default = getattr(camera, "brightness_default", 0.0)
     has_brightness_areas = getattr(camera, "has_brightness_query_lights", None)
@@ -613,7 +624,13 @@ def draw_sprites_batched(
         np.greater(depths, limit, out=mask_tmp)
         visible_mask &= mask_tmp
         np.add(view_distance, back_extra, out=limit)
-        np.less_equal(depths, limit, out=mask_tmp)
+        np.multiply(limit, limit, out=limit)
+        np.multiply(rel_x, rel_x, out=half_v)
+        np.multiply(rel_y, rel_y, out=x_cam)
+        np.add(half_v, x_cam, out=half_v)
+        np.multiply(rel_z, rel_z, out=x_cam)
+        np.add(half_v, x_cam, out=half_v)
+        np.less_equal(half_v, limit, out=mask_tmp)
         visible_mask &= mask_tmp
 
         if use_numpy_transform:

@@ -275,6 +275,7 @@ def _create_sprite(scene, tex, width, height, camera, x, z) -> WorldSprite:
         texture=_texture_id(tex),
         camera=camera,
         uv_rect=_texture_uv_rect(tex),
+        cache_static=True,
     )
 
 
