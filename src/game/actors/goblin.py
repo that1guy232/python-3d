@@ -304,7 +304,8 @@ class Goblin(Creature):
         self._sound_key = None
 
     def combat_rewards(self, scene) -> tuple[InventoryItem, ...]:
-        return goblin_equipment_set()
+        equipment = goblin_equipment_set()
+        return (self.rng.choice(equipment),)
 
     def update(self, dt: float) -> None:
         dt = max(0.0, float(dt))

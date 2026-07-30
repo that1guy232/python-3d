@@ -5,7 +5,12 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 
-from game.inventory import ItemCard, ItemType, equipped_item
+from game.inventory import (
+    GOBLIN_HEAD_PASSIVE,
+    ItemCard,
+    ItemType,
+    equipped_item,
+)
 from game.ui.card import Card
 
 
@@ -24,6 +29,10 @@ class _CardSpec:
     effect: str
     amount: int = 0
     requires_odd_mana: bool = False
+    scrap_gain: int = 0
+    scrap_cost: int = 0
+    spend_all_scrap: bool = False
+    bonus_per_scrap: int = 0
 
 
 class BattleCardLoadout:
@@ -35,6 +44,8 @@ class BattleCardLoadout:
     DEFAULT_CARD_MANA_COST = 1
     BRACE_GUARD = 2
     ODD_THOUGHT_DAMAGE = 2
+    MAX_SCRAP = 3
+    PASSIVE_RULE_LABELS = {GOBLIN_HEAD_PASSIVE: "Trash Is Treasure"}
 
     def __init__(self, scene) -> None:
         self.scene = scene
@@ -45,6 +56,7 @@ class BattleCardLoadout:
         self._cards_by_origin: dict[CardOrigin, Card] = {}
         self._specs_by_card: dict[Card, _CardSpec] = {}
         self._combat_active = False
+        self.scrap = 0
         self.sync_with_equipment()
 
     @property
@@ -80,6 +92,33 @@ class BattleCardLoadout:
     @property
     def discard_count(self) -> int:
         return len(self._discard)
+
+    @property
+    def scrap_capacity(self) -> int:
+        return self.MAX_SCRAP
+
+    @property
+    def uses_scrap(self) -> bool:
+        """Return whether the equipped loadout exposes the Scrap mechanic."""
+
+        self.sync_with_equipment()
+        return self._has_passive(GOBLIN_HEAD_PASSIVE) or any(
+            spec.scrap_gain
+            or spec.scrap_cost
+            or spec.spend_all_scrap
+            or spec.bonus_per_scrap
+            for spec in self._specs_by_card.values()
+        )
+
+    @property
+    def active_passive_rules(self) -> tuple[str, ...]:
+        """Return concise player-facing labels for equipped passive rules."""
+
+        return tuple(
+            label
+            for passive_rule, label in self.PASSIVE_RULE_LABELS.items()
+            if self._has_passive(passive_rule)
+        )
 
     @property
     def all_cards_discarded(self) -> bool:
@@ -136,7 +175,8 @@ class BattleCardLoadout:
         ):
             item = equipped_item(self.scene, item_kind)
             item_cards = self._item_cards(item)
-            if item is not None and item_cards:
+            item_passive = self._item_passive_rule(item)
+            if item is not None and (item_cards or item_passive):
                 item_key = f"item:{self._item_name(item)}"
                 specs.extend(
                     self._item_card_spec(item_kind, item_key, index, card)
@@ -156,6 +196,22 @@ class BattleCardLoadout:
         if isinstance(item, dict):
             return str(item.get("name", "") or "unnamed")
         return str(getattr(item, "name", "") or "unnamed")
+
+    @staticmethod
+    def _item_passive_rule(item) -> str:
+        if item is None:
+            return ""
+        if isinstance(item, dict):
+            return str(item.get("passive_rule", "") or "")
+        return str(getattr(item, "passive_rule", "") or "")
+
+    def _has_passive(self, passive_rule: str) -> bool:
+        return any(
+            self._item_passive_rule(equipped_item(self.scene, item_kind))
+            == passive_rule
+            for item_kind in ItemType
+            if item_kind is not ItemType.MISC
+        )
 
     @staticmethod
     def _item_cards(item) -> tuple[ItemCard, ...]:
@@ -190,6 +246,10 @@ class BattleCardLoadout:
             card.effect,
             card.amount,
             card.requires_odd_mana,
+            card.scrap_gain,
+            card.scrap_cost,
+            card.spend_all_scrap,
+            card.bonus_per_scrap,
         )
 
     def _fallback_specs(
@@ -265,6 +325,7 @@ class BattleCardLoadout:
         """Shuffle a fresh deck and draw the opening hand."""
 
         self.sync_with_equipment()
+        self.scrap = 0
         self._combat_active = True
         self._deck[:] = self._all_cards
         self._hand.clear()
@@ -276,6 +337,7 @@ class BattleCardLoadout:
         """Collapse all piles back into the out-of-combat loadout."""
 
         self._combat_active = False
+        self.scrap = 0
         self._deck[:] = self._all_cards
         self._hand.clear()
         self._discard.clear()
@@ -296,6 +358,8 @@ class BattleCardLoadout:
     def finish_player_turn(self) -> None:
         """Discard the unplayed hand before the enemy acts."""
 
+        if self._has_passive(GOBLIN_HEAD_PASSIVE):
+            self.gain_scrap(len(self._hand))
         for card in self._hand:
             card.reset_to_home()
         self._discard.extend(self._hand)
@@ -328,13 +392,20 @@ class BattleCardLoadout:
         if spec is None or stats is None:
             return False
         mana = int(getattr(stats, "mana", 0))
+        enough_scrap = self.scrap >= spec.scrap_cost
+        draw_has_value = (
+            spec.effect != "draw"
+            or bool(self._deck)
+            or (spec.scrap_gain > 0 and self.scrap < self.MAX_SCRAP)
+        )
         return bool(
             self._combat_active
             and getattr(self.scene, "battle_mode", False)
             and card in self._hand
             and mana >= spec.mana_cost
             and (not spec.requires_odd_mana or mana % 2 == 1)
-            and (spec.effect != "draw" or bool(self._deck))
+            and enough_scrap
+            and draw_has_value
         )
 
     def play_card(self, card: Card) -> bool:
@@ -360,6 +431,16 @@ class BattleCardLoadout:
         return True
 
     def _resolve_effect(self, spec: _CardSpec) -> None:
+        scrap_spent = 0
+        if spec.spend_all_scrap:
+            scrap_spent = self.spend_scrap(self.scrap)
+        elif spec.scrap_cost:
+            scrap_spent = self.spend_scrap(spec.scrap_cost)
+
+        if spec.scrap_gain:
+            self.gain_scrap(spec.scrap_gain)
+
+        amount = spec.amount + spec.bonus_per_scrap * scrap_spent
         if spec.effect == "damage":
             damage_battle_creature = getattr(
                 self.scene,
@@ -367,18 +448,34 @@ class BattleCardLoadout:
                 None,
             )
             if callable(damage_battle_creature):
-                damage_battle_creature(spec.amount)
+                damage_battle_creature(amount)
             return
 
         if spec.effect == "draw":
-            self._draw_from_deck(spec.amount)
+            self._draw_from_deck(amount)
             return
 
         if spec.effect == "guard":
             combat = getattr(self.scene, "combat", None)
             gain_guard = getattr(combat, "gain_guard", None)
             if callable(gain_guard):
-                gain_guard(spec.amount)
+                gain_guard(amount)
+
+    def gain_scrap(self, amount: int) -> int:
+        """Add battle-local Scrap up to the goblin resource cap."""
+
+        self.scrap = min(
+            self.MAX_SCRAP,
+            max(0, int(self.scrap)) + max(0, int(amount)),
+        )
+        return self.scrap
+
+    def spend_scrap(self, amount: int) -> int:
+        """Spend available Scrap and return the amount actually consumed."""
+
+        spent = min(max(0, int(self.scrap)), max(0, int(amount)))
+        self.scrap = max(0, int(self.scrap) - spent)
+        return spent
 
     def _draw_from_deck(self, count: int) -> list[Card]:
         """Draw without recycling, so Quickstep can never redraw itself."""

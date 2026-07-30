@@ -137,16 +137,22 @@ collision slides.
 The battle deck is assembled from card data owned by equipped items. Weapons
 contribute three attacks, boots contribute one or two movement cards, body
 armour contributes one or two risk-mitigation cards, and helmets contribute
-one unusual-rule card (or may eventually provide a passive rule). Legacy items
-without card data retain slot-appropriate fallback cards. Empty slots supply a
-small base loadout: one Strike, Quickstep, Brace, and Odd Thought.
+one unusual-rule card or a passive rule. Legacy items without cards or a
+passive retain slot-appropriate fallback cards. Empty slots supply a small base
+loadout: one Strike, Quickstep, Brace, and Odd Thought.
 
-The first complete equipment family is the four-piece goblin set dropped by a
-defeated goblin. Goblin fists replace Strike with Knuckle Jab, Cheap Shot, and
-Wild Flail. Scamper Boots add Scamper (draw two), Scrap Armor adds Scrap Guard
-(four Guard), and the Thinking Cap adds Goblin Math (three damage, playable
-only at odd current mana). The three non-weapon pieces temporarily share the
-explicit `goblin_set_placeholder` icon entry.
+The first complete equipment family is the four-piece goblin Scrap set. Each
+defeated goblin awards one randomly selected piece rather than the whole set.
+Goblin Fists supply Swipe (one damage and one Scrap), Dirty Shiv (spend one
+Scrap for three damage), and Junk Bomb (spend one to three Scrap for three,
+five, or seven damage). Scamper Boots supply Scamper & Scrounge (draw one and
+gain one Scrap). Scrap Armor supplies Patchwork Shell (two base Guard plus one
+per Scrap spent), making the same resource an offense-versus-safety decision.
+The Thinking Cap contributes no card; its Trash Is Treasure passive grants one
+Scrap per unplayed card at turn end. Scrap is capped at three, persists between
+turns, resets at battle boundaries, and appears in the battle HUD together with
+the active passive-rule label. The three non-weapon pieces temporarily share
+the explicit `goblin_set_placeholder` icon entry.
 
 Card origins are reconciled without rebuilding unchanged cards, including
 while deck, hand, and discard piles are active. Outside battle, the inventory's
@@ -296,21 +302,21 @@ the lighting implementation is being changed.
 | --- | --- |
 | `src/game/actors/__init__.py` | Shared actor contract exports without pulling actor implementations into the world-object package. |
 | `src/game/actors/creature.py` | Generic combat-creature contract and reusable base state for names, health, attacks, encounter ranges, intents, and creature-owned rewards. |
-| `src/game/actors/goblin.py` | Runtime roaming/chasing sprite entity with directional animation frames and batched shadows. |
+| `src/game/actors/goblin.py` | Runtime roaming/chasing sprite entity with directional animation frames, batched shadows, and random single-piece equipment rewards. |
 | `src/game/combat/__init__.py` | Combat controller and card-loadout exports. |
 | `src/game/combat/controller.py` | Creature-agnostic battle controller for entering/leaving combat, announced enemy intent, turn resolution, Guard mitigation, healing, damage rolls, rewards, and battle mouse state. |
-| `src/game/combat/cards.py` | Owns deck/hand/discard piles, full-loadout and remaining-draw snapshots, draw-and-reshuffle rules, automatic turn endings, and slot-keyed equipment/default card contributions. |
+| `src/game/combat/cards.py` | Owns deck/hand/discard piles, full-loadout and remaining-draw snapshots, draw-and-reshuffle rules, automatic turn endings, passive equipment rules, Scrap state, and slot-keyed equipment/default card contributions. |
 | `src/game/player/__init__.py` | Player controller and stats exports. |
 | `src/game/player/controller.py` | Player camera input controller for mouse look, WASD/sprint/jump, terrain support, wall collision, and boundary sliding. |
 | `src/game/player/stats.py` | Player health, mana, attributes, critical-hit chance, initial card draw, and attack-damage rolls. |
-| `src/game/inventory.py` | Detailed item records, backpack and typed equipment slots, constrained movement/swapping, goblin test drops, and timed receipt state. |
+| `src/game/inventory.py` | Detailed item/card records, backpack and typed equipment slots, constrained movement/swapping, goblin equipment definitions, and timed receipt state. |
 | `src/game/ui/__init__.py` | Game UI package exports. |
 | `src/game/ui/world_hud.py` | World HUD owner for compass, minimap, held item, sway/headbob offsets, shade overlay, and HUD updates/drawing. |
 | `src/game/ui/compass_overlay.py` | Compass overlay using base/needle textures in screen space. |
 | `src/game/ui/minimap_overlay.py` | Camera-facing world-space minimap billboard with layered roads, building footprints, goblin markers, and player heading. |
 | `src/game/ui/interactions.py` | Screen-space hit boxes and input routing for pause/settings, inventory, and battle surfaces. |
 | `src/game/ui/inventory_panel.py` | Inventory overlay, full-deck viewer entry point, item details, drag feedback, equipment backgrounds, and player-stat presentation. |
-| `src/game/ui/battle_panel.py` | Battle screen presentation, announced enemy intent/action feedback, active-enemy HP positioning, and player-stat text. |
+| `src/game/ui/battle_panel.py` | Battle screen presentation, announced enemy intent/action feedback, active-enemy HP positioning, player-stat text, and active Scrap/passive-rule status. |
 | `src/game/ui/battle_overlay.py` | Interactive battle resources, draggable cards, shared full-deck/draw-pile modal, deck/discard counts, and the End Turn control. |
 | `src/game/ui/battle_menu.py` | Battle menu model built from generic engine menu items. |
 | `src/game/ui/card.py` | Reusable battle-card data, bounded text layout, and mutable/non-mutating OpenGL drawing primitives. |

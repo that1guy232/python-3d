@@ -20,6 +20,7 @@ GOBLIN_SET_PLACEHOLDER_ICON = "goblin_set_placeholder"
 GOBLIN_BOOTS_NAME = "Goblin scamper boots"
 GOBLIN_BODY_NAME = "Goblin scrap armor"
 GOBLIN_HEAD_NAME = "Goblin thinking cap"
+GOBLIN_HEAD_PASSIVE = "trash_is_treasure"
 
 
 class ItemType(str, Enum):
@@ -55,6 +56,10 @@ class ItemCard:
     effect: str
     amount: int = 0
     requires_odd_mana: bool = False
+    scrap_gain: int = 0
+    scrap_cost: int = 0
+    spend_all_scrap: bool = False
+    bonus_per_scrap: int = 0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "action", str(self.action))
@@ -68,6 +73,18 @@ class ItemCard:
             "requires_odd_mana",
             bool(self.requires_odd_mana),
         )
+        object.__setattr__(self, "scrap_gain", max(0, int(self.scrap_gain)))
+        object.__setattr__(self, "scrap_cost", max(0, int(self.scrap_cost)))
+        object.__setattr__(
+            self,
+            "spend_all_scrap",
+            bool(self.spend_all_scrap),
+        )
+        object.__setattr__(
+            self,
+            "bonus_per_scrap",
+            max(0, int(self.bonus_per_scrap)),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,12 +97,14 @@ class InventoryItem:
     attributes: tuple[tuple[str, str], ...] | Mapping[str, object] = ()
     icon: str = ""
     cards: tuple[ItemCard, ...] = ()
+    passive_rule: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.item_type, ItemType):
             object.__setattr__(self, "item_type", ItemType(self.item_type))
         object.__setattr__(self, "description", str(self.description or ""))
         object.__setattr__(self, "icon", str(self.icon or ""))
+        object.__setattr__(self, "passive_rule", str(self.passive_rule or ""))
         raw_attributes = self.attributes
         if isinstance(raw_attributes, Mapping):
             pairs = raw_attributes.items()
@@ -108,96 +127,100 @@ class InventoryItem:
 
 
 def goblin_equipment_set() -> tuple[InventoryItem, ...]:
-    """Return the four goblin pieces and their complete card contribution."""
+    """Return the four pieces in the Scrap-powered goblin equipment family."""
 
     return (
         InventoryItem(
             GOBLIN_FISTS_NAME,
             ItemType.WEAPON,
             (
-                "Fight like a goblin: start fast, hit below the belt, then "
-                "commit to a wild finish."
+                "Swipe up Scrap, then spend it on a dirty shiv or unstable "
+                "bomb."
             ),
-            {"Cards": "Knuckle Jab, Cheap Shot, Wild Flail"},
+            {
+                "Cards": "Swipe / Dirty Shiv / Junk Bomb",
+                "Gimmick": "Build and spend Scrap",
+            },
             GOBLIN_FISTS_ICON,
             (
                 ItemCard(
-                    "goblin_knuckle_jab",
-                    "Knuckle Jab",
-                    "1 Damage",
-                    0,
-                    "damage",
-                    1,
-                ),
-                ItemCard(
-                    "goblin_cheap_shot",
-                    "Cheap Shot",
-                    "2 Damage",
+                    "goblin_swipe",
+                    "Swipe",
+                    "Deal 1 Damage. Gain 1 Scrap.",
                     1,
                     "damage",
-                    2,
+                    1,
+                    scrap_gain=1,
                 ),
                 ItemCard(
-                    "goblin_wild_flail",
-                    "Wild Flail",
-                    "3 Damage",
-                    2,
+                    "goblin_dirty_shiv",
+                    "Dirty Shiv",
+                    "Spend 1 Scrap. Deal 3 Damage.",
+                    1,
                     "damage",
                     3,
+                    scrap_cost=1,
+                ),
+                ItemCard(
+                    "goblin_junk_bomb",
+                    "Junk Bomb",
+                    "Requires Scrap. Spend all: 3/5/7 Damage.",
+                    2,
+                    "damage",
+                    1,
+                    scrap_cost=1,
+                    spend_all_scrap=True,
+                    bonus_per_scrap=2,
                 ),
             ),
         ),
         InventoryItem(
             GOBLIN_BOOTS_NAME,
             ItemType.BOOT,
-            "Keep moving and rummage deeper into your bag of tricks.",
-            {"Card": "Scamper", "Draw": "+2"},
+            "Cycle the deck while scrounging fuel for goblin tricks.",
+            {"Card": "Scamper & Scrounge", "Gimmick": "Draw + Scrap"},
             GOBLIN_SET_PLACEHOLDER_ICON,
             (
                 ItemCard(
-                    "goblin_scamper",
-                    "Scamper",
-                    "Draw 2 from Deck",
+                    "goblin_scamper_scrounge",
+                    "Scamper & Scrounge",
+                    "Draw 1 from Deck. Gain 1 Scrap.",
                     1,
                     "draw",
-                    2,
+                    1,
+                    scrap_gain=1,
                 ),
             ),
         ),
         InventoryItem(
             GOBLIN_BODY_NAME,
             ItemType.BODY,
-            "Scrap plating lets you risk a heavier incoming hit.",
-            {"Card": "Scrap Guard", "Guard": "+4"},
+            "Cash in offensive Scrap as emergency patchwork protection.",
+            {"Card": "Patchwork Shell", "Choice": "Scrap into Guard"},
             GOBLIN_SET_PLACEHOLDER_ICON,
             (
                 ItemCard(
-                    "goblin_scrap_guard",
-                    "Scrap Guard",
-                    "Block 4 Next Hit",
+                    "goblin_patchwork_shell",
+                    "Patchwork Shell",
+                    "Gain 2 Guard. Spend all Scrap for +1 each.",
                     1,
                     "guard",
-                    4,
+                    2,
+                    spend_all_scrap=True,
+                    bonus_per_scrap=1,
                 ),
             ),
         ),
         InventoryItem(
             GOBLIN_HEAD_NAME,
             ItemType.HELMET,
-            "Goblin arithmetic only works when your current mana is odd.",
-            {"Card": "Goblin Math", "Rule": "Odd mana only"},
-            GOBLIN_SET_PLACEHOLDER_ICON,
             (
-                ItemCard(
-                    "goblin_math",
-                    "Goblin Math",
-                    "Odd Mana: 3 Damage",
-                    1,
-                    "damage",
-                    3,
-                    requires_odd_mana=True,
-                ),
+                "At end of turn, gain 1 Scrap per unplayed card, up to 3 total."
             ),
+            {"Passive": "Trash Is Treasure", "Scrap Cap": "3"},
+            GOBLIN_SET_PLACEHOLDER_ICON,
+            (),
+            GOBLIN_HEAD_PASSIVE,
         ),
     )
 

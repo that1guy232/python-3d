@@ -54,6 +54,13 @@ class BattlePanel:
         combat = getattr(self.scene, "combat", None)
         guard = max(0, int(getattr(combat, "guard", 0)))
         lines.append(f"Guard {guard}")
+        battle_cards = getattr(self.scene, "battle_cards", None)
+        for rule in getattr(battle_cards, "active_passive_rules", ()):
+            lines.append(f"Rule: {rule}")
+        if bool(getattr(battle_cards, "uses_scrap", False)):
+            scrap = max(0, int(getattr(battle_cards, "scrap", 0)))
+            capacity = max(1, int(getattr(battle_cards, "scrap_capacity", 3)))
+            lines.append(f"Scrap {scrap}/{capacity}")
         return lines
 
     def hp_anchor(self) -> tuple[float, float] | None:
