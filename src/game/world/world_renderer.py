@@ -650,6 +650,14 @@ class WorldRenderer:
                 self.lighting_controller.sync_uniforms()
             self._apply_fog_state()
 
+        island_boundary = getattr(self.resources, "island_boundary", None)
+        if island_boundary is not None:
+            with self._profile("draw.water"):
+                island_boundary.draw_water(
+                    scene.camera,
+                    lighting=getattr(scene, "lighting", None),
+                )
+
         with self._profile("draw.ground"):
             packet_shader = self._packet_lighting_shader()
             lighting_packet = (
@@ -667,6 +675,10 @@ class WorldRenderer:
                 lighting_packet=lighting_packet,
                 packet_shader=packet_shader,
             )
+
+        if island_boundary is not None:
+            with self._profile("draw.beach"):
+                island_boundary.draw_beach(scene.camera)
 
         with self._profile("draw.fences"):
             packet_shader = self._packet_lighting_shader()

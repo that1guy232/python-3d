@@ -4,7 +4,9 @@ A first-person 3D world built with Pygame Community Edition, PyOpenGL, and
 NumPy. The game
 includes procedural terrain and world dressing, buildings and interiors,
 interactive doors and chests, creature encounters (currently goblins), inventory and battle UI, and
-packet-based lighting with directional and point-light shadows.
+packet-based lighting with directional and point-light shadows. The terrain is
+presented as an island with a procedural sand shoreline and animated stylized
+water that fades into the atmospheric horizon.
 
 ## Quick start
 

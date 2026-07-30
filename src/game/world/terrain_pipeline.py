@@ -7,6 +7,15 @@ import time
 
 
 from game.world.builder_support import _dispose_value, _dispose_values
+from game.config import (
+    ISLAND_SHORE_RADIAL_SEGMENTS,
+    ISLAND_SHORE_SAMPLE_SPACING,
+    ISLAND_SHORE_WIDTH,
+    ISLAND_WATER_DROP,
+    ISLAND_WATER_EXTENT,
+    ISLAND_WATER_GRID_SIZE,
+)
+from game.world.island_boundary import build_island_boundary
 
 from game.world.objects.fence import build_textured_fence_ring
 
@@ -18,6 +27,23 @@ def _generate_ground_mesh(scene) -> None:
     scene.ground_mesh = scene.builder.build()
 
     scene._ground_height_sampler = getattr(scene.ground_mesh, "height_sampler", None)
+
+
+def _build_island_boundary(scene) -> None:
+    _dispose_value(getattr(scene, "island_boundary", None))
+    sampler = getattr(scene, "_ground_height_sampler", None)
+    if sampler is None or not hasattr(sampler, "height_at"):
+        scene.island_boundary = None
+        return
+    scene.island_boundary = build_island_boundary(
+        scene,
+        shore_width=ISLAND_SHORE_WIDTH,
+        shore_sample_spacing=ISLAND_SHORE_SAMPLE_SPACING,
+        shore_radial_segments=ISLAND_SHORE_RADIAL_SEGMENTS,
+        water_drop=ISLAND_WATER_DROP,
+        water_extent=ISLAND_WATER_EXTENT,
+        water_grid_size=ISLAND_WATER_GRID_SIZE,
+    )
 
 
 def _build_fences(scene) -> None:

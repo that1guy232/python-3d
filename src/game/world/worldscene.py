@@ -63,6 +63,7 @@ class WorldScene(Scene):
     others = state_alias("render_resources", "others")
     fence_meshes = state_alias("render_resources", "fence_meshes")
     ground_mesh = state_alias("render_resources", "ground_mesh")
+    island_boundary = state_alias("render_resources", "island_boundary")
     sky = state_alias("render_resources", "sky")
     road = state_alias("render_resources", "road")
     decal_batch = state_alias("render_resources", "decal_batch")
@@ -215,8 +216,18 @@ class WorldScene(Scene):
         half = grid_tile_size / 2.0
         self._grid_spacing = spacing
         self._grid_half = half
+        terrain_maximum = (max(1, int(grid_count)) - 1) * spacing + half
+        self.terrain_bounds = (
+            -half,
+            terrain_maximum,
+            -half,
+            terrain_maximum,
+        )
+        terrain_center = (-half + terrain_maximum) * 0.5
         self.world_center = Vector3(
-            (grid_count * spacing) / 2, 0, (grid_count * spacing) / 2
+            terrain_center,
+            0,
+            terrain_center,
         )
 
         print("World Scene Initialized")
@@ -235,10 +246,10 @@ class WorldScene(Scene):
             set_projection(fov=self.fov, width=WIDTH, height=HEIGHT)
 
         self.ground_bounds = (
-            0 + half,
-            grid_count * spacing - half,
-            0 + half,
-            grid_count * spacing - half,
+            0.0,
+            max(0.0, (grid_count - 1) * spacing),
+            0.0,
+            max(0.0, (grid_count - 1) * spacing),
         )
 
         if not defer_setup:

@@ -116,6 +116,7 @@ class WorldRenderResources:
     fence_meshes: list[RenderValue] = field(default_factory=list)
 
     ground_mesh: RenderValue | None = None
+    island_boundary: Disposable | None = None
     sky: RenderValue | None = None
     road: RenderValue | None = None
     decal_batch: RenderValue | None = None

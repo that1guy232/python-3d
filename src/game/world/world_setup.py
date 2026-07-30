@@ -80,10 +80,11 @@ def setup_local_lights(scene, grid_count: int, spacing: float, half: float) -> N
     """Author initial typed local lights before SceneLighting is constructed."""
 
     local_lights: list[LocalBrightnessLight] = []
-    min_x = 0 + half
-    max_x = grid_count * spacing - half
-    min_z = 0 + half
-    max_z = grid_count * spacing - half
+    del half
+    min_x = 0.0
+    max_x = max(0.0, (grid_count - 1) * spacing)
+    min_z = 0.0
+    max_z = max(0.0, (grid_count - 1) * spacing)
     for _ in range(0):
         cx = random.triangular(min_x, max_x, (min_x + max_x) * 0.5) + 1e-6
         cz = random.triangular(min_z, max_z, (min_z + max_z) * 0.5) + 1e-6

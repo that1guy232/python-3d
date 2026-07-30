@@ -29,6 +29,18 @@ CLOUD_DENSITY = 1.0
 CLOUD_SPEED = 1.0
 CLOUD_OPACITY = 0.9
 
+# Island boundary. The terrain mesh and heightfield remain unchanged; a
+# procedural sand skirt follows the rendered edge and descends to animated
+# water beyond the symmetrically inset playable bounds.
+ISLAND_SHORE_WIDTH = 200.0
+ISLAND_SHORE_SAMPLE_SPACING = 25.0
+ISLAND_SHORE_RADIAL_SEGMENTS = 8
+# The shared sea plane sits this far below the lowest sampled terrain edge;
+# higher edges naturally become steeper coastal bluffs.
+ISLAND_WATER_DROP = 8.0
+ISLAND_WATER_EXTENT = max(5000.0, VIEWDISTANCE * 2.5)
+ISLAND_WATER_GRID_SIZE = 64.0
+
 STARTING_POS = (200, 600, 200)
 BASE_SPEED = 120
 SPRINT_SPEED = 180.0

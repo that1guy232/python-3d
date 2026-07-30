@@ -25,6 +25,7 @@ from game.world.spawn_pipeline import (
 )
 from game.world.terrain_pipeline import (
     _build_fences as _build_fences,
+    _build_island_boundary,
     _generate_ground_mesh,
 )
 
@@ -141,6 +142,11 @@ def create_world_object_step_specs(
             "Generating ground mesh",
             lambda: _generate_ground_mesh(scene),
             "Generating ground mesh...",
+        ),
+        WorldObjectBuildStep(
+            "Building island shoreline",
+            lambda: _build_island_boundary(scene),
+            "Building island shoreline...",
         ),
         WorldObjectBuildStep("Building structures", lambda: _build_buildings(scene)),
         WorldObjectBuildStep(

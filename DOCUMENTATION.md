@@ -82,9 +82,14 @@ The main menu accepts a mouse click, Enter, keypad Enter, or Space to start.
   `world_setup.setup_controllers()`.
 - Configure fog and scene lighting through `world_setup.setup_graphics()`.
 - Load textures, sounds, sky, HUD, and menus through `world_setup.load_assets()`.
-- Build terrain, buildings, roads, sprites, fences, decals, doors, windows, and
-  other world objects through `world_builder.create_world_objects_steps()`,
-  which delegates to focused construction pipeline modules.
+- Build terrain, the sampled island shoreline and water, buildings, roads,
+  sprites, fences, decals, doors, windows, and other world objects through
+  `world_builder.create_world_objects_steps()`, which delegates to focused
+  construction pipeline modules.
+
+The shoreline uses the exact rendered terrain bounds. Its sand rings bridge
+each sampled edge height to one sea plane, placed `ISLAND_WATER_DROP` below the
+lowest edge sample; naturally high edges therefore form coastal bluffs.
 
 ### Updating
 
@@ -108,8 +113,11 @@ delegates to `WorldRenderer.render()`, which:
   are staggered across frames.
 - Sets fog, clear color, projection, and camera transforms.
 - Draws sky/clouds before world geometry.
-- Draws terrain, fences, decals, walls, roads, doors, windows, polygons,
-  entities, sprites, shadows, the minimap, and HUD.
+- Draws opaque animated water, terrain, the sand beach, fences, decals, walls,
+  roads, doors, windows, polygons, entities, sprites, shadows, the minimap, and
+  HUD. Water implements the shared exponential fog equation in GLSL so its
+  outer edge disappears into the clear-color horizon, with an independent
+  outer-ring blend preserving that transition when scene fog is disabled.
 - Supplies receiver-specific lighting packets to the packet shader and uses
   static VBO batches when available, falling back to immediate rendering for
   objects that need it.
@@ -142,7 +150,7 @@ separately releases its directional and point-shadow GPU resources.
 | `src/game/__init__.py` | Game package marker for actors, combat, inventory, player systems, UI, resources, and worlds. |
 | `src/game/main_menu.py` | Boot menu scene with a visible cursor and Start Game button that transitions into the loading/world flow. |
 | `src/engine/config.py` | Engine display, view, audio mute, and performance defaults. Reads `PY3D_*` environment flags. |
-| `src/game/config.py` | Game movement, sky, player, and goblin tuning. Re-exports engine defaults for game modules. |
+| `src/game/config.py` | Game movement, sky, island shoreline/water, player, and goblin tuning. Re-exports engine defaults for game modules. |
 
 ### Core Engine
 
@@ -219,20 +227,21 @@ the lighting implementation is being changed.
 | `src/game/world/world_builder.py` | World construction orchestration: build-step metadata, incremental progress, and compatibility exports for construction helpers. |
 | `src/game/world/builder_support.py` | Shared construction-step and disposal helpers used by the construction pipeline modules. |
 | `src/game/world/building_pipeline.py` | Building/showcase construction: authored/generated building specs, walls, torches, doors, windows, showcase polygons, and showcase chest setup. |
-| `src/game/world/terrain_pipeline.py` | Terrain and boundary construction: ground mesh generation and fence ring rebuilding. |
+| `src/game/world/terrain_pipeline.py` | Terrain and boundary construction: ground mesh generation, island shoreline/water creation, and fence ring rebuilding. |
+| `src/game/world/island_boundary.py` | Exact terrain-render bounds, sampled multi-ring sand beach geometry, gridded ocean geometry, and the animated GLSL 1.20 water renderer. |
 | `src/game/world/road_pipeline.py` | Road construction and batching for the main road plus building access roads. |
 | `src/game/world/spawn_pipeline.py` | Tree/grass/rock sprite spawning and goblin placement/registration. |
 | `src/game/world/detail_pipeline.py` | Ground-detail/contact-shadow decal batching and tree sun-caster creation. |
 | `src/game/world/tree_shadow.py` | Alpha-cutout tree silhouettes submitted to the directional shadow map. |
 | `src/game/world/world_runtime.py` | Per-frame runtime helpers: bounds checks, road checks, height queries, entity updates, interaction, pause/inventory input, and mouse delta forwarding. |
-| `src/game/world/world_renderer.py` | World render pipeline: fog/projection/camera setup, sky, terrain, object passes, and HUD text/panel delegation. |
+| `src/game/world/world_renderer.py` | World render pipeline: fog/projection/camera setup, sky, water/terrain/beach ordering, object passes, and HUD text/panel delegation. |
 | `src/game/world/collision_index.py` | Spatial collision candidate index for wall and polygon meshes, including dynamic/fallback mesh handling. |
 | `src/game/world/entity_registry.py` | Runtime entity registry that keeps entity/creature lists, immediate draw lists, sprites, and collision meshes synchronized. |
 | `src/game/world/environment.py` | Typed indoor volumes and portals, point queries, and legacy covered-region projection during lighting migration. |
 | `src/game/world/lighting_controller.py` | Lighting snapshot adapter, packet-runtime cache, alias-free packet operation, explicit backend transition, exact packet static-geometry validation, rollback-only request guard, and migration diagnostics. |
 | `src/game/world/legacy_lighting_bridge.py` | Lazily imported rollback-only owner for scene aliases, local-light/covered-region dictionaries, door-region bindings, compatibility uploads, CPU exposure, and ground/road/wall/fence rebuild policy. |
 | `src/game/world/lighting_receivers.py` | Complete receiver registry with disjoint packet-runtime and rollback-only CPU/untextured contract sets. |
-| `src/game/world/scene_resources.py` | Scene resource disposer for OpenGL-backed meshes, batches, HUD resources, entities, ambient audio, and cached render/collision references. |
+| `src/game/world/scene_resources.py` | Scene resource disposer for OpenGL-backed meshes, island water shader/VBO, batches, HUD resources, entities, ambient audio, and cached render/collision references. |
 | `src/game/world/world_content.py` | Declarative scene content. Converts hand-authored or generated building declarations into mutable runtime specs. |
 | `src/game/world/interior_layout.py` | Shared doorway, window, and interior-feature placement geometry used while authoring buildings. |
 | `src/game/world/world_lighting_plan.py` | Authors typed indoor environment and stable-ID opening-light records; projects compatibility dictionaries only for legacy construction. |

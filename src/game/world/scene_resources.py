@@ -11,6 +11,7 @@ class SceneResourceDisposer:
 
     SINGLE_RESOURCE_ATTRS = (
         "ground_mesh",
+        "island_boundary",
         "sky",
         "road",
         "decal_batch",
@@ -112,6 +113,7 @@ class SceneResourceDisposer:
                     dispose_once(obj)
 
         resources.ground_mesh = None
+        resources.island_boundary = None
         resources.sky = None
         if hasattr(resources, "ground_height_sampler"):
             resources.ground_height_sampler = None
