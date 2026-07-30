@@ -17,6 +17,7 @@ from game.inventory import (
 class InventoryLayout:
     outer_rect: tuple[float, float, float, float]
     close_rect: tuple[float, float, float, float]
+    deck_rect: tuple[float, float, float, float]
     grid_rect: tuple[float, float, float, float]
     stats_rect: tuple[float, float, float, float]
     slot_rects: tuple[tuple[float, float, float, float], ...]
@@ -28,6 +29,11 @@ class WorldUIInteractions:
 
     def __init__(self, scene) -> None:
         self.scene = scene
+        self._inventory_deck_pressed = False
+
+    @property
+    def inventory_deck_pressed(self) -> bool:
+        return self._inventory_deck_pressed
 
     @staticmethod
     def inventory_panel_rect(
@@ -98,6 +104,13 @@ class WorldUIInteractions:
             close_size,
             close_size,
         )
+        deck_w = min(136.0, max(112.0, grid_w * 0.28))
+        deck_rect = (
+            grid_x + grid_w - deck_w,
+            outer_y + 18.0,
+            deck_w,
+            close_size,
+        )
         backpack_slot_rects = tuple(
             (
                 grid_x + (index % cols) * (slot_size + slot_gap),
@@ -111,6 +124,7 @@ class WorldUIInteractions:
         return InventoryLayout(
             outer_rect=(outer_x, outer_y, outer_w, outer_h),
             close_rect=close_rect,
+            deck_rect=deck_rect,
             grid_rect=(grid_x, grid_y, grid_w, grid_h),
             stats_rect=(stats_x, outer_y + 62.0, stats_w, outer_h - 86.0),
             slot_rects=slot_rects,
@@ -124,6 +138,14 @@ class WorldUIInteractions:
         height: int = HEIGHT,
     ) -> tuple[float, float, float, float]:
         return cls.inventory_layout(width, height).close_rect
+
+    @classmethod
+    def inventory_deck_rect(
+        cls,
+        width: int = WIDTH,
+        height: int = HEIGHT,
+    ) -> tuple[float, float, float, float]:
+        return cls.inventory_layout(width, height).deck_rect
 
     @classmethod
     def inventory_slot_at(
@@ -155,7 +177,28 @@ class WorldUIInteractions:
         return []
 
     def handle_inventory_click(self, pos) -> bool:
+        battle_overlay = getattr(self.scene, "battle_overlay", None)
+        sync_overlay = getattr(battle_overlay, "sync_state", None)
+        if callable(sync_overlay):
+            sync_overlay()
+        handle_modal_down = getattr(
+            battle_overlay,
+            "handle_deck_view_mouse_down",
+            None,
+        )
+        if callable(handle_modal_down) and handle_modal_down(pos):
+            self._inventory_deck_pressed = False
+            self.scene.inventory_drag_source = None
+            return True
+
         mx, my = pos
+        deck_x, deck_y, deck_w, deck_h = self.inventory_deck_rect()
+        if deck_x <= mx <= deck_x + deck_w and deck_y <= my <= deck_y + deck_h:
+            self._inventory_deck_pressed = True
+            self.scene.inventory_drag_source = None
+            return True
+
+        self._inventory_deck_pressed = False
         x, y, w, h = self.inventory_close_rect()
         if x <= mx <= x + w and y <= my <= y + h:
             self.scene.inventory_selected_slot = None
@@ -163,6 +206,9 @@ class WorldUIInteractions:
             self.scene.inventory_open = False
             self.scene.paused = False
             self.scene.showing_settings_menu = False
+            close_deck_view = getattr(battle_overlay, "close_deck_view", None)
+            if callable(close_deck_view):
+                close_deck_view()
             self._set_mouse_captured()
             return True
 
@@ -182,6 +228,39 @@ class WorldUIInteractions:
         return True
 
     def handle_inventory_release(self, pos) -> bool:
+        battle_overlay = getattr(self.scene, "battle_overlay", None)
+        sync_overlay = getattr(battle_overlay, "sync_state", None)
+        if callable(sync_overlay):
+            sync_overlay()
+        handle_modal_up = getattr(
+            battle_overlay,
+            "handle_deck_view_mouse_up",
+            None,
+        )
+        if callable(handle_modal_up) and handle_modal_up(pos):
+            self._inventory_deck_pressed = False
+            self.scene.inventory_drag_source = None
+            return True
+
+        if self._inventory_deck_pressed:
+            self._inventory_deck_pressed = False
+            self.scene.inventory_drag_source = None
+            deck_x, deck_y, deck_w, deck_h = self.inventory_deck_rect()
+            mx, my = pos
+            if (
+                deck_x <= mx <= deck_x + deck_w
+                and deck_y <= my <= deck_y + deck_h
+            ):
+                open_loadout_view = getattr(
+                    battle_overlay,
+                    "open_loadout_view",
+                    None,
+                )
+                if callable(open_loadout_view):
+                    return bool(open_loadout_view())
+                return True
+            return True
+
         source = getattr(self.scene, "inventory_drag_source", None)
         self.scene.inventory_drag_source = None
         released = self.inventory_slot_at(pos)
@@ -190,6 +269,14 @@ class WorldUIInteractions:
         moved = move_inventory_item(self.scene, source, released)
         self.scene.inventory_selected_slot = released if moved else source
         return moved
+
+    def handle_inventory_escape(self) -> bool:
+        """Close the deck modal before allowing Escape to close inventory."""
+
+        self._inventory_deck_pressed = False
+        battle_overlay = getattr(self.scene, "battle_overlay", None)
+        close_deck_view = getattr(battle_overlay, "close_deck_view", None)
+        return bool(close_deck_view()) if callable(close_deck_view) else False
 
     def handle_battle_click(self, pos) -> bool:
         battle_overlay = getattr(self.scene, "battle_overlay", None)
@@ -208,6 +295,11 @@ class WorldUIInteractions:
         if battle_overlay is not None:
             return bool(battle_overlay.handle_mouse_up(pos))
         return False
+
+    def handle_battle_escape(self) -> bool:
+        battle_overlay = getattr(self.scene, "battle_overlay", None)
+        close_deck_view = getattr(battle_overlay, "close_deck_view", None)
+        return bool(close_deck_view()) if callable(close_deck_view) else False
 
     def handle_pause_click(self, pos) -> None:
         menu = self.active_pause_menu()

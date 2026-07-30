@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict
 from engine.textures.texture_utils import load_texture, load_texture_atlas
+from game.inventory import GOBLIN_SET_PLACEHOLDER_ICON
 from game.resources.paths import (
     BODY_SLOT_TEXTURE_PATH,
     BOOT_SLOT_TEXTURE_PATH,
@@ -132,9 +133,11 @@ def load_world_textures() -> Dict[str, object]:
     ]
 
     # Item textures
+    goblin_fist_texture = load_texture(GOBLIN_FIST_TEXTURE_PATH)
     item_textures = {
         "sword_texture": load_texture(SWORD_TEXTURE_PATH),
-        "goblin_fist": load_texture(GOBLIN_FIST_TEXTURE_PATH),
+        "goblin_fist": goblin_fist_texture,
+        GOBLIN_SET_PLACEHOLDER_ICON: goblin_fist_texture,
     }
     equipment_slot_textures = {
         "body": load_texture(BODY_SLOT_TEXTURE_PATH),

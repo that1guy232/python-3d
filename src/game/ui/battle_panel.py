@@ -46,11 +46,15 @@ class BattlePanel:
         rows = dict(InventoryPanel(self.scene)._player_stat_rows())
         if not rows:
             return []
-        return [
+        lines = [
             f"STR {rows['Strength']}  DEX {rows['Dexterity']}",
             f"Crit {rows['Crit Chance']}  Elem {rows['Elemental Damage']}",
             f"Draw {rows['Card Draw']}",
         ]
+        combat = getattr(self.scene, "combat", None)
+        guard = max(0, int(getattr(combat, "guard", 0)))
+        lines.append(f"Guard {guard}")
+        return lines
 
     def hp_anchor(self) -> tuple[float, float] | None:
         creature = self.active_creature()
@@ -348,10 +352,6 @@ class BattlePanel:
         self.draw_player_stats(text)
         if not self.draw_combat_notice(text, hp_rect):
             self.draw_enemy_intent(text)
-        battle_overlay = getattr(self.scene, "battle_overlay", None)
-        if battle_overlay is not None:
-            battle_overlay.draw(text)
-
         glEnable(GL_TEXTURE_2D)
         text.draw_text(
             "Battle mode",
@@ -360,5 +360,9 @@ class BattlePanel:
             color=(255, 245, 230, 255),
             align="center",
         )
+
+        battle_overlay = getattr(self.scene, "battle_overlay", None)
+        if battle_overlay is not None:
+            battle_overlay.draw(text)
 
         text.end()

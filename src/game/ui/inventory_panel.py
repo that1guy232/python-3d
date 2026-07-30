@@ -261,13 +261,36 @@ class InventoryPanel:
             slot_rects = layout.slot_rects
             slot_count = len(slot_rects)
             close_x, close_y, close_w, close_h = layout.close_rect
+            deck_x, deck_y, deck_w, deck_h = layout.deck_rect
+            battle_overlay = getattr(self.scene, "battle_overlay", None)
+            deck_view_open = bool(
+                getattr(battle_overlay, "loadout_view_open", False)
+            )
+            battle_cards = getattr(self.scene, "battle_cards", None)
+            loadout_cards = getattr(battle_cards, "loadout_cards", ())
+            if callable(loadout_cards):
+                loadout_cards = loadout_cards()
+            deck_count = len(loadout_cards or ())
             selected_slot = getattr(self.scene, "inventory_selected_slot", None)
             drag_source = getattr(self.scene, "inventory_drag_source", None)
             mx, my = pygame.mouse.get_pos()
             hovered_slot = WorldUIInteractions.inventory_slot_at((mx, my))
             close_hovered = (
-                close_x <= mx <= close_x + close_w
+                not deck_view_open
+                and close_x <= mx <= close_x + close_w
                 and close_y <= my <= close_y + close_h
+            )
+            deck_hovered = (
+                not deck_view_open
+                and deck_x <= mx <= deck_x + deck_w
+                and deck_y <= my <= deck_y + deck_h
+            )
+            deck_pressed = bool(
+                getattr(
+                    getattr(self.scene, "ui_interactions", None),
+                    "inventory_deck_pressed",
+                    False,
+                )
             )
 
             glDisable(GL_TEXTURE_2D)
@@ -325,6 +348,24 @@ class InventoryPanel:
                 close_w - 6.0,
                 close_h - 6.0,
                 (0.48, 0.18, 0.14, 0.74) if close_hovered else (0.22, 0.13, 0.11, 0.64),
+            )
+            self._draw_overlay_rect(
+                deck_x,
+                deck_y,
+                deck_w,
+                deck_h,
+                (0.38, 0.24, 0.10, 0.98)
+                if deck_hovered or deck_pressed
+                else (0.12, 0.09, 0.07, 0.96),
+            )
+            self._draw_overlay_rect(
+                deck_x + 3.0,
+                deck_y + 3.0,
+                deck_w - 6.0,
+                deck_h - 6.0,
+                (0.60, 0.36, 0.12, 0.72)
+                if deck_hovered or deck_pressed
+                else (0.25, 0.17, 0.10, 0.68),
             )
 
             for index, (x, y, slot_w, slot_h) in enumerate(slot_rects):
@@ -439,6 +480,15 @@ class InventoryPanel:
                 close_y + close_h * 0.5,
                 color=(255, 245, 230, 255),
                 align="center",
+            )
+            text.draw_text(
+                f"View Deck ({deck_count})",
+                deck_x + deck_w * 0.5,
+                deck_y + deck_h * 0.5,
+                color=(255, 238, 204, 255),
+                align="center",
+                max_width=deck_w - 16.0,
+                max_height=18.0,
             )
 
             for offset, item_kind in enumerate(EQUIPMENT_TYPES):
@@ -630,5 +680,10 @@ class InventoryPanel:
                     color=(255, 238, 202, 255),
                     align="center",
                 )
+
+            if deck_view_open:
+                draw_deck_view = getattr(battle_overlay, "draw_deck_view", None)
+                if callable(draw_deck_view):
+                    draw_deck_view(text, (mx, my))
         finally:
             text.end()

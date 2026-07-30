@@ -553,11 +553,17 @@ class WorldScene(Scene):
     def _handle_battle_release(self, pos):
         return self.ui_interactions.handle_battle_release(pos)
 
+    def _handle_battle_escape(self):
+        return self.ui_interactions.handle_battle_escape()
+
     def _handle_inventory_click(self, pos):
         return self.ui_interactions.handle_inventory_click(pos)
 
     def _handle_inventory_release(self, pos):
         return self.ui_interactions.handle_inventory_release(pos)
+
+    def _handle_inventory_escape(self):
+        return self.ui_interactions.handle_inventory_escape()
 
     def _handle_pause_click(self, pos):
         return self.ui_interactions.handle_pause_click(pos)

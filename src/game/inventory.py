@@ -13,7 +13,13 @@ INVENTORY_SLOT_COUNT = BACKPACK_SLOT_COUNT + EQUIPMENT_SLOT_COUNT
 INVENTORY_NOTICE_SECONDS = 3.0
 GOBLIN_FISTS_NAME = "Goblin fists"
 GOBLIN_FISTS_ICON = "goblin_fist"
-GOBLIN_FISTS_STRIKE_CARD_BONUS = 2
+# The non-weapon pieces temporarily reuse the fist art through a deliberately
+# named texture entry, so replacing the set's placeholder is a one-line asset
+# catalog change rather than an item-data migration.
+GOBLIN_SET_PLACEHOLDER_ICON = "goblin_set_placeholder"
+GOBLIN_BOOTS_NAME = "Goblin scamper boots"
+GOBLIN_BODY_NAME = "Goblin scrap armor"
+GOBLIN_HEAD_NAME = "Goblin thinking cap"
 
 
 class ItemType(str, Enum):
@@ -39,6 +45,32 @@ EQUIPMENT_SLOT_TYPES: dict[int, ItemType] = {
 
 
 @dataclass(frozen=True, slots=True)
+class ItemCard:
+    """A battle card contributed while its owning item is equipped."""
+
+    action: str
+    title: str
+    detail: str
+    mana_cost: int
+    effect: str
+    amount: int = 0
+    requires_odd_mana: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "action", str(self.action))
+        object.__setattr__(self, "title", str(self.title))
+        object.__setattr__(self, "detail", str(self.detail))
+        object.__setattr__(self, "mana_cost", max(0, int(self.mana_cost)))
+        object.__setattr__(self, "effect", str(self.effect))
+        object.__setattr__(self, "amount", max(0, int(self.amount)))
+        object.__setattr__(
+            self,
+            "requires_odd_mana",
+            bool(self.requires_odd_mana),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class InventoryItem:
     """A categorized item with player-facing descriptive details."""
 
@@ -47,6 +79,7 @@ class InventoryItem:
     description: str = ""
     attributes: tuple[tuple[str, str], ...] | Mapping[str, object] = ()
     icon: str = ""
+    cards: tuple[ItemCard, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.item_type, ItemType):
@@ -63,6 +96,110 @@ class InventoryItem:
             "attributes",
             tuple((str(label), str(value)) for label, value in pairs),
         )
+        normalized_cards: list[ItemCard] = []
+        for card in self.cards or ():
+            if isinstance(card, ItemCard):
+                normalized_cards.append(card)
+            elif isinstance(card, Mapping):
+                normalized_cards.append(ItemCard(**card))
+            else:
+                raise TypeError("Inventory item cards must be ItemCard values")
+        object.__setattr__(self, "cards", tuple(normalized_cards))
+
+
+def goblin_equipment_set() -> tuple[InventoryItem, ...]:
+    """Return the four goblin pieces and their complete card contribution."""
+
+    return (
+        InventoryItem(
+            GOBLIN_FISTS_NAME,
+            ItemType.WEAPON,
+            (
+                "Fight like a goblin: start fast, hit below the belt, then "
+                "commit to a wild finish."
+            ),
+            {"Cards": "Knuckle Jab, Cheap Shot, Wild Flail"},
+            GOBLIN_FISTS_ICON,
+            (
+                ItemCard(
+                    "goblin_knuckle_jab",
+                    "Knuckle Jab",
+                    "1 Damage",
+                    0,
+                    "damage",
+                    1,
+                ),
+                ItemCard(
+                    "goblin_cheap_shot",
+                    "Cheap Shot",
+                    "2 Damage",
+                    1,
+                    "damage",
+                    2,
+                ),
+                ItemCard(
+                    "goblin_wild_flail",
+                    "Wild Flail",
+                    "3 Damage",
+                    2,
+                    "damage",
+                    3,
+                ),
+            ),
+        ),
+        InventoryItem(
+            GOBLIN_BOOTS_NAME,
+            ItemType.BOOT,
+            "Keep moving and rummage deeper into your bag of tricks.",
+            {"Card": "Scamper", "Draw": "+2"},
+            GOBLIN_SET_PLACEHOLDER_ICON,
+            (
+                ItemCard(
+                    "goblin_scamper",
+                    "Scamper",
+                    "Draw 2 from Deck",
+                    1,
+                    "draw",
+                    2,
+                ),
+            ),
+        ),
+        InventoryItem(
+            GOBLIN_BODY_NAME,
+            ItemType.BODY,
+            "Scrap plating lets you risk a heavier incoming hit.",
+            {"Card": "Scrap Guard", "Guard": "+4"},
+            GOBLIN_SET_PLACEHOLDER_ICON,
+            (
+                ItemCard(
+                    "goblin_scrap_guard",
+                    "Scrap Guard",
+                    "Block 4 Next Hit",
+                    1,
+                    "guard",
+                    4,
+                ),
+            ),
+        ),
+        InventoryItem(
+            GOBLIN_HEAD_NAME,
+            ItemType.HELMET,
+            "Goblin arithmetic only works when your current mana is odd.",
+            {"Card": "Goblin Math", "Rule": "Odd mana only"},
+            GOBLIN_SET_PLACEHOLDER_ICON,
+            (
+                ItemCard(
+                    "goblin_math",
+                    "Goblin Math",
+                    "Odd Mana: 3 Damage",
+                    1,
+                    "damage",
+                    3,
+                    requires_odd_mana=True,
+                ),
+            ),
+        ),
+    )
 
 
 def empty_inventory() -> list[InventoryItem | None]:

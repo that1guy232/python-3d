@@ -34,6 +34,7 @@ class BattleController:
         scene.last_player_attack: dict[str, int | bool] | None = None
         self.enemy_intent: CombatIntent | None = None
         self.last_enemy_attack: dict[str, int] | None = None
+        self.guard = 0
         self._combat_notice_text = ""
         self._combat_notice_expires_at = 0.0
 
@@ -50,9 +51,14 @@ class BattleController:
             setattr(creature, "hp", max_hp)
 
         scene = self.scene
+        self.guard = 0
         self.last_enemy_attack = None
         self._combat_notice_text = ""
         self._combat_notice_expires_at = 0.0
+        battle_overlay = getattr(scene, "battle_overlay", None)
+        close_deck_view = getattr(battle_overlay, "close_deck_view", None)
+        if callable(close_deck_view):
+            close_deck_view()
         scene.battle_mode = True
         scene.active_battle_creature = creature
         self._plan_enemy_turn()
@@ -202,6 +208,7 @@ class BattleController:
         self.enemy_intent = None
         stats = getattr(self.scene, "player_stats", None)
         if not intent:
+            self.guard = 0
             return max(0, int(getattr(stats, "hp", 0)))
 
         if intent.get("action") == "attack":
@@ -209,9 +216,16 @@ class BattleController:
         else:
             hp = max(0, int(getattr(stats, "hp", 0)))
 
+        self.guard = 0
         if getattr(self.scene, "battle_mode", False):
             self._plan_enemy_turn()
         return hp
+
+    def gain_guard(self, amount: int) -> int:
+        """Add protection for the next enemy action and return the total."""
+
+        self.guard = max(0, int(self.guard)) + max(0, int(amount))
+        return self.guard
 
     def enemy_attack_player(self, amount: int | None = None) -> int:
         """Apply the active creature's response and return the player's new HP."""
@@ -223,7 +237,10 @@ class BattleController:
         creature = getattr(self.scene, "active_battle_creature", None)
         if amount is None:
             amount = getattr(creature, "attack_damage", self.DEFAULT_ATTACK_DAMAGE)
-        damage = max(0, int(amount))
+        raw_damage = max(0, int(amount))
+        blocked = min(raw_damage, max(0, int(self.guard)))
+        self.guard = 0
+        damage = raw_damage - blocked
         max_hp = max(1, int(getattr(stats, "max_hp", 5)))
         hp = max(0, min(max_hp, int(getattr(stats, "hp", max_hp))))
         hp = max(0, hp - damage)
@@ -231,8 +248,15 @@ class BattleController:
         setattr(stats, "hp", hp)
 
         self.last_enemy_attack = {"damage": damage, "player_hp": hp}
+        if blocked:
+            self.last_enemy_attack["blocked"] = blocked
         name = creature_display_name(creature)
-        self._combat_notice_text = f"{name} attacks for {damage} damage!"
+        if blocked:
+            self._combat_notice_text = (
+                f"{name} attacks for {damage}; Guard blocks {blocked}!"
+            )
+        else:
+            self._combat_notice_text = f"{name} attacks for {damage} damage!"
         self._combat_notice_expires_at = (
             time.monotonic() + self.COMBAT_NOTICE_SECONDS
         )
@@ -303,6 +327,11 @@ class BattleController:
 
     def end(self) -> None:
         scene = self.scene
+        battle_overlay = getattr(scene, "battle_overlay", None)
+        close_deck_view = getattr(battle_overlay, "close_deck_view", None)
+        if callable(close_deck_view):
+            close_deck_view()
+        self.guard = 0
         stats = getattr(scene, "player_stats", None)
         if stats is not None:
             max_hp = max(1, int(getattr(stats, "max_hp", 5)))

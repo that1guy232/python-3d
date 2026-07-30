@@ -31,9 +31,9 @@ the project's direct third-party dependencies.
 | Space | Jump |
 | `E` | Interact with the focused door or chest |
 | `I` or Tab | Toggle inventory |
-| Left mouse | Click an inventory item for details; drag it to move/equip it |
+| Left mouse | Move/equip items; open the inventory deck viewer; play cards or inspect the battle draw pile |
 | `M` | Toggle minimap |
-| Escape | Pause/resume; closes inventory first |
+| Escape | Pause/resume; closes an open deck viewer, then inventory |
 | `F3` | Toggle performance logging |
 | `F4` | Reset the performance timing window |
 

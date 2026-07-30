@@ -871,6 +871,9 @@ class WorldRenderer:
         self.draw_inventory_notice(text)
 
     def draw_inventory_notice(self, text) -> None:  # pragma: no cover - visual
+        battle_overlay = self._ui_value("battle_overlay")
+        if getattr(battle_overlay, "deck_view_open", False):
+            return
         notice = active_inventory_notice(self.scene)
         if not notice:
             return

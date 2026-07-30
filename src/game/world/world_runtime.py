@@ -719,6 +719,9 @@ def handle_event(scene, event) -> None:
             ui.last_mouse_pos = pos
 
     if getattr(ui, "battle_mode", False):
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+            scene._handle_battle_escape()
+            return
         if event.type == pygame.MOUSEBUTTONDOWN and getattr(event, "button", None) == 1:
             pos = getattr(event, "pos", pygame.mouse.get_pos())
             scene._handle_battle_click(pos)
@@ -736,6 +739,13 @@ def handle_event(scene, event) -> None:
 
     if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
         if getattr(ui, "inventory_open", False):
+            handle_inventory_escape = getattr(
+                scene,
+                "_handle_inventory_escape",
+                None,
+            )
+            if callable(handle_inventory_escape) and handle_inventory_escape():
+                return
             ui.inventory_selected_slot = None
             ui.inventory_drag_source = None
             ui.inventory_open = False
@@ -754,6 +764,13 @@ def handle_event(scene, event) -> None:
     if event.type == pygame.KEYDOWN and event.key in (pygame.K_i, pygame.K_TAB):
         ui.inventory_open = not getattr(ui, "inventory_open", False)
         if not ui.inventory_open:
+            handle_inventory_escape = getattr(
+                scene,
+                "_handle_inventory_escape",
+                None,
+            )
+            if callable(handle_inventory_escape):
+                handle_inventory_escape()
             ui.inventory_selected_slot = None
             ui.inventory_drag_source = None
         ui.paused = ui.inventory_open

@@ -37,9 +37,9 @@ py src/main.py
 | Space | Jump |
 | `E` | Interact with the focused door or chest |
 | `I` or Tab | Toggle inventory |
-| Left mouse | Click an inventory item for details; drag it to move/equip it |
+| Left mouse | Move/equip items; open the inventory deck viewer; play cards or inspect the battle draw pile |
 | `M` | Toggle minimap |
-| Escape | Pause/resume; closes inventory first |
+| Escape | Pause/resume; closes an open deck viewer, then inventory |
 | `F3` | Toggle performance logging |
 | `F4` | Reset the performance timing window |
 
@@ -131,6 +131,30 @@ the `M` minimap toggle, `E` focused interaction, and mouse forwarding for
 pause, settings, inventory, and battle surfaces through `WorldUIInteractions`.
 `PlayerCameraController` owns WASD, sprint, jump, mouse-look targets, and
 collision slides.
+
+### Combat cards
+
+The battle deck is assembled from card data owned by equipped items. Weapons
+contribute three attacks, boots contribute one or two movement cards, body
+armour contributes one or two risk-mitigation cards, and helmets contribute
+one unusual-rule card (or may eventually provide a passive rule). Legacy items
+without card data retain slot-appropriate fallback cards. Empty slots supply a
+small base loadout: one Strike, Quickstep, Brace, and Odd Thought.
+
+The first complete equipment family is the four-piece goblin set dropped by a
+defeated goblin. Goblin fists replace Strike with Knuckle Jab, Cheap Shot, and
+Wild Flail. Scamper Boots add Scamper (draw two), Scrap Armor adds Scrap Guard
+(four Guard), and the Thinking Cap adds Goblin Math (three damage, playable
+only at odd current mana). The three non-weapon pieces temporarily share the
+explicit `goblin_set_placeholder` icon entry.
+
+Card origins are reconciled without rebuilding unchanged cards, including
+while deck, hand, and discard piles are active. Outside battle, the inventory's
+View Deck control opens the complete current loadout. During battle, the Deck
+counter instead opens the remaining draw pile. Both modal views close with
+their X control, a backdrop click, or Escape and block the underlying
+inventory/card/turn input while open. Rules text wraps and scales as needed;
+titles and footers scale to remain within their assigned card regions.
 
 ### Cleanup
 
@@ -274,8 +298,8 @@ the lighting implementation is being changed.
 | `src/game/actors/creature.py` | Generic combat-creature contract and reusable base state for names, health, attacks, encounter ranges, intents, and creature-owned rewards. |
 | `src/game/actors/goblin.py` | Runtime roaming/chasing sprite entity with directional animation frames and batched shadows. |
 | `src/game/combat/__init__.py` | Combat controller and card-loadout exports. |
-| `src/game/combat/controller.py` | Creature-agnostic battle controller for entering/leaving combat, announced enemy intent, turn resolution, healing, damage rolls, rewards, and battle mouse state. |
-| `src/game/combat/cards.py` | Owns deck/hand/discard piles, draw-and-reshuffle rules, automatic turn endings, and equipment-driven Strike synchronization. |
+| `src/game/combat/controller.py` | Creature-agnostic battle controller for entering/leaving combat, announced enemy intent, turn resolution, Guard mitigation, healing, damage rolls, rewards, and battle mouse state. |
+| `src/game/combat/cards.py` | Owns deck/hand/discard piles, full-loadout and remaining-draw snapshots, draw-and-reshuffle rules, automatic turn endings, and slot-keyed equipment/default card contributions. |
 | `src/game/player/__init__.py` | Player controller and stats exports. |
 | `src/game/player/controller.py` | Player camera input controller for mouse look, WASD/sprint/jump, terrain support, wall collision, and boundary sliding. |
 | `src/game/player/stats.py` | Player health, mana, attributes, critical-hit chance, initial card draw, and attack-damage rolls. |
@@ -285,11 +309,11 @@ the lighting implementation is being changed.
 | `src/game/ui/compass_overlay.py` | Compass overlay using base/needle textures in screen space. |
 | `src/game/ui/minimap_overlay.py` | Camera-facing world-space minimap billboard with layered roads, building footprints, goblin markers, and player heading. |
 | `src/game/ui/interactions.py` | Screen-space hit boxes and input routing for pause/settings, inventory, and battle surfaces. |
-| `src/game/ui/inventory_panel.py` | Inventory overlay, item details, drag feedback, equipment backgrounds, and player-stat presentation. |
+| `src/game/ui/inventory_panel.py` | Inventory overlay, full-deck viewer entry point, item details, drag feedback, equipment backgrounds, and player-stat presentation. |
 | `src/game/ui/battle_panel.py` | Battle screen presentation, announced enemy intent/action feedback, active-enemy HP positioning, and player-stat text. |
-| `src/game/ui/battle_overlay.py` | Interactive battle resources, draggable cards, deck/discard counts, and the End Turn control. |
+| `src/game/ui/battle_overlay.py` | Interactive battle resources, draggable cards, shared full-deck/draw-pile modal, deck/discard counts, and the End Turn control. |
 | `src/game/ui/battle_menu.py` | Battle menu model built from generic engine menu items. |
-| `src/game/ui/card.py` | Reusable battle-card data and OpenGL drawing primitive. |
+| `src/game/ui/card.py` | Reusable battle-card data, bounded text layout, and mutable/non-mutating OpenGL drawing primitives. |
 | `src/game/ui/pause_panel.py` | Screen-space rendering for the active pause or settings menu. |
 | `src/game/ui/pause_menu.py` | Pause-menu options and actions. |
 | `src/game/ui/setting_menu.py` | Settings menu sliders/toggles that update scene config live. |
@@ -300,7 +324,7 @@ the lighting implementation is being changed.
 | --- | --- |
 | `src/engine/ui/__init__.py` | Shared UI package namespace. |
 | `src/engine/ui/menu.py` | Generic button/slider menu helpers used by pause/settings screens. |
-| `src/engine/ui/text_renderer.py` | Pygame font to OpenGL texture text renderer for HUD/menu labels. |
+| `src/engine/ui/text_renderer.py` | Pygame font to OpenGL texture text renderer with bounded scaling and measured multiline wrapping. |
 | `src/engine/textures/__init__.py` | Generic texture utility package namespace. |
 | `src/engine/textures/texture_utils.py` | Texture loading, atlas helpers, texture-size registry, and procedural texture helpers. |
 | `src/engine/sound/__init__.py` | Sound package namespace. |

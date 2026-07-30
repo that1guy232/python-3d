@@ -47,13 +47,7 @@ from OpenGL.GL import (
 from engine.rendering.sprite import AnimatedWorldSprite
 from engine.sound.sound_utils import Sounds
 from game.actors.creature import Creature
-from game.inventory import (
-    GOBLIN_FISTS_ICON,
-    GOBLIN_FISTS_NAME,
-    GOBLIN_FISTS_STRIKE_CARD_BONUS,
-    InventoryItem,
-    ItemType,
-)
+from game.inventory import InventoryItem, goblin_equipment_set
 from game.resources.paths import (
     GOBLIN_BACK_TEXTURE_DIR_PATH,
     GOBLIN_FRONT_TEXTURE_DIR_PATH,
@@ -310,18 +304,7 @@ class Goblin(Creature):
         self._sound_key = None
 
     def combat_rewards(self, scene) -> tuple[InventoryItem, ...]:
-        return (
-            InventoryItem(
-                GOBLIN_FISTS_NAME,
-                ItemType.WEAPON,
-                (
-                    "The goblin's own fighting style. "
-                    "Equip it to add two Strike cards."
-                ),
-                {"Strike Cards": f"+{GOBLIN_FISTS_STRIKE_CARD_BONUS}"},
-                GOBLIN_FISTS_ICON,
-            ),
-        )
+        return goblin_equipment_set()
 
     def update(self, dt: float) -> None:
         dt = max(0.0, float(dt))

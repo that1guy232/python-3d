@@ -180,10 +180,18 @@ class Card:
             self.on_play(scene)
         return True
 
-    def draw(self, text, *, enabled: bool = True) -> None:  # pragma: no cover - visual
-        x, y, w, h = self.rect
+    def draw_at(
+        self,
+        text,
+        rect: tuple[float, float, float, float],
+        *,
+        enabled: bool = True,
+        raised: bool = False,
+    ) -> None:  # pragma: no cover - visual
+        """Draw a non-mutating card preview inside an explicit rectangle."""
+
+        x, y, w, h = self._coerce_rect(rect)
         style = self.style
-        raised = self.hovered or self.dragging
         border = style.border_hover if raised and enabled else style.border
         face = style.face_hover if raised and enabled else style.face
         accent = style.accent_hover if raised and enabled else style.accent
@@ -209,13 +217,21 @@ class Card:
             y + 19.0,
             color=(255, 242, 220, text_alpha),
             align="center",
+            max_width=max(1.0, w - 16.0),
+            max_height=22.0,
         )
-        text.draw_text(
+        panel_y = y + 34.0
+        panel_h = h * 0.44
+        text.draw_text_multiline(
             self.detail,
             x + w * 0.5,
-            y + h * 0.52,
+            panel_y + panel_h * 0.5,
             color=(245, 238, 224, text_alpha),
             align="center",
+            line_spacing=1.05,
+            max_width=max(1.0, w - 28.0),
+            max_height=max(1.0, panel_h - 10.0),
+            wrap=True,
         )
         if self.footer:
             text.draw_text(
@@ -224,4 +240,14 @@ class Card:
                 y + h - 23.0,
                 color=(255, 248, 232, text_alpha),
                 align="center",
+                max_width=max(1.0, w - 28.0),
+                max_height=14.0,
             )
+
+    def draw(self, text, *, enabled: bool = True) -> None:  # pragma: no cover - visual
+        self.draw_at(
+            text,
+            self.rect,
+            enabled=enabled,
+            raised=self.hovered or self.dragging,
+        )
