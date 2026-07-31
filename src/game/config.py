@@ -30,8 +30,8 @@ CLOUD_SPEED = 1.0
 CLOUD_OPACITY = 0.9
 
 # Island boundary. The terrain mesh and heightfield remain unchanged; a
-# procedural sand skirt follows the rendered edge and descends to animated
-# water beyond the symmetrically inset playable bounds.
+# procedural sand skirt starts on the rendered edge, meanders into coves and
+# inlets, and descends to animated water hidden beneath its outer reach.
 ISLAND_SHORE_WIDTH = 200.0
 ISLAND_SHORE_SAMPLE_SPACING = 25.0
 ISLAND_SHORE_RADIAL_SEGMENTS = 8

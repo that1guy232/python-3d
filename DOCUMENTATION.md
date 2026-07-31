@@ -87,9 +87,12 @@ The main menu accepts a mouse click, Enter, keypad Enter, or Space to start.
   `world_builder.create_world_objects_steps()`, which delegates to focused
   construction pipeline modules.
 
-The shoreline uses the exact rendered terrain bounds. Its sand rings bridge
-each sampled edge height to one sea plane, placed `ISLAND_WATER_DROP` below the
-lowest edge sample; naturally high edges therefore form coastal bluffs.
+The shoreline starts on the exact rendered terrain bounds, then uses one
+continuous periodic contour to form broad coves and smaller inlets around all
+four sides. Its sand rings bridge each sampled edge height to one sea plane,
+placed `ISLAND_WATER_DROP` below the lowest edge sample; naturally high edges
+therefore form coastal bluffs. The water cutout sits beneath the minimum beach
+reach so the irregular waterline cannot expose cracks.
 
 ### Updating
 
@@ -117,7 +120,10 @@ delegates to `WorldRenderer.render()`, which:
   roads, doors, windows, polygons, entities, sprites, shadows, the minimap, and
   HUD. Water implements the shared exponential fog equation in GLSL so its
   outer edge disappears into the clear-color horizon, with an independent
-  outer-ring blend preserving that transition when scene fog is disabled.
+  outer-ring blend preserving that transition when scene fog is disabled. The
+  water plane stays geometrically flat so mesh tessellation cannot show through;
+  animated domain-warped cellular caustics, foam, and surface normals are
+  evaluated per fragment, with foam following the same contour as the beach.
 - Supplies receiver-specific lighting packets to the packet shader and uses
   static VBO batches when available, falling back to immediate rendering for
   objects that need it.
@@ -258,7 +264,7 @@ the lighting implementation is being changed.
 | `src/game/world/builder_support.py` | Shared construction-step and disposal helpers used by the construction pipeline modules. |
 | `src/game/world/building_pipeline.py` | Building/showcase construction: authored/generated building specs, walls, torches, doors, windows, showcase polygons, and showcase chest setup. |
 | `src/game/world/terrain_pipeline.py` | Terrain and boundary construction: ground mesh generation, island shoreline/water creation, and fence ring rebuilding. |
-| `src/game/world/island_boundary.py` | Exact terrain-render bounds, sampled multi-ring sand beach geometry, gridded ocean geometry, and the animated GLSL 1.20 water renderer. |
+| `src/game/world/island_boundary.py` | Exact terrain-render bounds, continuous irregular multi-ring beach geometry, a hidden-underlap flat ocean mesh, and the animated cellular GLSL 1.20 water renderer. |
 | `src/game/world/road_pipeline.py` | Road construction and batching for the main road plus building access roads. |
 | `src/game/world/spawn_pipeline.py` | Tree/grass/rock sprite spawning and goblin placement/registration. |
 | `src/game/world/detail_pipeline.py` | Ground-detail/contact-shadow decal batching and tree sun-caster creation. |

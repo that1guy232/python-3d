@@ -49,36 +49,16 @@ HeightFn = Callable[[float, float], float]
 
 
 WATER_VERTEX_SOURCE = r"""#version 120
-uniform float u_time;
-
 varying vec3 v_world_position;
 varying float v_fog_distance;
-varying vec3 v_normal;
 
 void main()
 {
     vec4 world = gl_Vertex;
-    float phase_a = world.x * 0.0065 + world.z * 0.0028 + u_time * 0.48;
-    float phase_b = world.z * 0.0080 - world.x * 0.0018 - u_time * 0.38;
-    float phase_c = (world.x + world.z) * 0.0160 + u_time * 0.85;
-
-    float wave_a = sin(phase_a);
-    float wave_b = cos(phase_b);
-    float wave_c = sin(phase_c);
-    world.y += wave_a * 0.72 + wave_b * 0.48 + wave_c * 0.16;
-
-    float dhdx = cos(phase_a) * 0.0065 * 0.72
-        + sin(phase_b) * 0.0018 * 0.48
-        + cos(phase_c) * 0.0160 * 0.16;
-    float dhdz = cos(phase_a) * 0.0028 * 0.72
-        - sin(phase_b) * 0.0080 * 0.48
-        + cos(phase_c) * 0.0160 * 0.16;
-
     vec4 eye_position = gl_ModelViewMatrix * world;
     gl_Position = gl_ProjectionMatrix * eye_position;
     v_world_position = world.xyz;
     v_fog_distance = length(eye_position.xyz);
-    v_normal = normalize(vec3(-dhdx, 1.0, -dhdz));
 }
 """
 
@@ -91,6 +71,7 @@ uniform vec3 u_sun_tint;
 uniform vec4 u_terrain_bounds;
 uniform vec4 u_water_bounds;
 uniform float u_shore_width;
+uniform float u_shore_amplitude;
 uniform float u_horizon_fade_width;
 uniform float u_exposure;
 uniform int u_fog_enabled;
@@ -99,7 +80,6 @@ uniform vec4 u_fog_color;
 
 varying vec3 v_world_position;
 varying float v_fog_distance;
-varying vec3 v_normal;
 
 float hash21(vec2 point)
 {
@@ -118,12 +98,102 @@ float value_noise(vec2 point)
     return mix(mix(a, b, local.x), mix(c, d, local.x), local.y);
 }
 
+vec2 hash22(vec2 point)
+{
+    vec2 projected = vec2(
+        dot(point, vec2(127.1, 311.7)),
+        dot(point, vec2(269.5, 183.3))
+    );
+    return fract(sin(projected) * 43758.5453);
+}
+
+float cellular_gap(vec2 point)
+{
+    vec2 cell = floor(point);
+    vec2 local = fract(point);
+    float nearest = 8.0;
+    float second_nearest = 8.0;
+
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            vec2 neighbor = vec2(float(x), float(y));
+            vec2 random_value = hash22(cell + neighbor);
+            vec2 feature = 0.5 + 0.36 * sin(
+                vec2(u_time * 0.24, -u_time * 0.19)
+                + random_value * 6.2831853
+            );
+            vec2 delta = neighbor + feature - local;
+            float distance_squared = dot(delta, delta);
+            if (distance_squared < nearest) {
+                second_nearest = nearest;
+                nearest = distance_squared;
+            } else if (distance_squared < second_nearest) {
+                second_nearest = distance_squared;
+            }
+        }
+    }
+    return second_nearest - nearest;
+}
+
 float outside_rect_distance(vec2 point)
 {
     vec2 low = vec2(u_terrain_bounds.x, u_terrain_bounds.z);
     vec2 high = vec2(u_terrain_bounds.y, u_terrain_bounds.w);
     vec2 delta = max(max(low - point, point - high), vec2(0.0));
     return max(delta.x, delta.y);
+}
+
+float shore_loop_coordinate(vec2 point, float expansion)
+{
+    vec2 low = vec2(u_terrain_bounds.x, u_terrain_bounds.z);
+    vec2 high = vec2(u_terrain_bounds.y, u_terrain_bounds.w);
+    vec2 span = max(high - low, vec2(1.0));
+    float perimeter = max(2.0 * (span.x + span.y), 1.0);
+    float south = max(low.y - point.y, 0.0);
+    float east = max(point.x - high.x, 0.0);
+    float north = max(point.y - high.y, 0.0);
+    float west = max(low.x - point.x, 0.0);
+    float along = 0.0;
+    float distance_along = 0.0;
+
+    if (south >= east && south >= north && south >= west) {
+        along = clamp(
+            (point.x - (low.x - expansion)) / (span.x + 2.0 * expansion),
+            0.0,
+            1.0
+        );
+        distance_along = along * span.x;
+    } else if (east >= north && east >= west) {
+        along = clamp(
+            (point.y - (low.y - expansion)) / (span.y + 2.0 * expansion),
+            0.0,
+            1.0
+        );
+        distance_along = span.x + along * span.y;
+    } else if (north >= west) {
+        along = clamp(
+            ((high.x + expansion) - point.x) / (span.x + 2.0 * expansion),
+            0.0,
+            1.0
+        );
+        distance_along = span.x + span.y + along * span.x;
+    } else {
+        along = clamp(
+            ((high.y + expansion) - point.y) / (span.y + 2.0 * expansion),
+            0.0,
+            1.0
+        );
+        distance_along = 2.0 * span.x + span.y + along * span.y;
+    }
+    return distance_along / perimeter;
+}
+
+float shore_profile(float loop_coordinate)
+{
+    float angle = 6.2831853 * loop_coordinate;
+    return 0.50 * sin(5.0 * angle + 0.35)
+        + 0.32 * sin(13.0 * angle + 1.75)
+        + 0.18 * sin(29.0 * angle + 4.10);
 }
 
 float outer_edge_distance(vec2 point)
@@ -136,78 +206,89 @@ float outer_edge_distance(vec2 point)
 
 void main()
 {
-    float shore_distance = outside_rect_distance(v_world_position.xz);
+    vec2 surface_point = v_world_position.xz;
+    float rect_distance = outside_rect_distance(surface_point);
+    float loop_coordinate = shore_loop_coordinate(surface_point, rect_distance);
+    float contour_offset = u_shore_amplitude * shore_profile(loop_coordinate);
+    float shore_distance = rect_distance - contour_offset;
+    float shore_offset = shore_distance - u_shore_width;
     float deep_mix = smoothstep(
-        u_shore_width * 0.80,
-        u_shore_width + 760.0,
+        u_shore_width + 36.0,
+        u_shore_width + 820.0,
         shore_distance
     );
 
-    vec3 shallow_color = vec3(0.055, 0.38, 0.40);
-    vec3 deep_color = vec3(0.018, 0.105, 0.20);
+    vec3 shallow_color = vec3(0.025, 0.54, 0.68);
+    vec3 deep_color = vec3(0.012, 0.12, 0.235);
     vec3 color = mix(shallow_color, deep_color, deep_mix);
 
-    vec2 surface_point = v_world_position.xz;
-    float drift = value_noise(
-        surface_point * 0.010 + vec2(u_time * 0.025, -u_time * 0.018)
+    vec2 warp_source = surface_point * 0.0065
+        + vec2(u_time * 0.018, -u_time * 0.014);
+    vec2 domain_warp = vec2(
+        value_noise(warp_source),
+        value_noise(warp_source + vec2(17.31, 9.27))
+    ) - vec2(0.5);
+    float cell_gap = cellular_gap(
+        surface_point * 0.026 + domain_warp * 1.35
     );
-    float ripple_a = 0.5 + 0.5 * sin(
-        dot(surface_point, vec2(0.018, 0.007))
-        + u_time * 0.62
-        + drift * 1.10
+    float caustic_cells = 1.0 - smoothstep(0.025, 0.105, cell_gap);
+    float caustic_breakup = 0.68 + 0.32 * value_noise(
+        surface_point * 0.017 + vec2(-u_time * 0.022, u_time * 0.016)
     );
-    float ripple_b = 0.5 + 0.5 * sin(
-        dot(surface_point, vec2(-0.011, 0.021))
-        - u_time * 0.46
-        + drift * 0.75
-    );
-    float crest_a = smoothstep(0.91, 0.985, ripple_a);
-    float crest_b = smoothstep(0.94, 0.992, ripple_b);
-    float broad_swell = 0.5 + 0.5 * sin(
-        dot(surface_point, vec2(0.0034, 0.0052))
-        + u_time * 0.13
-        + drift * 1.15
-    );
-    color += vec3(0.004, 0.010, 0.013) * (broad_swell - 0.50);
-    float ripple_light = crest_a * 0.075 + crest_b * 0.040;
-    color += vec3(0.14, 0.32, 0.31) * ripple_light;
+    float caustic_visibility = 1.0 - smoothstep(0.12, 0.78, deep_mix);
+    float caustic = caustic_cells * caustic_breakup * caustic_visibility;
+    color = mix(color, vec3(0.76, 0.98, 0.94), caustic * 0.64);
 
-    float shore_offset = shore_distance - u_shore_width;
+    float slow_variation = value_noise(
+        surface_point * 0.0038 + vec2(u_time * 0.010, -u_time * 0.007)
+    );
+    color += vec3(0.015, 0.055, 0.060) * (slow_variation - 0.5);
+
     float foam_envelope = 1.0 - smoothstep(
-        12.0,
-        78.0,
-        abs(shore_offset)
+        5.0,
+        54.0,
+        abs(shore_offset - 7.0)
     );
     float foam_noise = value_noise(
-        surface_point * 0.018 + vec2(-u_time * 0.06, u_time * 0.035)
+        surface_point * 0.021 + vec2(-u_time * 0.042, u_time * 0.028)
     );
-    float breaker = 0.5 + 0.5 * sin(
-        shore_offset * 0.105
-        + dot(surface_point, vec2(0.020, 0.015))
-        - u_time * 1.18
-        + foam_noise * 3.2
+    float foam_lace = 0.5 + 0.5 * sin(
+        shore_offset * 0.13
+        + loop_coordinate * 91.0
+        - u_time * 0.82
+        + foam_noise * 4.0
     );
-    float along_shore = 0.5 + 0.5 * sin(
-        dot(surface_point, vec2(-0.010, 0.016))
-        + u_time * 0.24
-        + foam_noise * 2.1
+    float foam_breakup = mix(
+        0.30,
+        1.0,
+        smoothstep(0.30, 0.80, foam_lace)
     );
-    float foam_breakup = mix(0.20, 1.0, smoothstep(0.30, 0.76, along_shore));
-    float foam = foam_envelope * smoothstep(0.70, 0.94, breaker) * foam_breakup;
-    float wash = (1.0 - smoothstep(0.0, 28.0, abs(shore_offset + 18.0))) * 0.065;
-    color = mix(color, vec3(0.72, 0.84, 0.76), foam * 0.68 + wash);
+    float bright_rim = 1.0 - smoothstep(2.0, 20.0, abs(shore_offset - 3.0));
+    float foam = max(bright_rim * 0.78, foam_envelope * foam_breakup * 0.64);
+    color = mix(color, vec3(0.86, 0.98, 0.94), clamp(foam, 0.0, 0.90));
 
-    vec3 normal = normalize(v_normal);
+    float normal_a = sin(
+        dot(surface_point, vec2(0.014, 0.005)) + u_time * 0.54
+    );
+    float normal_b = sin(
+        dot(surface_point, vec2(-0.006, 0.017)) - u_time * 0.41
+        + domain_warp.x * 2.0
+    );
+    vec3 normal = normalize(vec3(
+        normal_a * 0.075 + normal_b * 0.035,
+        1.0,
+        normal_b * 0.070 - normal_a * 0.030
+    ));
     vec3 view_direction = normalize(u_camera_position - v_world_position);
     vec3 light_direction = normalize(u_light_direction);
     vec3 reflected = reflect(-light_direction, normal);
     float reflected_light = max(dot(reflected, view_direction), 0.0);
-    float tight_specular = pow(reflected_light, 92.0);
-    float broad_specular = pow(reflected_light, 14.0);
+    float tight_specular = pow(reflected_light, 72.0);
+    float broad_specular = pow(reflected_light, 11.0);
     float facing = clamp(dot(normal, view_direction), 0.0, 1.0);
-    float fresnel = pow(1.0 - facing, 2.6);
-    color += u_sun_tint * (tight_specular * 0.48 + broad_specular * 0.045);
-    color = mix(color, u_fog_color.rgb, fresnel * 0.34);
+    float fresnel = pow(1.0 - facing, 3.0);
+    color += u_sun_tint * (tight_specular * 0.34 + broad_specular * 0.055);
+    color = mix(color, u_fog_color.rgb, fresnel * 0.23);
     color *= clamp(u_exposure, 0.28, 1.35);
 
     if (u_fog_enabled != 0) {
@@ -262,6 +343,64 @@ def _expanded_side_point(
     return (min_x - e, max_z + e - (max_z - min_z + 2.0 * e) * t)
 
 
+def _shore_loop_coordinate(bounds: Bounds, side: int, along: float) -> float:
+    """Map one side sample to a continuous lap around the terrain bounds."""
+
+    min_x, max_x, min_z, max_z = bounds
+    width = max(1.0, float(max_x) - float(min_x))
+    depth = max(1.0, float(max_z) - float(min_z))
+    perimeter = 2.0 * (width + depth)
+    t = max(0.0, min(1.0, float(along)))
+    normalized_side = int(side) % 4
+    if normalized_side == 0:
+        distance = t * width
+    elif normalized_side == 1:
+        distance = width + t * depth
+    elif normalized_side == 2:
+        distance = width + depth + t * width
+    else:
+        distance = 2.0 * width + depth + t * depth
+    return distance / perimeter
+
+
+def _shore_profile(loop_coordinate: float) -> float:
+    """Return the periodic broad-cove and small-inlet coastline profile."""
+
+    angle = math.tau * float(loop_coordinate)
+    return (
+        0.50 * math.sin(5.0 * angle + 0.35)
+        + 0.32 * math.sin(13.0 * angle + 1.75)
+        + 0.18 * math.sin(29.0 * angle + 4.10)
+    )
+
+
+def _shore_amplitude(bounds: Bounds, shore_width: float) -> float:
+    """Scale coastline variation without overwhelming small terrain bounds."""
+
+    min_x, max_x, min_z, max_z = bounds
+    minimum_side = max(
+        1.0,
+        min(float(max_x) - float(min_x), float(max_z) - float(min_z)),
+    )
+    return min(max(1.0, float(shore_width)) * 0.26, minimum_side * 0.035)
+
+
+def _shore_expansion(
+    bounds: Bounds,
+    side: int,
+    along: float,
+    radial: float,
+    shore_width: float,
+) -> float:
+    """Blend from the exact terrain edge to an irregular outer waterline."""
+
+    radius = max(0.0, min(1.0, float(radial)))
+    width = max(1.0, float(shore_width))
+    loop_coordinate = _shore_loop_coordinate(bounds, side, along)
+    variation = _shore_amplitude(bounds, width) * _shore_profile(loop_coordinate)
+    return radius * width + variation * _smooth01(radius)
+
+
 def sample_boundary_heights(
     bounds: Bounds,
     height_at: HeightFn,
@@ -284,8 +423,8 @@ def sample_boundary_heights(
 
 
 def _sand_color(x: float, z: float, radial: float) -> tuple[float, float, float]:
-    dry = np.asarray((0.78, 0.61, 0.35), dtype=np.float64)
-    wet = np.asarray((0.34, 0.31, 0.23), dtype=np.float64)
+    dry = np.asarray((0.92, 0.79, 0.56), dtype=np.float64)
+    wet = np.asarray((0.50, 0.46, 0.34), dtype=np.float64)
     wet_mix = _smooth01((radial - 0.62) / 0.38)
     color = dry * (1.0 - wet_mix) + wet * wet_mix
     grain = (
@@ -307,7 +446,7 @@ def build_beach_vertex_data(
     sample_spacing: float,
     radial_segments: int,
 ) -> np.ndarray:
-    """Build a colored rectangular shoreline that follows the terrain edge."""
+    """Build a colored, meandering shoreline joined to the terrain edge."""
 
     min_x, max_x, min_z, max_z = bounds
     side_length = max(max_x - min_x, max_z - min_z)
@@ -335,7 +474,14 @@ def build_beach_vertex_data(
             ring = []
             for along_index in range(along_segments + 1):
                 along = along_index / along_segments
-                x, z = _expanded_side_point(bounds, side, along, width * radial)
+                expansion = _shore_expansion(
+                    bounds,
+                    side,
+                    along,
+                    radial,
+                    width,
+                )
+                x, z = _expanded_side_point(bounds, side, along, expansion)
                 inner_y = inner_heights[along_index]
                 contour = (
                     math.sin(x * 0.024 + z * 0.013)
@@ -410,11 +556,16 @@ def build_water_vertex_data(
     outer_extent: float,
     grid_size: float,
 ) -> np.ndarray:
-    """Build four gridded water strips around a rectangular island."""
+    """Build flat water strips with a cutout hidden beneath the beach mesh."""
 
     min_x, max_x, min_z, max_z = bounds
-    inner_expansion = max(1.0, float(shore_width)) * 0.72
+    width = max(1.0, float(shore_width))
     step = max(16.0, float(grid_size))
+    overlap = max(6.0, min(width * 0.08, step * 0.5))
+    inner_expansion = max(
+        1.0,
+        width - _shore_amplitude(bounds, width) - overlap,
+    )
     inner_min_x = min_x - inner_expansion
     inner_max_x = max_x + inner_expansion
     inner_min_z = min_z - inner_expansion
@@ -498,6 +649,10 @@ class StylizedWaterRenderer:
         self.terrain_bounds = tuple(float(value) for value in terrain_bounds)
         self.water_bounds = tuple(float(value) for value in water_bounds)
         self.shore_width = float(shore_width)
+        self.shore_amplitude = _shore_amplitude(
+            self.terrain_bounds,
+            self.shore_width,
+        )
         self.horizon_fade_width = max(1.0, float(horizon_fade_width))
         self.program = 0
         self.vbo = 0
@@ -515,6 +670,7 @@ class StylizedWaterRenderer:
                 "u_terrain_bounds",
                 "u_water_bounds",
                 "u_shore_width",
+                "u_shore_amplitude",
                 "u_horizon_fade_width",
                 "u_exposure",
                 "u_fog_enabled",
@@ -594,6 +750,10 @@ class StylizedWaterRenderer:
                 water_max_z,
             )
             glUniform1f(self._uniforms["u_shore_width"], self.shore_width)
+            glUniform1f(
+                self._uniforms["u_shore_amplitude"],
+                self.shore_amplitude,
+            )
             glUniform1f(
                 self._uniforms["u_horizon_fade_width"], self.horizon_fade_width
             )
