@@ -135,6 +135,7 @@ class WorldRenderResources:
     item_textures: dict[str, Any] = field(default_factory=dict)
     equipment_slot_textures: dict[str, Any] = field(default_factory=dict)
     wall_tex: Any | None = None
+    chest_tex: Any | None = None
     torch_tex: Any | None = None
     door_tex: Any | None = None
     window_tex: Any | None = None

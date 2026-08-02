@@ -894,7 +894,7 @@ def _build_showcase_polygons(scene) -> None:
         [polygon_batch] if polygon_batch is not None else []
     )
 
-    _build_showcase_chest(scene, wall_tex)
+    _build_showcase_chest(scene, getattr(scene, "chest_tex", None))
 
 
 def _remove_showcase_chests(scene) -> None:
@@ -934,9 +934,13 @@ def _build_showcase_chest(scene, texture) -> None:
 
     z = float(scene.world_center.z + 120.0)
 
+    chest_texture = Chest.texture_or_load(texture)
+
+    scene.render_resources.chest_tex = chest_texture
+
     chest = Chest(
         Vector3(x, scene.ground_height_at(x, z), z),
-        texture=Chest.texture_or_load(texture),
+        texture=chest_texture,
         lighting=lighting,
         sun_direction=sun_direction,
         side="south",

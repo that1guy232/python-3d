@@ -83,6 +83,7 @@ class WorldScene(Scene):
         "render_resources", "equipment_slot_textures"
     )
     wall_tex = state_alias("render_resources", "wall_tex")
+    chest_tex = state_alias("render_resources", "chest_tex")
     torch_tex = state_alias("render_resources", "torch_tex")
     door_tex = state_alias("render_resources", "door_tex")
     window_tex = state_alias("render_resources", "window_tex")

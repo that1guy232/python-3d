@@ -223,6 +223,7 @@ def load_assets(scene) -> None:
     resources.item_textures = tex.get("item_textures", {})
     resources.equipment_slot_textures = tex.get("equipment_slot_textures", {})
     resources.wall_tex = tex.get("wall_tex")
+    resources.chest_tex = tex.get("chest_tex")
     resources.torch_tex = tex.get("torch_tex")
     resources.door_tex = tex.get("door_tex")
     resources.window_tex = tex.get("window_tex")
