@@ -9,7 +9,11 @@ initializer smaller and clearer.
 from __future__ import annotations
 from pathlib import Path
 from typing import Dict
-from engine.textures.texture_utils import load_texture, load_texture_atlas
+from engine.textures.texture_utils import (
+    create_solid_color_texture,
+    load_texture,
+    load_texture_atlas,
+)
 from game.inventory import GOBLIN_SET_PLACEHOLDER_ICON
 from game.resources.paths import (
     BODY_SLOT_TEXTURE_PATH,
@@ -26,29 +30,13 @@ from game.resources.paths import (
     GOBLIN_FIST_TEXTURE_PATH,
     GOBLIN_FRONT_TEXTURE_DIR_PATH,
     GOBLIN_RIGHT_TEXTURE_DIR_PATH,
-    GRASS1_TEXTURE_PATH,
-    GRASS2_TEXTURE_PATH,
-    GRASS3_TEXTURE_PATH,
-    GRASS4_TEXTURE_PATH,
     GRASS_TEXTURE_PATH,
     HELMET_SLOT_TEXTURE_PATH,
     ROAD_TEXTURE_PATH,
-    ROCK1_TEXTURE_PATH,
-    ROCK2_TEXTURE_PATH,
-    ROCK3_TEXTURE_PATH,
-    ROCK4_TEXTURE_PATH,
-    ROCK5_TEXTURE_PATH,
-    ROCK6_TEXTURE_PATH,
+    ROOF_TEXTURE_PATH,
     SWORD_TEXTURE_PATH,
     TORCH_FRAME_TEXTURE_PATHS,
     TORCH_TEXTURE_PATH,
-    TREE1_TEXTURE_PATH,
-    TREE2_TEXTURE_PATH,
-    TREE3_TEXTURE_PATH,
-    TREE4_TEXTURE_PATH,
-    TREE5_TEXTURE_PATH,
-    TREE6_TEXTURE_PATH,
-    TREE7_TEXTURE_PATH,
     WALL1_TEXTURE_PATH,
     WEAPON_SLOT_TEXTURE_PATH,
     WINDOW_TEXTURE_PATH,
@@ -74,13 +62,10 @@ def load_world_textures() -> Dict[str, object]:
 
     Returns a dict with keys:
       - ground_tex, road_tex
-      - tree_textures (list)
-      - grasses_textures (list)
-      - rock_textures (list)
       - fence_textures (list)
       - item_textures (dict)
       - equipment_slot_textures (dict)
-      - wall_tex, chest_tex
+      - wall_tex, roof_tex, chest_tex
       - torch_tex (animated frame regions when available)
       - door_tex
       - window_tex
@@ -89,38 +74,6 @@ def load_world_textures() -> Dict[str, object]:
     # Core textures
     ground_tex = load_texture(GRASS_TEXTURE_PATH)
     road_tex = load_texture(ROAD_TEXTURE_PATH)
-
-    # Flora / rocks share one atlas so depth-sorted world sprites can still
-    # render as one texture run.
-    tree_paths = [
-        TREE1_TEXTURE_PATH,
-        TREE2_TEXTURE_PATH,
-        TREE3_TEXTURE_PATH,
-        TREE4_TEXTURE_PATH,
-        TREE5_TEXTURE_PATH,
-        TREE6_TEXTURE_PATH,
-        TREE7_TEXTURE_PATH,
-    ]
-    grass_paths = [
-        GRASS1_TEXTURE_PATH,
-        GRASS2_TEXTURE_PATH,
-        GRASS3_TEXTURE_PATH,
-        GRASS4_TEXTURE_PATH,
-    ]
-    rock_paths = [
-        ROCK1_TEXTURE_PATH,
-        ROCK2_TEXTURE_PATH,
-        ROCK3_TEXTURE_PATH,
-        ROCK4_TEXTURE_PATH,
-        ROCK5_TEXTURE_PATH,
-        ROCK6_TEXTURE_PATH,
-    ]
-    sprite_regions = load_texture_atlas(tree_paths + grass_paths + rock_paths)
-    tree_textures = sprite_regions[: len(tree_paths)]
-    grasses_textures = sprite_regions[
-        len(tree_paths) : len(tree_paths) + len(grass_paths)
-    ]
-    rock_textures = sprite_regions[len(tree_paths) + len(grass_paths) :]
 
     # Fences remain separate static mesh textures.
 
@@ -149,6 +102,8 @@ def load_world_textures() -> Dict[str, object]:
 
     # Architectural and interactive-object textures
     wall_tex = load_texture(WALL1_TEXTURE_PATH)
+    roof_tex = load_texture(ROOF_TEXTURE_PATH)
+    building_material_tex = create_solid_color_texture()
     chest_tex = load_texture(CHEST_TEXTURE_PATH)
     torch_frame_paths = [
         path for path in TORCH_FRAME_TEXTURE_PATHS if Path(path).is_file()
@@ -169,13 +124,12 @@ def load_world_textures() -> Dict[str, object]:
     return {
         "ground_tex": ground_tex,
         "road_tex": road_tex,
-        "tree_textures": tree_textures,
-        "grasses_textures": grasses_textures,
-        "rock_textures": rock_textures,
         "fence_textures": fence_textures,
         "item_textures": item_textures,
         "equipment_slot_textures": equipment_slot_textures,
         "wall_tex": wall_tex,
+        "roof_tex": roof_tex,
+        "building_material_tex": building_material_tex,
         "chest_tex": chest_tex,
         "torch_tex": torch_tex,
         "door_tex": door_tex,

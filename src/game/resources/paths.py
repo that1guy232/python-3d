@@ -23,29 +23,6 @@ MOON_TEXTURE_PATH: str = _asset("textures", "moon.png")
 GRASS_TEXTURE_PATH: str = _asset("textures", "grass.png")
 ROAD_TEXTURE_PATH: str = _asset("textures", "road.png")
 
-# Trees
-TREE1_TEXTURE_PATH: str = _asset("textures", "trees", "tree1.png")
-TREE2_TEXTURE_PATH: str = _asset("textures", "trees", "tree2.png")
-TREE3_TEXTURE_PATH: str = _asset("textures", "trees", "tree3.png")
-TREE4_TEXTURE_PATH: str = _asset("textures", "trees", "tree4.png")
-TREE5_TEXTURE_PATH: str = _asset("textures", "trees", "tree5.png")
-TREE6_TEXTURE_PATH: str = _asset("textures", "trees", "tree6.png")
-TREE7_TEXTURE_PATH: str = _asset("textures", "trees", "tree7.png")
-
-# Grasses
-GRASS1_TEXTURE_PATH: str = _asset("textures", "grasses", "grass1.png")
-GRASS2_TEXTURE_PATH: str = _asset("textures", "grasses", "grass2.png")
-GRASS3_TEXTURE_PATH: str = _asset("textures", "grasses", "grass3.png")
-GRASS4_TEXTURE_PATH: str = _asset("textures", "grasses", "grass4.png")
-
-# Rocks
-ROCK1_TEXTURE_PATH: str = _asset("textures", "rocks", "rock1.png")
-ROCK2_TEXTURE_PATH: str = _asset("textures", "rocks", "rock2.png")
-ROCK3_TEXTURE_PATH: str = _asset("textures", "rocks", "rock3.png")
-ROCK4_TEXTURE_PATH: str = _asset("textures", "rocks", "rock4.png")
-ROCK5_TEXTURE_PATH: str = _asset("textures", "rocks", "rock5.png")
-ROCK6_TEXTURE_PATH: str = _asset("textures", "rocks", "rock6.png")
-
 # Fences
 FENCE1_TEXTURE_PATH: str = _asset("textures", "fences", "fence1.png")
 FENCE2_TEXTURE_PATH: str = _asset("textures", "fences", "fence2.png")
@@ -56,6 +33,7 @@ FENCE6_TEXTURE_PATH: str = _asset("textures", "fences", "fence6.png")
 
 # Wall textures
 WALL1_TEXTURE_PATH: str = _asset("textures", "wall1.png")
+ROOF_TEXTURE_PATH: str = _asset("textures", "roof.ppm")
 CHEST_TEXTURE_PATH: str = _asset("textures", "chest.ppm")
 TORCH_TEXTURE_PATH: str = _asset("textures", "torch.png")
 TORCH_TEXTURE_DIR_PATH: str = _asset("textures", "torches")

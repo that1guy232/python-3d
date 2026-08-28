@@ -24,12 +24,12 @@ DEFAULT_BUILDING_HEIGHT = 66.0
 
 _BUILDING_FEATURE_SIDES = ("north", "east", "south", "west")
 _FEATURE_WALL_MARGIN = 18.0
-_WINDOW_WALL_MIN_SPAN = 130.0
-_WINDOW_WALL_SPACING = 190.0
-_WINDOW_WALL_MAX_COUNT = 2
-_WINDOW_WALL_SKIP_CHANCE = 0.3
-_WINDOW_BUILDING_SPACING = 280.0
-_WINDOW_BUILDING_MAX_COUNT = 5
+_WINDOW_WALL_MIN_SPAN = 115.0
+_WINDOW_WALL_SPACING = 145.0
+_WINDOW_WALL_MAX_COUNT = 3
+_WINDOW_WALL_SKIP_CHANCE = 0.16
+_WINDOW_BUILDING_SPACING = 190.0
+_WINDOW_BUILDING_MAX_COUNT = 8
 _WINDOW_FEATURE_CLEARANCE = 16.0
 _TORCH_WALL_MIN_SPAN = 150.0
 _TORCH_WALL_SPACING = 220.0
@@ -535,6 +535,10 @@ def create_world_content(
     for col, row in cells[:building_count]:
         width = rng.uniform(140.0, 420.0)
         depth = rng.uniform(100.0, 260.0)
+        height = rng.uniform(64.0, 78.0) + min(
+            6.0,
+            max(0.0, min(width, depth) - 100.0) * 0.025,
+        )
         doorway_side = rng.choice(doorway_sides)
         doorway_width = Door.DEFAULT_WIDTH
         doorway_height = Door.DEFAULT_HEIGHT
@@ -567,7 +571,7 @@ def create_world_content(
             {
                 "width": width,
                 "depth": depth,
-                "height": DEFAULT_BUILDING_HEIGHT,
+                "height": height,
                 "doorway_side": doorway_side,
                 "doorway_width": doorway_width,
                 "doorway_height": doorway_height,
@@ -602,7 +606,7 @@ def create_world_content(
                 Vector3(x, 0.0, z),
                 width=width,
                 depth=depth,
-                height=DEFAULT_BUILDING_HEIGHT,
+                height=height,
                 doorway_side=doorway_side,
                 doorway_width=doorway_width,
                 doorway_height=doorway_height,

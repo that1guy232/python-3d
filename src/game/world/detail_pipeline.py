@@ -19,15 +19,12 @@ from engine.rendering.decal import Decal
 
 from engine.rendering.decal_batch import DecalBatch
 
-from engine.rendering.sprite import WorldSprite
-
 from engine.textures.texture_utils import (
     create_forest_floor_texture,
     create_shadow_texture,
 )
 
 from game.world.builder_support import _dispose_value, _dispose_values
-from game.world.tree_shadow import TreeSunShadowCaster
 
 SHADOW_BUILDING_CLIP_MARGIN = 2.0
 
@@ -94,13 +91,6 @@ def _build_shadow_decals(scene) -> Iterator[float]:
 
     start_time = time.perf_counter()
 
-    resources = getattr(scene, "render_resources", scene)
-    _dispose_value(getattr(resources, "tree_shadow_caster", None))
-    resources.tree_shadow_caster = TreeSunShadowCaster(
-        scene.trees,
-        scene.lighting,
-    )
-
     yield 0.03
 
     tree_detail_textures = []
@@ -138,9 +128,9 @@ def _build_shadow_decals(scene) -> Iterator[float]:
         _building_shadow_clip_bounds(scene)
     )
 
-    def make_tree_detail_decal_for_sprite(sprite: WorldSprite) -> Decal:
+    def make_tree_detail_decal(tree) -> Decal:
 
-        w, h = sprite.size
+        w, h = tree.size
 
         footprint = max(12.0, max(w * 0.58, h * 0.28))
 
@@ -159,12 +149,12 @@ def _build_shadow_decals(scene) -> Iterator[float]:
         offset_z = math.sin(offset_angle) * offset_radius
 
         center_y = scene.ground_height_at(
-            sprite.position.x + offset_x, sprite.position.z + offset_z
+            tree.position.x + offset_x, tree.position.z + offset_z
         )
 
         return Decal(
             center=Vector3(
-                sprite.position.x + offset_x, center_y, sprite.position.z + offset_z
+                tree.position.x + offset_x, center_y, tree.position.z + offset_z
             ),
             size=(final_w, final_h),
             texture=rng.choice(tree_detail_textures),
@@ -180,8 +170,8 @@ def _build_shadow_decals(scene) -> Iterator[float]:
             build_vbo=False,
         )
 
-    def make_contact_decal_for_sprite(
-        sprite: WorldSprite,
+    def make_contact_decal(
+        model,
         *,
         scale_min: float,
         scale_max: float,
@@ -189,7 +179,7 @@ def _build_shadow_decals(scene) -> Iterator[float]:
         max_size: float,
     ) -> Decal:
 
-        w, h = sprite.size
+        w, h = model.size
 
         footprint = max(1.0, max(w, h))
 
@@ -197,10 +187,10 @@ def _build_shadow_decals(scene) -> Iterator[float]:
             min_size, min(max_size, footprint * rng.uniform(scale_min, scale_max))
         )
 
-        center_y = scene.ground_height_at(sprite.position.x, sprite.position.z)
+        center_y = scene.ground_height_at(model.position.x, model.position.z)
 
         return Decal(
-            center=Vector3(sprite.position.x, center_y, sprite.position.z),
+            center=Vector3(model.position.x, center_y, model.position.z),
             size=(diameter, diameter),
             texture=contact_shadow_texture,
             rotation_deg=rng.uniform(0.0, 360.0),
@@ -227,19 +217,19 @@ def _build_shadow_decals(scene) -> Iterator[float]:
             return 0.90
         return 0.20 + 0.70 * completed_decals / decal_count
 
-    for index, sprite in enumerate(trees, 1):
+    for index, tree in enumerate(trees, 1):
 
-        decals.append(make_tree_detail_decal_for_sprite(sprite))
+        decals.append(make_tree_detail_decal(tree))
 
         completed_decals += 1
         if index % 100 == 0:
             yield batch_progress()
 
-    for index, sprite in enumerate(grasses, 1):
+    for index, grass in enumerate(grasses, 1):
 
         decals.append(
-            make_contact_decal_for_sprite(
-                sprite, scale_min=0.8, scale_max=1, min_size=8.0, max_size=28.0
+            make_contact_decal(
+                grass, scale_min=0.8, scale_max=1, min_size=8.0, max_size=28.0
             )
         )
 
@@ -247,11 +237,11 @@ def _build_shadow_decals(scene) -> Iterator[float]:
         if index % 200 == 0:
             yield batch_progress()
 
-    for index, sprite in enumerate(rocks, 1):
+    for index, rock in enumerate(rocks, 1):
 
         decals.append(
-            make_contact_decal_for_sprite(
-                sprite, scale_min=1, scale_max=1.05, min_size=10.0, max_size=42.0
+            make_contact_decal(
+                rock, scale_min=1, scale_max=1.05, min_size=10.0, max_size=42.0
             )
         )
 
@@ -262,9 +252,9 @@ def _build_shadow_decals(scene) -> Iterator[float]:
     yield 0.90
 
     print(
-        f"Created {len(scene.trees)} sun-cast tree shadows/floor details, "
-        f"{len(getattr(scene, 'grasses', ()))} grass, "
-        f"and {len(getattr(scene, 'rocks', ()))} rock shadow decals."
+        f"Created {len(scene.trees)} procedural-tree floor details, "
+        f"{len(getattr(scene, 'grasses', ()))} procedural-grass, "
+        f"and {len(getattr(scene, 'rocks', ()))} procedural-rock contact details."
     )
 
     scene.log_timing("Create decals", start_time, time.perf_counter())

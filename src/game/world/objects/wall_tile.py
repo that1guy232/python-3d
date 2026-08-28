@@ -234,6 +234,7 @@ class WallTile(Object3D):
             for face_idx, face in enumerate(self.faces):
                 if len(face) != 4:
                     continue
+                tint_r, tint_g, tint_b = _face_color(self, face_idx)
                 sun_factor = _sun_light_factor(
                     self,
                     face_idx,
@@ -266,7 +267,12 @@ class WallTile(Object3D):
                     )
                     brightness = base_brightness * sun_factor * indoor_factor
                     brightness = max(0.0, min(1.0, brightness))
-                    glColor4f(brightness, brightness, brightness, 1.0)
+                    glColor4f(
+                        tint_r * brightness,
+                        tint_g * brightness,
+                        tint_b * brightness,
+                        1.0,
+                    )
                     glTexCoord2f(uv[0], uv[1])
                     glVertex3f(v.x, v.y, v.z)
                 glEnd()
@@ -280,6 +286,17 @@ def _normalized_color(color) -> tuple[float, float, float]:
     if any(component > 2.0 for component in color):
         return tuple(component / 255.0 for component in color)
     return tuple(float(component) for component in color)
+
+
+def _face_color(tile: WallTile, face_idx: int) -> tuple[float, float, float]:
+    """Return a vertex tint for textured and untextured wall faces."""
+
+    color = (
+        tile.face_colors[face_idx]
+        if hasattr(tile, "face_colors") and face_idx < len(tile.face_colors)
+        else (1.0, 1.0, 1.0)
+    )
+    return _normalized_color(color)
 
 
 def _textured_face_uvs(
@@ -313,7 +330,10 @@ def _textured_face_uvs(
         (0.0, v_r),
     ]
 
-    if tile.thickness > 0.0 and tex_size:
+    sample_texture_edges = bool(
+        getattr(tile, "sample_texture_edges", True)
+    )
+    if tile.thickness > 0.0 and tex_size and sample_texture_edges:
         tex_w, tex_h = tex_size
         strip_u = max(
             1.0 / max(1.0, float(tex_w)) * u_repeat,
@@ -368,6 +388,28 @@ def _textured_face_uvs(
                 (0.0, v_max),
             ]
 
+    if getattr(tile, "flip_texture_u", False) and face_uvs:
+        min_u = min(uv[0] for uv in face_uvs)
+        max_u = max(uv[0] for uv in face_uvs)
+        face_uvs = [(min_u + max_u - u, v) for u, v in face_uvs]
+
+    if getattr(tile, "flip_texture_v", False) and face_uvs:
+        min_v = min(uv[1] for uv in face_uvs)
+        max_v = max(uv[1] for uv in face_uvs)
+        face_uvs = [(u, min_v + max_v - v) for u, v in face_uvs]
+
+    try:
+        u_offset, v_offset = getattr(tile, "uv_offset", (0.0, 0.0))
+        u_offset = float(u_offset)
+        v_offset = float(v_offset)
+    except (TypeError, ValueError):
+        u_offset, v_offset = 0.0, 0.0
+    if abs(u_offset) > 1e-12 or abs(v_offset) > 1e-12:
+        face_uvs = [
+            (u + u_offset, v + v_offset)
+            for u, v in face_uvs
+        ]
+
     return face_uvs
 
 
@@ -400,6 +442,7 @@ def _tile_vertex_data(
         tri_indices = (a, b, c, a, c, d)
 
         if textured:
+            tint_r, tint_g, tint_b = _face_color(tile, face_idx)
             face_uvs = _textured_face_uvs(tile, face_idx, face, world_verts, tex_size)
             tri_uvs = (
                 face_uvs[0],
@@ -425,9 +468,9 @@ def _tile_vertex_data(
                             v.x,
                             v.y,
                             v.z,
-                            1.0,
-                            1.0,
-                            1.0,
+                            tint_r,
+                            tint_g,
+                            tint_b,
                             normal.x,
                             normal.y,
                             normal.z,
@@ -456,20 +499,15 @@ def _tile_vertex_data(
                             v.x,
                             v.y,
                             v.z,
-                            brightness,
-                            brightness,
-                            brightness,
+                            tint_r * brightness,
+                            tint_g * brightness,
+                            tint_b * brightness,
                             uv[0],
                             uv[1],
                         )
                     )
         else:
-            color = (
-                tile.face_colors[face_idx]
-                if hasattr(tile, "face_colors") and face_idx < len(tile.face_colors)
-                else (1.0, 1.0, 1.0)
-            )
-            r, g, b_col = _normalized_color(color)
+            r, g, b_col = _face_color(tile, face_idx)
             r = max(0.0, min(1.0, r * sun_factor * indoor_factor))
             g = max(0.0, min(1.0, g * sun_factor * indoor_factor))
             b_col = max(0.0, min(1.0, b_col * sun_factor * indoor_factor))

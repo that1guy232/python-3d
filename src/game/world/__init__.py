@@ -20,6 +20,9 @@ _EXPORTS = {
     "Torch": (".objects", "Torch"),
     "Door": (".objects", "Door"),
     "Chest": (".objects", "Chest"),
+    "Tree": (".objects", "Tree"),
+    "Grass": (".objects", "Grass"),
+    "Rock": (".objects", "Rock"),
     "BuildingSpec": (".world_content", "BuildingSpec"),
     "WorldContent": (".world_content", "WorldContent"),
     "building": (".world_content", "building"),
@@ -28,6 +31,9 @@ _EXPORTS = {
     "StaticLightingController": (".lighting_controller", "StaticLightingController"),
     "SceneResourceDisposer": (".scene_resources", "SceneResourceDisposer"),
     "spawn_world_sprites": (".world_spawner", "spawn_world_sprites"),
+    "spawn_world_trees": (".world_spawner", "spawn_world_trees"),
+    "spawn_world_grasses": (".world_spawner", "spawn_world_grasses"),
+    "spawn_world_rocks": (".world_spawner", "spawn_world_rocks"),
 }
 
 __all__ = list(_EXPORTS)

@@ -29,8 +29,9 @@ TEXTURED_STATIC_WALL_LIGHTING_RECEIVER = LightingReceiver(
     environment=False,
     exposure=True,
     fog=True,
-    shine=True,
+    shine=False,
     point=True,
+    clamp_lit_material=True,
 )
 
 UNTEXTURED_STATIC_WALL_LIGHTING_RECEIVER = LightingReceiver(
@@ -64,6 +65,42 @@ FENCE_LIGHTING_RECEIVER = LightingReceiver(
     fog=True,
     shine=True,
     point=True,
+)
+
+TREE_LIGHTING_RECEIVER = LightingReceiver(
+    receiver_id="world.tree",
+    directional=True,
+    local=True,
+    environment=True,
+    exposure=True,
+    fog=True,
+    shine=False,
+    point=True,
+    clamp_lit_material=True,
+)
+
+GRASS_LIGHTING_RECEIVER = LightingReceiver(
+    receiver_id="world.grass",
+    directional=True,
+    local=True,
+    environment=True,
+    exposure=True,
+    fog=True,
+    shine=False,
+    point=True,
+    clamp_lit_material=True,
+)
+
+ROCK_LIGHTING_RECEIVER = LightingReceiver(
+    receiver_id="world.rock",
+    directional=True,
+    local=True,
+    environment=True,
+    exposure=True,
+    fog=True,
+    shine=False,
+    point=True,
+    clamp_lit_material=True,
 )
 
 CPU_BAKED_SLAB_LIGHTING_RECEIVER = LightingReceiver(
@@ -166,6 +203,9 @@ PACKET_RUNTIME_LIGHTING_RECEIVERS = (
     GROUND_LIGHTING_RECEIVER,
     ROAD_LIGHTING_RECEIVER,
     FENCE_LIGHTING_RECEIVER,
+    TREE_LIGHTING_RECEIVER,
+    GRASS_LIGHTING_RECEIVER,
+    ROCK_LIGHTING_RECEIVER,
     TEXTURED_STATIC_WALL_LIGHTING_RECEIVER,
     DYNAMIC_SLAB_LIGHTING_RECEIVER,
     DYNAMIC_OBJECT_LIGHTING_RECEIVER,

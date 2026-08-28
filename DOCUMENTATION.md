@@ -42,8 +42,10 @@ py src/main.py
 | Escape | Pause/resume; closes an open deck viewer, then inventory |
 | `F3` | Toggle performance logging |
 | `F4` | Reset the performance timing window |
+| `T` on the main menu | Load the standalone Object Test Scene |
 
-The main menu accepts a mouse click, Enter, keypad Enter, or Space to start.
+The Object Test Scene uses WASD, mouse look, Shift, E, and Escape; it deliberately
+omits the normal world's jump, inventory, minimap, battle, and pause systems.
 
 ## Start Here
 
@@ -51,15 +53,16 @@ The main menu accepts a mouse click, Enter, keypad Enter, or Space to start.
    `make_initial_scene()` as the first-scene factory.
 2. `make_initial_scene()` creates `game.main_menu.MainMenuScene`, which is the
    first active scene at boot.
-3. The main menu keeps the mouse cursor visible and starts the game by creating
-   `game.world.worldscene.WorldScene(defer_setup=True)` wrapped in
+3. The main menu keeps the mouse cursor visible. **Start Game** creates
+   `game.world.worldscene.WorldScene(defer_setup=True)`; **Object Test Scene**
+   creates `game.object_test_scene.ObjectTestScene`. Both targets are wrapped in
    `engine.core.loading_scene.LoadingScene`.
 4. `engine.core.engine.Engine` initializes Pygame/OpenGL, attaches the performance
    logger, forwards input to the active scene, calls scene update/render hooks,
-   and swaps from the loading scene to the world scene when loading completes.
+   and swaps from the loading scene to its target when loading completes.
 5. `engine.core.loading_scene.LoadingScene` advances
-   `WorldScene.initialize_steps()` over multiple frames so world construction can
-   show progress instead of blocking on a blank screen.
+   the target's `initialize_steps()` over multiple frames so construction can show
+   progress instead of blocking on a blank screen.
 6. `game.world.worldscene.WorldScene` orchestrates three explicit mutable state
    owners from `world_state.py`: build state, render resources, and UI state. It
    keeps temporary compatibility aliases for older callers and delegates most work:
@@ -70,6 +73,10 @@ The main menu accepts a mouse click, Enter, keypad Enter, or Space to start.
    UI event routing to `game.ui.interactions`, resource cleanup to
    `scene_resources.py`, road planning to `world_road_planner.py`, and drawing to
    `world_renderer.py`.
+7. `game.object_test_scene.ObjectTestScene` is a separate, flat showroom. It owns
+   its camera, movement, collision list, deterministic exhibits, render pipeline,
+   interaction scan, and GPU-resource cleanup without using the world scene's
+   builders, mutable state containers, renderer, or runtime systems.
 
 ## Runtime Flow
 
@@ -184,7 +191,8 @@ separately releases its directional and point-shadow GPU resources.
 | --- | --- |
 | `src/main.py` | Minimal launch file. Builds the first scene and starts `Engine.run()`. |
 | `src/game/__init__.py` | Game package marker for actors, combat, inventory, player systems, UI, resources, and worlds. |
-| `src/game/main_menu.py` | Boot menu scene with a visible cursor and Start Game button that transitions into the loading/world flow. |
+| `src/game/main_menu.py` | Boot menu scene with buttons for the normal world and the standalone object test scene. |
+| `src/game/object_test_scene.py` | Independent flat showroom scene with its own loading, first-person movement, collision, exhibit layout, rendering, interactions, and cleanup. |
 | `src/engine/config.py` | Engine display, view, audio mute, and performance defaults. Reads `PY3D_*` environment flags. |
 | `src/game/config.py` | Game movement, sky, island shoreline/water, player, and goblin tuning. Re-exports engine defaults for game modules. |
 
@@ -262,13 +270,12 @@ the lighting implementation is being changed.
 | `src/game/world/world_setup.py` | Bootstrap helpers for brightness, controllers, fog/lighting, texture/sound loading, sky, HUD, menus, and tunable scene flags. |
 | `src/game/world/world_builder.py` | World construction orchestration: build-step metadata, incremental progress, and compatibility exports for construction helpers. |
 | `src/game/world/builder_support.py` | Shared construction-step and disposal helpers used by the construction pipeline modules. |
-| `src/game/world/building_pipeline.py` | Building/showcase construction: authored/generated building specs, walls, torches, doors, windows, showcase polygons, and showcase chest setup. |
+| `src/game/world/building_pipeline.py` | Building/showcase construction: authored/generated building specs, collision shells, render-only architectural details, torches, doors, windows, showcase polygons, and showcase chest setup. |
 | `src/game/world/terrain_pipeline.py` | Terrain and boundary construction: ground mesh generation, island shoreline/water creation, and fence ring rebuilding. |
 | `src/game/world/island_boundary.py` | Exact terrain-render bounds, continuous irregular multi-ring beach geometry, a hidden-underlap flat ocean mesh, and the animated cellular GLSL 1.20 water renderer. |
 | `src/game/world/road_pipeline.py` | Road construction and batching for the main road plus building access roads. |
-| `src/game/world/spawn_pipeline.py` | Tree/grass/rock sprite spawning and goblin placement/registration. |
-| `src/game/world/detail_pipeline.py` | Ground-detail/contact-shadow decal batching and tree sun-caster creation. |
-| `src/game/world/tree_shadow.py` | Alpha-cutout tree silhouettes submitted to the directional shadow map. |
+| `src/game/world/spawn_pipeline.py` | Procedural tree, grass, and rock generation plus goblin placement/registration. |
+| `src/game/world/detail_pipeline.py` | Ground-detail/contact-shadow decal batching for procedural nature. |
 | `src/game/world/world_runtime.py` | Per-frame runtime helpers: bounds checks, road checks, height queries, entity updates, interaction, pause/inventory input, and mouse delta forwarding. |
 | `src/game/world/world_renderer.py` | World render pipeline: fog/projection/camera setup, sky, water/terrain/beach ordering, object passes, and HUD text/panel delegation. |
 | `src/game/world/collision_index.py` | Spatial collision candidate index for wall and polygon meshes, including dynamic/fallback mesh handling. |
@@ -282,14 +289,17 @@ the lighting implementation is being changed.
 | `src/game/world/interior_layout.py` | Shared doorway, window, and interior-feature placement geometry used while authoring buildings. |
 | `src/game/world/world_lighting_plan.py` | Authors typed indoor environment and stable-ID opening-light records; projects compatibility dictionaries only for legacy construction. |
 | `src/game/world/world_road_planner.py` | Plans non-overlapping driveway routes from buildings to the road network. |
-| `src/game/world/world_spawner.py` | Spawns static billboard sprites inside world bounds while avoiding roads, buildings, and other sprites. |
+| `src/game/world/world_spawner.py` | Deterministically places procedural nature and billboard props inside world bounds while avoiding roads, buildings, and layer peers. |
 
 ### Game World Objects
 
 | File | Quick docs |
 | --- | --- |
 | `src/game/world/objects/__init__.py` | Convenient exports for common world object classes. |
-| `src/game/world/objects/building.py` | Building authoring helper that turns one rectangular footprint into wall/roof `WallTile` pieces with door/window openings. |
+| `src/game/world/objects/building.py` | Building authoring helper that turns one rectangular footprint into walls and a flat collision ceiling with door/window openings, plus batched gabled roofs, trim, sills, buttresses, and chimneys. |
+| `src/game/world/objects/tree.py` | Deterministic low-poly trunk, branch, and foliage generation plus spatially chunked static tree batching. |
+| `src/game/world/objects/grass.py` | Deterministic low-poly grass-clump generation plus spatially chunked static batching. |
+| `src/game/world/objects/rock.py` | Deterministic faceted boulder generation plus spatially chunked static batching. |
 | `src/game/world/objects/wall_tile.py` | Wall primitive and static wall batching helpers, including texture UVs and lighting data. |
 | `src/game/world/objects/ground.py` | Terrain grid builder that loads heightmaps, flattens typed environment footprints, generates vertex rows, and creates the ground batch. |
 | `src/game/world/objects/ground_tile.py` | Legacy flat ground quad primitive. |
@@ -372,9 +382,9 @@ the lighting implementation is being changed.
 
 ## Practical Notes
 
-- The repository does not keep permanent tests or development scripts. Add
-  focused tooling only while actively changing the feature it covers, and
-  remove it when that work is complete.
+- The repository does not keep a permanent automated test suite or temporary
+  development scripts. The Object Test Scene is the supported manual fixture
+  for visual and interaction checks of world objects.
 - `WorldScene` orchestrates state rather than owning every mutable collection
   directly. New code should use `build_state`, `render_resources`, or `ui_state`;
   the scene-level descriptors are compatibility aliases.

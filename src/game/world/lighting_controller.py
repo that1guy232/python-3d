@@ -8,12 +8,16 @@ from engine.rendering.lighting_adapter import RenderLightingAdapter
 from game.world.environment import environment_render_snapshot
 from game.world.lighting_receivers import (
     FENCE_LIGHTING_RECEIVER,
+    GRASS_LIGHTING_RECEIVER,
     GROUND_LIGHTING_RECEIVER,
     PACKET_RUNTIME_LIGHTING_RECEIVERS,
     ROLLBACK_ONLY_LIGHTING_RECEIVER_IDS,
     ROAD_LIGHTING_RECEIVER,
+    ROCK_LIGHTING_RECEIVER,
     TEXTURED_STATIC_WALL_LIGHTING_RECEIVER,
+    TREE_LIGHTING_RECEIVER,
 )
+from game.world.nature_lod import iter_all_lod_meshes
 from game.world.world_state import WorldBuildState, WorldRenderResources
 
 LEGACY_LIGHTING_ALIAS_NAMES = (
@@ -398,6 +402,36 @@ class StaticLightingController:
         for index, fence in enumerate(getattr(resources, "fence_meshes", ()) or ()):
             expected.append(
                 (f"fence[{index}]", fence, FENCE_LIGHTING_RECEIVER.receiver_id)
+            )
+        for index, tree_mesh in enumerate(
+            iter_all_lod_meshes(getattr(resources, "tree_meshes", ()) or ())
+        ):
+            expected.append(
+                (
+                    f"tree_mesh[{index}]",
+                    tree_mesh,
+                    TREE_LIGHTING_RECEIVER.receiver_id,
+                )
+            )
+        for index, grass_mesh in enumerate(
+            iter_all_lod_meshes(getattr(resources, "grass_meshes", ()) or ())
+        ):
+            expected.append(
+                (
+                    f"grass_mesh[{index}]",
+                    grass_mesh,
+                    GRASS_LIGHTING_RECEIVER.receiver_id,
+                )
+            )
+        for index, rock_mesh in enumerate(
+            iter_all_lod_meshes(getattr(resources, "rock_meshes", ()) or ())
+        ):
+            expected.append(
+                (
+                    f"rock_mesh[{index}]",
+                    rock_mesh,
+                    ROCK_LIGHTING_RECEIVER.receiver_id,
+                )
             )
 
         seen_roads: set[int] = set()

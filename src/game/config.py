@@ -88,3 +88,19 @@ GOBLIN_CHASE_GIVE_UP_RADIUS = 380.0
 # Compatibility names for older scene configuration.
 GOBLIN_BATTLE_TRIGGER_DISTANCE = BATTLE_TRIGGER_DISTANCE
 GOBLIN_BATTLE_LOOK_SMOOTH_HZ = BATTLE_LOOK_SMOOTH_HZ
+
+# Procedural-nature level of detail.  Geometry is selected per spatial chunk,
+# keeping the renderer batched while ensuring distant vegetation and stones do
+# not pay the full close-up triangle cost.  Each tuple is the far edge of the
+# high, medium, and low stages in world units; geometry past the final value is
+# culled.  Shadow rendering starts one stage lower than the visible pass.
+TREE_LOD_DISTANCES = (300.0, 850.0, float(VIEWDISTANCE))
+GRASS_LOD_DISTANCES = (120.0, 300.0, 650.0)
+ROCK_LOD_DISTANCES = (220.0, 650.0, 1400.0)
+
+TREE_LOD_CHUNK_SIZE = 500.0
+GRASS_LOD_CHUNK_SIZE = 500.0
+ROCK_LOD_CHUNK_SIZE = 500.0
+
+TREE_SHADOW_DISTANCE = 1200.0
+ROCK_SHADOW_DISTANCE = 1000.0

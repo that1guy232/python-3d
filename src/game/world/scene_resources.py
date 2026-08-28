@@ -15,9 +15,11 @@ class SceneResourceDisposer:
         "sky",
         "road",
         "decal_batch",
-        "tree_shadow_caster",
     )
     COLLECTION_RESOURCE_ATTRS = (
+        "tree_meshes",
+        "grass_meshes",
+        "rock_meshes",
         "fence_meshes",
         "wall_tile_batches",
         "road_batches",
@@ -30,6 +32,9 @@ class SceneResourceDisposer:
         "entities",
     )
     CLEARED_COLLECTION_ATTRS = (
+        "tree_meshes",
+        "grass_meshes",
+        "rock_meshes",
         "fence_meshes",
         "wall_tile_batches",
         "road_batches",
@@ -41,6 +46,7 @@ class SceneResourceDisposer:
         "others",
         "entities",
         "immediate_entities",
+        "wall_tiles",
     )
 
     def __init__(
@@ -97,11 +103,16 @@ class SceneResourceDisposer:
         if self.build_state is not None:
             for attr_name in (
                 "environment_volumes",
+                "buildings",
+                "trees",
+                "grasses",
+                "rocks",
                 "roads",
                 "building_roads",
                 "doors",
                 "windows",
                 "walls",
+                "building_details",
                 "torches",
                 "creatures",
                 "goblins",
@@ -121,7 +132,6 @@ class SceneResourceDisposer:
             resources._ground_height_sampler = None
         resources.road = None
         resources.decal_batch = None
-        resources.tree_shadow_caster = None
         if hasattr(resources, "collision_spatial_index"):
             resources.collision_spatial_index = None
         else:
@@ -140,11 +150,17 @@ class SceneResourceDisposer:
 
         if self.build_state is not None:
             for attr_name in (
+                "building_specs",
+                "buildings",
+                "trees",
+                "grasses",
+                "rocks",
                 "roads",
                 "building_roads",
                 "doors",
                 "windows",
                 "walls",
+                "building_details",
                 "torches",
                 "creatures",
                 "goblins",

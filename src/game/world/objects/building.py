@@ -2,13 +2,62 @@
 
 from __future__ import annotations
 
-from typing import Callable, List, Optional
+from typing import Callable, List, NamedTuple, Optional
 import math
 
 from pygame.math import Vector3
 
+from engine.textures.texture_utils import get_texture_size
 from .wall_tile import WallTile
 from engine.rendering.lighting import INDOOR_LIGHT_FACTOR, INDOOR_NORMAL
+
+
+class _GabledRoofGeometry(NamedTuple):
+    """Shared dimensions for the render-only pitched roof and its trim."""
+
+    ridge_axis: str
+    run: float
+    ridge_half_length: float
+    rise: float
+    pitch: float
+    slope_half_length: float
+
+
+class _BuildingPalette(NamedTuple):
+    """Flat-shaded colors shared by one procedural cottage variant."""
+
+    wall: tuple[float, float, float]
+    timber: tuple[float, float, float]
+    roof: tuple[float, float, float]
+    stone: tuple[float, float, float]
+
+
+_BUILDING_PALETTES = (
+    _BuildingPalette(
+        wall=(0.78, 0.61, 0.34),
+        timber=(0.30, 0.17, 0.08),
+        roof=(0.58, 0.24, 0.13),
+        stone=(0.47, 0.49, 0.42),
+    ),
+    _BuildingPalette(
+        wall=(0.55, 0.67, 0.43),
+        timber=(0.25, 0.18, 0.09),
+        roof=(0.20, 0.34, 0.32),
+        stone=(0.44, 0.48, 0.43),
+    ),
+    _BuildingPalette(
+        wall=(0.76, 0.69, 0.49),
+        timber=(0.34, 0.20, 0.10),
+        roof=(0.29, 0.39, 0.46),
+        stone=(0.50, 0.51, 0.46),
+    ),
+    _BuildingPalette(
+        wall=(0.68, 0.45, 0.29),
+        timber=(0.27, 0.16, 0.08),
+        roof=(0.26, 0.36, 0.23),
+        stone=(0.46, 0.45, 0.39),
+    ),
+)
 
 
 class Building:
@@ -16,6 +65,10 @@ class Building:
 
     DEFAULT_SIDE = 100.0
     WALL_NORMALS = ((0.0, 1.0), (1.0, 0.0), (0.0, -1.0), (-1.0, 0.0))
+    ROOF_RISE_RATIO = 0.36
+    ROOF_MIN_RISE = 28.0
+    ROOF_MAX_RISE = 68.0
+    GABLE_STRIP_WIDTH = 8.0
 
     def __init__(
         self,
@@ -68,6 +121,8 @@ class Building:
         terrain_height_at: Optional[Callable[[float, float], float]] = None,
         terrain_embed_depth: float = 4.0,
         terrain_sample_spacing: float = 24.0,
+        wall_color: Optional[tuple[float, float, float]] = None,
+        roof_color: Optional[tuple[float, float, float]] = None,
     ) -> List[WallTile]:
         """Create a rectangular building shell with a doorway and roof."""
         dimensions = self._get_dimensions(width, depth)
@@ -89,19 +144,22 @@ class Building:
             terrain_embed_depth=terrain_embed_depth,
             terrain_sample_spacing=terrain_sample_spacing,
         )
+        if wall_color is not None:
+            self._paint_tiles(walls, wall_color)
 
         if roof:
-            walls.extend(
-                self._create_roof(
-                    dimensions=dimensions,
-                    wall_height=wall_height,
-                    roof_thickness=roof_thickness,
-                    roof_overhang=roof_overhang,
-                    texture=roof_texture if roof_texture is not None else texture,
-                    uv_repeat=uv_repeat,
-                    base_y=base_y_value,
-                )
+            roof_pieces = self._create_roof(
+                dimensions=dimensions,
+                wall_height=wall_height,
+                roof_thickness=roof_thickness,
+                roof_overhang=roof_overhang,
+                texture=roof_texture if roof_texture is not None else texture,
+                uv_repeat=uv_repeat,
+                base_y=base_y_value,
             )
+            if roof_color is not None:
+                self._paint_tiles(roof_pieces, roof_color)
+            walls.extend(roof_pieces)
 
         return walls
 
@@ -115,6 +173,7 @@ class Building:
         uv_repeat: tuple[float, float] = (1.0, 1.0),
         base_y: Optional[float] = None,
         max_tile_width: float = 100.0,
+        wall_color: Optional[tuple[float, float, float]] = None,
     ) -> List[WallTile]:
         """Create internal partition walls from local building-space specs."""
         base_y_value = self._get_base_y(base_y)
@@ -169,7 +228,92 @@ class Building:
                 )
             )
 
+        if wall_color is not None:
+            self._paint_tiles(walls, wall_color)
         return walls
+
+    def create_architectural_details(
+        self,
+        *,
+        wall_height: float,
+        wall_thickness: float,
+        width: float,
+        depth: float,
+        wall_texture: Optional[int],
+        roof_texture: Optional[int],
+        doorway_side: str = "south",
+        doorway_width: float = 32.0,
+        doorway_height: float = 48.0,
+        windows: Optional[list[dict]] = None,
+        base_y: Optional[float] = None,
+        roof_thickness: float = 4.0,
+        roof_overhang: float = 6.0,
+        detail_variant: int = 0,
+        chimney: bool = True,
+    ) -> List[WallTile]:
+        """Create static, render-only details around the collision shell.
+
+        The regular horizontal roof remains the interior ceiling and collision
+        surface.  These pieces provide the visible pitched roof and facade
+        depth, and callers deliberately keep them out of the collision index.
+        """
+        dimensions = self._get_dimensions(width, depth)
+        outer_x, outer_z = dimensions
+        if outer_x <= 1.0 or outer_z <= 1.0 or float(wall_height) <= 1.0:
+            return []
+
+        base_y_value = self._get_base_y(base_y)
+        palette = self.style_palette(detail_variant)
+        roof_geometry = self._gabled_roof_geometry(
+            dimensions,
+            roof_overhang=roof_overhang,
+        )
+        details: list[WallTile] = []
+        details.extend(
+            self._create_gabled_roof_panels(
+                geometry=roof_geometry,
+                wall_height=wall_height,
+                roof_thickness=roof_thickness,
+                texture=roof_texture,
+                base_y=base_y_value,
+                fallback_color=palette.roof,
+            )
+        )
+        details.extend(
+            self._create_gable_fill(
+                dimensions=dimensions,
+                geometry=roof_geometry,
+                wall_height=wall_height,
+                wall_thickness=wall_thickness,
+                texture=wall_texture,
+                base_y=base_y_value,
+                fallback_color=palette.wall,
+            )
+        )
+        details.extend(
+            self._create_facade_details(
+                dimensions=dimensions,
+                geometry=roof_geometry,
+                wall_height=wall_height,
+                wall_thickness=wall_thickness,
+                wall_texture=wall_texture,
+                roof_texture=roof_texture,
+                doorway_side=doorway_side,
+                doorway_width=doorway_width,
+                doorway_height=doorway_height,
+                windows=windows,
+                base_y=base_y_value,
+                roof_thickness=roof_thickness,
+                detail_variant=detail_variant,
+                chimney=chimney,
+                palette=palette,
+            )
+        )
+
+        for detail in details:
+            detail.architectural_detail = True
+        self.attach_shapes(details)
+        return details
 
     def _get_dimensions(
         self, width: Optional[float], depth: Optional[float]
@@ -853,6 +997,783 @@ class Building:
 
         return min_y
 
+    def _gabled_roof_geometry(
+        self,
+        dimensions: tuple[float, float],
+        *,
+        roof_overhang: float,
+    ) -> _GabledRoofGeometry:
+        outer_x, outer_z = (max(1.0, float(value)) for value in dimensions)
+        overhang = max(0.0, float(roof_overhang))
+        ridge_axis = "x" if outer_x >= outer_z else "z"
+        short_span = outer_z if ridge_axis == "x" else outer_x
+        long_span = outer_x if ridge_axis == "x" else outer_z
+        run = short_span * 0.5 + overhang
+        rise = max(
+            self.ROOF_MIN_RISE,
+            min(self.ROOF_MAX_RISE, short_span * self.ROOF_RISE_RATIO),
+        )
+        # Keep very small hand-authored footprints from producing a near-wall.
+        rise = min(rise, max(4.0, run * 0.72))
+        pitch = math.atan2(rise, run)
+        return _GabledRoofGeometry(
+            ridge_axis=ridge_axis,
+            run=run,
+            ridge_half_length=long_span * 0.5 + overhang,
+            rise=rise,
+            pitch=pitch,
+            slope_half_length=math.hypot(run, rise) * 0.5,
+        )
+
+    @staticmethod
+    def style_palette(detail_variant: int = 0) -> _BuildingPalette:
+        """Return a deterministic natural palette for one building."""
+
+        return _BUILDING_PALETTES[int(detail_variant) % len(_BUILDING_PALETTES)]
+
+    @staticmethod
+    def _shade_color(
+        color: tuple[float, float, float],
+        factor: float,
+    ) -> tuple[float, float, float]:
+        return tuple(
+            max(0.0, min(1.0, float(component) * float(factor)))
+            for component in color
+        )
+
+    @classmethod
+    def _paint_tile(
+        cls,
+        tile: WallTile,
+        color: tuple[float, float, float],
+    ) -> None:
+        """Give a box subtle face variation like nearby procedural props."""
+
+        face_factors = (1.0, 0.72, 0.88, 0.82, 1.10, 0.62)
+        tile.face_colors = [
+            cls._shade_color(color, factor)
+            for factor in face_factors[: len(tile.faces)]
+        ]
+
+    @classmethod
+    def _paint_tiles(
+        cls,
+        tiles: list[WallTile],
+        color: tuple[float, float, float],
+    ) -> None:
+        for tile in tiles:
+            cls._paint_tile(tile, color)
+
+    def _create_gabled_roof_panels(
+        self,
+        *,
+        geometry: _GabledRoofGeometry,
+        wall_height: float,
+        roof_thickness: float,
+        texture: Optional[int],
+        base_y: float,
+        fallback_color: tuple[float, float, float],
+    ) -> list[WallTile]:
+        thickness = max(0.5, float(roof_thickness))
+        cx = float(self.position.x)
+        cz = float(self.position.z)
+        wall_top = float(base_y) + float(wall_height)
+        center_y = (
+            wall_top
+            + geometry.rise * 0.5
+            + thickness * math.cos(geometry.pitch) * 0.5
+        )
+
+        if geometry.ridge_axis == "z":
+            panel_specs = (
+                (
+                    Vector3(cx - geometry.run * 0.5, center_y, cz),
+                    Vector3(0.0, 0.0, math.pi * 0.5 + geometry.pitch),
+                ),
+                (
+                    Vector3(cx + geometry.run * 0.5, center_y, cz),
+                    Vector3(0.0, 0.0, math.pi * 0.5 - geometry.pitch),
+                ),
+            )
+        else:
+            panel_specs = (
+                (
+                    Vector3(cx, center_y, cz - geometry.run * 0.5),
+                    Vector3(
+                        math.pi * 0.5 - geometry.pitch,
+                        -math.pi * 0.5,
+                        0.0,
+                    ),
+                ),
+                (
+                    Vector3(cx, center_y, cz + geometry.run * 0.5),
+                    Vector3(
+                        geometry.pitch - math.pi * 0.5,
+                        math.pi * 0.5,
+                        0.0,
+                    ),
+                ),
+            )
+
+        panels: list[WallTile] = []
+        for panel_index, (position, rotation) in enumerate(panel_specs):
+            panel = WallTile(
+                position=position,
+                width=thickness * 0.5,
+                height=geometry.slope_half_length,
+                depth=geometry.ridge_half_length,
+                texture=texture,
+                uv_repeat=(1.0, 1.0),
+                thickness=thickness,
+            )
+            panel.rotation = rotation
+            panel.indoor_face_indices = (1,)
+            panel.indoor_light_factor = INDOOR_LIGHT_FACTOR
+            panel.indoor_normal_override = INDOOR_NORMAL
+            panel.flip_texture_v = (
+                geometry.ridge_axis == "z" and panel_index == 1
+            )
+            self._paint_tile(panel, fallback_color)
+            panels.append(panel)
+        return panels
+
+    def _create_gable_fill(
+        self,
+        *,
+        dimensions: tuple[float, float],
+        geometry: _GabledRoofGeometry,
+        wall_height: float,
+        wall_thickness: float,
+        texture: Optional[int],
+        base_y: float,
+        fallback_color: tuple[float, float, float],
+    ) -> list[WallTile]:
+        outer_x, outer_z = dimensions
+        gable_span = outer_z if geometry.ridge_axis == "x" else outer_x
+        gable_sides = (
+            ("east", "west")
+            if geometry.ridge_axis == "x"
+            else ("north", "south")
+        )
+        strip_count = max(
+            1,
+            int(math.ceil(float(gable_span) / self.GABLE_STRIP_WIDTH)),
+        )
+        if strip_count % 2 == 0:
+            strip_count += 1
+        strip_width = float(gable_span) / strip_count
+        span_start = -float(gable_span) * 0.5
+        wall_top = float(base_y) + float(wall_height)
+        pieces: list[WallTile] = []
+
+        for strip_index in range(strip_count):
+            span_min = span_start + strip_index * strip_width
+            span_max = span_min + strip_width
+            nearest_to_ridge = min(abs(span_min), abs(span_max))
+            strip_height = geometry.rise * max(
+                0.0,
+                1.0 - nearest_to_ridge / max(1e-6, geometry.run),
+            )
+            if strip_height <= 0.25:
+                continue
+            for side in gable_sides:
+                pieces.append(
+                    self._create_wall_detail_segment(
+                        dimensions=dimensions,
+                        side=side,
+                        span_min=span_min,
+                        span_max=span_max,
+                        bottom_y=wall_top - 0.35,
+                        top_y=wall_top + strip_height,
+                        wall_thickness=wall_thickness,
+                        texture=texture,
+                        fallback_color=fallback_color,
+                    )
+                )
+        return pieces
+
+    def _create_wall_detail_segment(
+        self,
+        *,
+        dimensions: tuple[float, float],
+        side: str,
+        span_min: float,
+        span_max: float,
+        bottom_y: float,
+        top_y: float,
+        wall_thickness: float,
+        texture: Optional[int],
+        fallback_color: tuple[float, float, float],
+    ) -> WallTile:
+        nx, nz = self._normal_from_side(side)
+        outer_x, outer_z = dimensions
+        center_x, center_z, _, span_axis = self._get_side_geometry(
+            nx,
+            nz,
+            outer_x,
+            outer_z,
+            wall_thickness,
+        )
+        span_center = (float(span_min) + float(span_max)) * 0.5
+        span_half = max(0.05, (float(span_max) - float(span_min)) * 0.5)
+        half_thickness = max(0.25, float(wall_thickness) * 0.5)
+        if span_axis == "x":
+            position = Vector3(
+                center_x + span_center,
+                (bottom_y + top_y) * 0.5,
+                center_z,
+            )
+            width, depth = half_thickness, span_half
+        else:
+            position = Vector3(
+                center_x,
+                (bottom_y + top_y) * 0.5,
+                center_z + span_center,
+            )
+            width, depth = half_thickness, span_half
+
+        tile = WallTile(
+            position=position,
+            width=width,
+            height=max(0.05, (top_y - bottom_y) * 0.5),
+            depth=depth,
+            texture=texture,
+            uv_repeat=(1.0, 1.0),
+            thickness=max(0.5, float(wall_thickness)),
+        )
+        tile.rotation = Vector3(0.0, math.atan2(nz, nx), 0.0)
+        tile.indoor_face_indices = (1,)
+        tile.indoor_light_factor = INDOOR_LIGHT_FACTOR
+        tile.indoor_normal_override = INDOOR_NORMAL
+        tile.flip_texture_u = str(side).lower() in {"north", "west"}
+        texture_size = get_texture_size(texture)
+        if texture_size:
+            texture_width, texture_height = texture_size
+            tile.uv_offset = (
+                float(span_min) / max(1.0, float(texture_width)),
+                float(bottom_y) / max(1.0, float(texture_height)),
+            )
+        self._paint_tile(tile, fallback_color)
+        return tile
+
+    def _create_facade_details(
+        self,
+        *,
+        dimensions: tuple[float, float],
+        geometry: _GabledRoofGeometry,
+        wall_height: float,
+        wall_thickness: float,
+        wall_texture: Optional[int],
+        roof_texture: Optional[int],
+        doorway_side: str,
+        doorway_width: float,
+        doorway_height: float,
+        windows: Optional[list[dict]],
+        base_y: float,
+        roof_thickness: float,
+        detail_variant: int,
+        chimney: bool,
+        palette: _BuildingPalette,
+    ) -> list[WallTile]:
+        outer_x, outer_z = (float(value) for value in dimensions)
+        cx = float(self.position.x)
+        cz = float(self.position.z)
+        half_x = outer_x * 0.5
+        half_z = outer_z * 0.5
+        wall_top = float(base_y) + float(wall_height)
+        thickness = max(0.5, float(wall_thickness))
+        projection = max(1.5, thickness * 0.7)
+        trim_depth = thickness + projection * 2.0
+        details: list[WallTile] = []
+        door_nx, door_nz = self._normal_from_side(doorway_side)
+        if door_nz > 0.0:
+            doorway_side_key = "north"
+        elif door_nx > 0.0:
+            doorway_side_key = "east"
+        elif door_nx < 0.0:
+            doorway_side_key = "west"
+        else:
+            doorway_side_key = "south"
+        door_span = (
+            outer_x
+            if doorway_side_key in {"north", "south"}
+            else outer_z
+        )
+        door_width = self._resolve_doorway_width(door_span, doorway_width)
+        door_height = self._resolve_doorway_height(wall_height, doorway_height)
+
+        # A low projecting plinth hides the terrain seam and gives the walls a base.
+        foundation_bottom = float(base_y) - 6.0
+        foundation_top = float(base_y) + 5.0
+        foundation_y = (foundation_bottom + foundation_top) * 0.5
+        foundation_height = foundation_top - foundation_bottom
+        for side in ("north", "east", "south", "west"):
+            side_span = outer_x if side in {"north", "south"} else outer_z
+            segments = [(-side_span * 0.5, side_span * 0.5)]
+            if side == doorway_side_key:
+                gap_half = min(
+                    side_span * 0.5,
+                    door_width * 0.5 + 2.0,
+                )
+                segments = [
+                    (-side_span * 0.5, -gap_half),
+                    (gap_half, side_span * 0.5),
+                ]
+            for segment_min, segment_max in segments:
+                segment_size = segment_max - segment_min
+                if segment_size <= 0.1:
+                    continue
+                details.append(
+                    self._create_wall_feature_box(
+                        dimensions=dimensions,
+                        side=side,
+                        offset=(segment_min + segment_max) * 0.5,
+                        tangent_size=segment_size,
+                        center_y=foundation_y,
+                        size_y=foundation_height,
+                        normal_depth=trim_depth,
+                        texture=wall_texture,
+                        fallback_color=palette.stone,
+                    )
+                )
+
+        # Heavy corner posts and an eave beam give the shell the same chunky,
+        # low-poly construction language as the procedural trees and fences.
+        eave_beam_height = 6.0
+        post_size = min(8.0, max(6.0, min(outer_x, outer_z) * 0.055))
+        post_bottom = foundation_top
+        post_top = wall_top - eave_beam_height
+        if post_top > post_bottom:
+            for x_sign in (-1.0, 1.0):
+                for z_sign in (-1.0, 1.0):
+                    details.append(
+                        self._axis_aligned_detail_box(
+                            center=Vector3(
+                                cx
+                                + x_sign
+                                * (half_x + post_size * 0.5 - 2.0),
+                                (post_bottom + post_top) * 0.5,
+                                cz
+                                + z_sign
+                                * (half_z + post_size * 0.5 - 2.0),
+                            ),
+                            size_x=post_size,
+                            size_y=post_top - post_bottom,
+                            size_z=post_size,
+                            texture=wall_texture,
+                            fallback_color=palette.timber,
+                        )
+                    )
+
+        eave_beam_y = wall_top - eave_beam_height * 0.5
+        for side in ("north", "east", "south", "west"):
+            side_span = outer_x if side in {"north", "south"} else outer_z
+            details.append(
+                self._create_wall_feature_box(
+                    dimensions=dimensions,
+                    side=side,
+                    offset=0.0,
+                    tangent_size=side_span,
+                    center_y=eave_beam_y,
+                    size_y=eave_beam_height,
+                    normal_depth=trim_depth,
+                    texture=wall_texture,
+                    fallback_color=palette.timber,
+                )
+            )
+
+        # Divide broad procedural footprints into human-scale bays. Posts that
+        # would cover a door or window are omitted, preserving every opening.
+        protected_by_side: dict[str, list[tuple[float, float]]] = {
+            side: [] for side in ("north", "east", "south", "west")
+        }
+        protected_by_side[doorway_side_key].append((0.0, door_width * 0.5 + 8.0))
+        for window in windows or ():
+            if not isinstance(window, dict):
+                continue
+            try:
+                side = str(window.get("side", "north")).lower()
+                offset = float(window.get("offset", 0.0))
+                width = max(4.0, float(window.get("width", 0.0)))
+            except (TypeError, ValueError):
+                continue
+            if side in protected_by_side:
+                protected_by_side[side].append((offset, width * 0.5 + 8.0))
+
+        bay_post_width = 5.0
+        for side in ("north", "east", "south", "west"):
+            side_span = outer_x if side in {"north", "south"} else outer_z
+            post_count = max(0, int(math.ceil(side_span / 92.0)) - 1)
+            for post_index in range(1, post_count + 1):
+                offset = -side_span * 0.5 + side_span * post_index / (
+                    post_count + 1
+                )
+                if any(
+                    abs(offset - center) <= half_width + bay_post_width
+                    for center, half_width in protected_by_side[side]
+                ):
+                    continue
+                details.append(
+                    self._create_wall_feature_box(
+                        dimensions=dimensions,
+                        side=side,
+                        offset=offset,
+                        tangent_size=bay_post_width,
+                        center_y=(post_bottom + post_top) * 0.5,
+                        size_y=post_top - post_bottom,
+                        normal_depth=trim_depth,
+                        texture=wall_texture,
+                        fallback_color=palette.timber,
+                    )
+                )
+
+        # Give the centered entrance an architectural surround without changing
+        # the actual doorway or animated door collision.
+        jamb_width = 5.0
+        opening_trim_depth = max(4.5, thickness + 2.0)
+        for offset in (
+            -(door_width + jamb_width) * 0.5,
+            (door_width + jamb_width) * 0.5,
+        ):
+            details.append(
+                self._create_wall_feature_box(
+                    dimensions=dimensions,
+                    side=doorway_side_key,
+                    offset=offset,
+                    tangent_size=jamb_width,
+                    center_y=float(base_y) + door_height * 0.5,
+                    size_y=door_height,
+                    normal_depth=opening_trim_depth,
+                    texture=wall_texture,
+                    fallback_color=palette.timber,
+                )
+            )
+        details.append(
+            self._create_wall_feature_box(
+                dimensions=dimensions,
+                side=doorway_side_key,
+                offset=0.0,
+                tangent_size=door_width + jamb_width * 2.0,
+                center_y=float(base_y) + door_height + jamb_width * 0.5,
+                size_y=jamb_width,
+                normal_depth=opening_trim_depth,
+                texture=wall_texture,
+                fallback_color=palette.timber,
+            )
+        )
+
+        # Chunky timber surrounds integrate the small pixel-art windows into the
+        # larger low-poly facade; stone sills anchor them at the bottom.
+        for window in windows or ():
+            if not isinstance(window, dict):
+                continue
+            try:
+                side = str(window.get("side", "north")).lower()
+                offset = float(window.get("offset", 0.0))
+                window_width = max(4.0, float(window.get("width", 0.0)))
+                window_height = max(4.0, float(window.get("height", 0.0)))
+                sill_height = max(0.0, float(window.get("sill_height", 0.0)))
+            except (TypeError, ValueError):
+                continue
+            details.append(
+                self._create_wall_feature_box(
+                    dimensions=dimensions,
+                    side=side,
+                    offset=offset,
+                    tangent_size=window_width + 7.0,
+                    center_y=float(base_y) + sill_height - 1.5,
+                    size_y=3.0,
+                    normal_depth=opening_trim_depth,
+                    texture=wall_texture,
+                    fallback_color=palette.stone,
+                )
+            )
+            frame_width = 4.0
+            for frame_offset in (
+                offset - (window_width + frame_width) * 0.5,
+                offset + (window_width + frame_width) * 0.5,
+            ):
+                details.append(
+                    self._create_wall_feature_box(
+                        dimensions=dimensions,
+                        side=side,
+                        offset=frame_offset,
+                        tangent_size=frame_width,
+                        center_y=float(base_y) + sill_height + window_height * 0.5,
+                        size_y=window_height,
+                        normal_depth=opening_trim_depth,
+                        texture=wall_texture,
+                        fallback_color=palette.timber,
+                    )
+                )
+            details.append(
+                self._create_wall_feature_box(
+                    dimensions=dimensions,
+                    side=side,
+                    offset=offset,
+                    tangent_size=window_width + frame_width * 2.0,
+                    center_y=float(base_y) + sill_height + window_height + 1.5,
+                    size_y=3.0,
+                    normal_depth=opening_trim_depth,
+                    texture=wall_texture,
+                    fallback_color=palette.timber,
+                )
+            )
+
+        # Roof edge boards hide the stepped gable fill and make the silhouette crisp.
+        roof_edge = max(4.5, float(roof_thickness) + 1.0)
+        eave_y = wall_top + float(roof_thickness) * math.cos(geometry.pitch) * 0.5
+        ridge_y = eave_y + geometry.rise
+        if geometry.ridge_axis == "x":
+            for sign in (-1.0, 1.0):
+                details.append(
+                    self._axis_aligned_detail_box(
+                        center=Vector3(
+                            cx,
+                            eave_y,
+                            cz + sign * (geometry.run - roof_edge * 0.5),
+                        ),
+                        size_x=geometry.ridge_half_length * 2.0,
+                        size_y=roof_edge,
+                        size_z=roof_edge,
+                        texture=roof_texture,
+                        fallback_color=palette.timber,
+                    )
+                )
+            ridge_size = (geometry.ridge_half_length * 2.0, 6.0)
+            details.append(
+                self._axis_aligned_detail_box(
+                    center=Vector3(cx, ridge_y, cz),
+                    size_x=ridge_size[0],
+                    size_y=5.0,
+                    size_z=ridge_size[1],
+                    texture=roof_texture,
+                    fallback_color=palette.timber,
+                )
+            )
+        else:
+            for sign in (-1.0, 1.0):
+                details.append(
+                    self._axis_aligned_detail_box(
+                        center=Vector3(
+                            cx + sign * (geometry.run - roof_edge * 0.5),
+                            eave_y,
+                            cz,
+                        ),
+                        size_x=roof_edge,
+                        size_y=roof_edge,
+                        size_z=geometry.ridge_half_length * 2.0,
+                        texture=roof_texture,
+                        fallback_color=palette.timber,
+                    )
+                )
+            details.append(
+                self._axis_aligned_detail_box(
+                    center=Vector3(cx, ridge_y, cz),
+                    size_x=6.0,
+                    size_y=5.0,
+                    size_z=geometry.ridge_half_length * 2.0,
+                    texture=roof_texture,
+                    fallback_color=palette.timber,
+                )
+            )
+
+        # Exposed gable beams make the taller roof silhouette legible from the
+        # end walls without adding fine texture detail.
+        gable_sides = (
+            ("east", "west")
+            if geometry.ridge_axis == "x"
+            else ("north", "south")
+        )
+        gable_span = outer_z if geometry.ridge_axis == "x" else outer_x
+        for side in gable_sides:
+            details.append(
+                self._create_wall_feature_box(
+                    dimensions=dimensions,
+                    side=side,
+                    offset=0.0,
+                    tangent_size=gable_span,
+                    center_y=wall_top + 2.0,
+                    size_y=4.0,
+                    normal_depth=trim_depth,
+                    texture=wall_texture,
+                    fallback_color=palette.timber,
+                )
+            )
+            gable_post_height = max(1.0, geometry.rise - 4.0)
+            details.append(
+                self._create_wall_feature_box(
+                    dimensions=dimensions,
+                    side=side,
+                    offset=0.0,
+                    tangent_size=5.0,
+                    center_y=wall_top + 4.0 + gable_post_height * 0.5,
+                    size_y=gable_post_height,
+                    normal_depth=trim_depth,
+                    texture=wall_texture,
+                    fallback_color=palette.timber,
+                )
+            )
+
+        if chimney:
+            details.extend(
+                self._create_chimney_details(
+                    geometry=geometry,
+                    wall_top=wall_top,
+                    roof_thickness=roof_thickness,
+                    texture=wall_texture,
+                    fallback_color=palette.stone,
+                    detail_variant=detail_variant,
+                )
+            )
+
+        return details
+
+    def _create_wall_feature_box(
+        self,
+        *,
+        dimensions: tuple[float, float],
+        side: str,
+        offset: float,
+        tangent_size: float,
+        center_y: float,
+        size_y: float,
+        normal_depth: float,
+        texture: Optional[int],
+        fallback_color: tuple[float, float, float],
+    ) -> WallTile:
+        outer_x, outer_z = dimensions
+        side_key = str(side).lower()
+        nx, nz = self._normal_from_side(side_key)
+        cx = float(self.position.x)
+        cz = float(self.position.z)
+        half_x = float(outer_x) * 0.5
+        half_z = float(outer_z) * 0.5
+        # Keep decorative surfaces fully in front of the structural shell.
+        # A tiny gap avoids coplanar depth fighting while remaining invisible.
+        outward_offset = max(0.0, float(normal_depth)) * 0.5 + 0.08
+        if abs(nz) > 0.0:
+            center = Vector3(
+                cx + float(offset),
+                center_y,
+                cz + nz * (half_z + outward_offset),
+            )
+            size_x, size_z = tangent_size, normal_depth
+        else:
+            center = Vector3(
+                cx + nx * (half_x + outward_offset),
+                center_y,
+                cz + float(offset),
+            )
+            size_x, size_z = normal_depth, tangent_size
+        tile = self._axis_aligned_detail_box(
+            center=center,
+            size_x=size_x,
+            size_y=size_y,
+            size_z=size_z,
+            texture=texture,
+            fallback_color=fallback_color,
+        )
+        inward_face = (
+            1
+            if nx > 0.0
+            else 0
+            if nx < 0.0
+            else 3
+            if nz > 0.0
+            else 2
+        )
+        tile.indoor_face_indices = (inward_face,)
+        tile.indoor_light_factor = INDOOR_LIGHT_FACTOR
+        tile.indoor_normal_override = INDOOR_NORMAL
+        return tile
+
+    def _create_chimney_details(
+        self,
+        *,
+        geometry: _GabledRoofGeometry,
+        wall_top: float,
+        roof_thickness: float,
+        texture: Optional[int],
+        fallback_color: tuple[float, float, float],
+        detail_variant: int,
+    ) -> list[WallTile]:
+        variant = int(detail_variant)
+        long_sign = -1.0 if variant % 2 else 1.0
+        cross_sign = -1.0 if (variant // 2) % 2 else 1.0
+        long_offset = long_sign * max(
+            0.0,
+            (geometry.ridge_half_length - 18.0) * 0.38,
+        )
+        cross_offset = cross_sign * geometry.run * 0.22
+        roof_surface_y = (
+            float(wall_top)
+            + float(roof_thickness) * math.cos(geometry.pitch) * 0.5
+            + geometry.rise
+            * (1.0 - abs(cross_offset) / max(1e-6, geometry.run))
+        )
+        stack_height = 25.0 + (variant % 3) * 2.0
+        stack_bottom = roof_surface_y - 3.0
+        stack_top = stack_bottom + stack_height
+        cx = float(self.position.x)
+        cz = float(self.position.z)
+        if geometry.ridge_axis == "x":
+            stack_center = Vector3(
+                cx + long_offset,
+                (stack_bottom + stack_top) * 0.5,
+                cz + cross_offset,
+            )
+        else:
+            stack_center = Vector3(
+                cx + cross_offset,
+                (stack_bottom + stack_top) * 0.5,
+                cz + long_offset,
+            )
+
+        stack = self._axis_aligned_detail_box(
+            center=stack_center,
+            size_x=12.0,
+            size_y=stack_height,
+            size_z=12.0,
+            texture=texture,
+            fallback_color=fallback_color,
+        )
+        cap = self._axis_aligned_detail_box(
+            center=Vector3(stack_center.x, stack_top - 0.5, stack_center.z),
+            size_x=15.0,
+            size_y=4.0,
+            size_z=15.0,
+            texture=texture,
+            fallback_color=fallback_color,
+        )
+        return [stack, cap]
+
+    def _axis_aligned_detail_box(
+        self,
+        *,
+        center: Vector3,
+        size_x: float,
+        size_y: float,
+        size_z: float,
+        texture: Optional[int],
+        fallback_color: tuple[float, float, float],
+    ) -> WallTile:
+        size_x = max(0.1, float(size_x))
+        size_y = max(0.1, float(size_y))
+        size_z = max(0.1, float(size_z))
+        tile = WallTile(
+            position=center,
+            width=size_x * 0.5,
+            height=size_y * 0.5,
+            depth=size_z * 0.5,
+            texture=texture,
+            uv_repeat=(1.0, 1.0),
+            thickness=size_x,
+        )
+        tile.sample_texture_edges = False
+        self._paint_tile(tile, fallback_color)
+        return tile
+
     def _create_roof(
         self,
         *,
@@ -958,6 +1879,11 @@ class Building:
         if shapes:
             self.shapes.extend(shapes)
             self._update_bounding_box()
+
+    def dispose(self) -> None:
+        """Release references to authored CPU geometry during scene teardown."""
+        self.shapes.clear()
+        self._bbox = None
 
     def _update_bounding_box(self) -> None:
         """Compute bounding box from attached shapes."""

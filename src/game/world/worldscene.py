@@ -4,7 +4,7 @@ The heavy lifting is split into focused modules:
 - world_content.py: game-facing scene declarations
 - world_lighting_plan.py: lighting derived from those declarations
 - world_setup.py: rendering/input bootstrap and asset loading
-- world_builder.py: ground, buildings, roads, sprites, fences, and decals
+- world_builder.py: ground, buildings, roads, procedural trees, sprites, fences, and decals
 - world_runtime.py: update/input/height-query helpers
 - world_road_planner.py: building driveway route planning
 """
@@ -62,6 +62,9 @@ class WorldScene(Scene):
     polygon_batches = state_alias("render_resources", "polygon_batches")
     others = state_alias("render_resources", "others")
     fence_meshes = state_alias("render_resources", "fence_meshes")
+    tree_meshes = state_alias("render_resources", "tree_meshes")
+    grass_meshes = state_alias("render_resources", "grass_meshes")
+    rock_meshes = state_alias("render_resources", "rock_meshes")
     ground_mesh = state_alias("render_resources", "ground_mesh")
     island_boundary = state_alias("render_resources", "island_boundary")
     sky = state_alias("render_resources", "sky")
@@ -74,15 +77,14 @@ class WorldScene(Scene):
     _sprite_update_cache = state_alias("render_resources", "sprite_update_cache")
     ground_tex = state_alias("render_resources", "ground_tex")
     road_tex = state_alias("render_resources", "road_tex")
-    tree_textures = state_alias("render_resources", "tree_textures")
-    grasses_textures = state_alias("render_resources", "grasses_textures")
-    rock_textures = state_alias("render_resources", "rock_textures")
     fence_textures = state_alias("render_resources", "fence_textures")
     item_textures = state_alias("render_resources", "item_textures")
     equipment_slot_textures = state_alias(
         "render_resources", "equipment_slot_textures"
     )
     wall_tex = state_alias("render_resources", "wall_tex")
+    roof_tex = state_alias("render_resources", "roof_tex")
+    building_material_tex = state_alias("render_resources", "building_material_tex")
     chest_tex = state_alias("render_resources", "chest_tex")
     torch_tex = state_alias("render_resources", "torch_tex")
     door_tex = state_alias("render_resources", "door_tex")
@@ -92,11 +94,15 @@ class WorldScene(Scene):
     building_specs = state_alias("build_state", "building_specs")
     environment_volumes = state_alias("build_state", "environment_volumes")
     buildings = state_alias("build_state", "buildings")
+    trees = state_alias("build_state", "trees")
+    grasses = state_alias("build_state", "grasses")
+    rocks = state_alias("build_state", "rocks")
     roads = state_alias("build_state", "roads")
     building_roads = state_alias("build_state", "building_roads")
     doors = state_alias("build_state", "doors")
     windows = state_alias("build_state", "windows")
     walls = state_alias("build_state", "walls")
+    building_details = state_alias("build_state", "building_details")
     torches = state_alias("build_state", "torches")
     creatures = state_alias("build_state", "creatures")
     goblins = state_alias("build_state", "goblins")

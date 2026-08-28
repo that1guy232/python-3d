@@ -158,12 +158,17 @@ def create_world_object_step_specs(
             lambda: _build_roads(scene),
             "Creating roads...",
         ),
-        WorldObjectBuildStep("Spawning trees", lambda: _spawn_trees(scene, tree_count)),
+        WorldObjectBuildStep(
+            "Generating procedural trees",
+            lambda: _spawn_trees(scene, tree_count),
+        ),
         WorldObjectBuildStep("Spawning goblins", lambda: _build_goblins(scene)),
         WorldObjectBuildStep(
-            "Spawning grass", lambda: _spawn_grass(scene, grass_count)
+            "Generating procedural grass", lambda: _spawn_grass(scene, grass_count)
         ),
-        WorldObjectBuildStep("Spawning rocks", lambda: _spawn_rocks(scene, rock_count)),
+        WorldObjectBuildStep(
+            "Generating procedural rocks", lambda: _spawn_rocks(scene, rock_count)
+        ),
         WorldObjectBuildStep("Building fences", lambda: _build_fences(scene)),
         WorldObjectBuildStep(
             "Adding ground details", lambda: _build_shadow_decals(scene)

@@ -69,6 +69,7 @@ from game.world.lighting_receivers import (
     SKY_SUN_LIGHTING_RECEIVER,
     SPRITE_LIGHTING_RECEIVER,
 )
+from game.world.nature_lod import select_nature_lod_meshes
 from game.actors.goblin import draw_goblin_shadows_batched
 from game.inventory import active_inventory_notice
 from game.ui.battle_panel import BattlePanel
@@ -184,9 +185,10 @@ class WorldRenderer:
         resources = self.resources
         if resources.ground_mesh is not None:
             yield resources.ground_mesh
-        if resources.tree_shadow_caster is not None:
-            yield resources.tree_shadow_caster
         for attr_name in (
+            "tree_meshes",
+            "grass_meshes",
+            "rock_meshes",
             "fence_meshes",
             "wall_tile_batches",
             "road_batches",
@@ -1091,6 +1093,48 @@ class WorldRenderer:
             print(
                 "Drawing decal batches took "
                 f"{end_draw_decal_batches_time - start_draw_decal_batches_time:.6f} seconds"
+            )
+
+        start_draw_nature_meshes_time = time.perf_counter()
+        with self._profile("objects.procedural_nature"):
+            packet_shader = self._packet_lighting_shader()
+            nature_selection = select_nature_lod_meshes(
+                (
+                    *resources.tree_meshes,
+                    *resources.grass_meshes,
+                    *resources.rock_meshes,
+                ),
+                scene.camera,
+                view_distance=VIEWDISTANCE,
+            )
+            self._count("nature.lod.high_chunks", nature_selection.level_counts[0])
+            self._count(
+                "nature.lod.medium_chunks", nature_selection.level_counts[1]
+            )
+            self._count("nature.lod.low_chunks", nature_selection.level_counts[2])
+            self._count("nature.lod.culled_chunks", nature_selection.culled_groups)
+            self._count(
+                "nature.lod.selected_triangles",
+                nature_selection.selected_vertices / 3.0,
+            )
+            BatchedMesh.draw_many(
+                nature_selection.meshes,
+                camera=scene.camera,
+                view_distance=VIEWDISTANCE,
+                lighting_packets=(
+                    self.lighting_controller.render_packets
+                    if packet_shader is not None
+                    and self.lighting_controller is not None
+                    else None
+                ),
+                packet_shader=packet_shader,
+                require_lighting_packets=packet_shader is not None,
+            )
+        end_draw_nature_meshes_time = time.perf_counter()
+        if enable_timing:
+            print(
+                "Drawing procedural nature took "
+                f"{end_draw_nature_meshes_time - start_draw_nature_meshes_time:.6f} seconds"
             )
 
         start_draw_wall_tiles_time = time.perf_counter()

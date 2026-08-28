@@ -1,4 +1,4 @@
-"""Small helper to spawn billboard sprites inside a rectangular area.
+"""Place procedural trees and billboard props inside a rectangular area.
 
 `x_off`/`z_off` are the spawn-area center. Use `avoid_padding` to keep sprites
 away from roads/areas when needed.
@@ -19,6 +19,9 @@ from pygame.math import Vector3
 from engine.rendering.sprite import WorldSprite
 from engine.textures.texture_utils import get_texture_size
 from collections import defaultdict
+from game.world.objects.grass import GRASS_VARIANT_COUNT, Grass
+from game.world.objects.rock import ROCK_VARIANT_COUNT, Rock
+from game.world.objects.tree import TREE_VARIANT_COUNT, Tree
 
 
 class SpatialGrid:
@@ -250,6 +253,141 @@ def spawn_world_sprites(
         pad_margin,
         max_retries,
         spatial_grid,
+    )
+
+
+def _spawn_procedural_models(
+    scene,
+    *,
+    model_type,
+    variant_count: int,
+    count: int,
+    x_off: float,
+    z_off: float,
+    max_spawn_x: float,
+    max_spawn_z: float,
+    avoid_roads: list | None = None,
+    avoid_areas: list | None = None,
+    avoid_padding: float = 10.0,
+    max_retries: int = 8,
+    random_seed: int | None = None,
+    prefilter_radius: float = 96.0,
+    grid_cell_size: float = 160.0,
+) -> list:
+    """Place one deterministic procedural-model layer on terrain."""
+
+    requested = max(0, int(count))
+    if requested <= 0:
+        return []
+
+    half_x = max(0.0, float(max_spawn_x))
+    half_z = max(0.0, float(max_spawn_z))
+    pad_margin = max(0.0, float(avoid_padding))
+    attempts_per_model = max(1, int(max_retries))
+    rng = random.Random(random_seed)
+
+    # Prefiltering only skips distant blockers. Exact instance radii are used
+    # by the placement test below.
+    prefilter_margin = max(1.0, float(prefilter_radius)) + pad_margin
+    filtered_roads = _prefilter_collision_objects(
+        avoid_roads,
+        x_off,
+        z_off,
+        half_x,
+        half_z,
+        prefilter_margin,
+    )
+    filtered_areas = _prefilter_collision_objects(
+        avoid_areas,
+        x_off,
+        z_off,
+        half_x,
+        half_z,
+        prefilter_margin,
+    )
+    spatial_grid = SpatialGrid(cell_size=max(1.0, float(grid_cell_size)))
+    models = []
+
+    for _index in range(requested):
+        model_seed = rng.randrange(1 << 63)
+        variant = rng.randrange(max(1, int(variant_count)))
+
+        for _attempt in range(attempts_per_model):
+            x = rng.uniform(-half_x, half_x) + float(x_off)
+            z = rng.uniform(-half_z, half_z) + float(z_off)
+            candidate = model_type.from_seed(
+                Vector3(x, 0.0, z),
+                seed=model_seed,
+                variant=variant,
+            )
+            radius = max(1.0, float(candidate.placement_radius))
+            if (
+                x < float(x_off) - half_x + radius
+                or x > float(x_off) + half_x - radius
+                or z < float(z_off) - half_z + radius
+                or z > float(z_off) + half_z - radius
+            ):
+                continue
+            if not _can_place_sprite(
+                x,
+                z,
+                radius,
+                pad_margin,
+                spatial_grid,
+                filtered_roads,
+                filtered_areas,
+            ):
+                continue
+
+            base_y = float(scene.ground_height_at(x, z))
+            model = model_type.from_seed(
+                Vector3(x, base_y, z),
+                seed=model_seed,
+                variant=variant,
+            )
+            models.append(model)
+            spatial_grid.add_sprite(model, x, z, radius)
+            break
+
+    return models
+
+
+def spawn_world_trees(scene, **kwargs) -> list[Tree]:
+    """Place deterministic procedural trees anchored to terrain height."""
+
+    return _spawn_procedural_models(
+        scene,
+        model_type=Tree,
+        variant_count=TREE_VARIANT_COUNT,
+        prefilter_radius=96.0,
+        grid_cell_size=160.0,
+        **kwargs,
+    )
+
+
+def spawn_world_grasses(scene, **kwargs) -> list[Grass]:
+    """Place deterministic procedural grass clumps anchored to terrain."""
+
+    return _spawn_procedural_models(
+        scene,
+        model_type=Grass,
+        variant_count=GRASS_VARIANT_COUNT,
+        prefilter_radius=24.0,
+        grid_cell_size=48.0,
+        **kwargs,
+    )
+
+
+def spawn_world_rocks(scene, **kwargs) -> list[Rock]:
+    """Place deterministic procedural rocks anchored to terrain height."""
+
+    return _spawn_procedural_models(
+        scene,
+        model_type=Rock,
+        variant_count=ROCK_VARIANT_COUNT,
+        prefilter_radius=48.0,
+        grid_cell_size=96.0,
+        **kwargs,
     )
 
 

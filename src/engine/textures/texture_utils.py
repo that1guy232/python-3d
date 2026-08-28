@@ -35,6 +35,7 @@ _POLY_SHADOW_CACHE: Dict[Tuple[Tuple[float, float], ...], int] = {}
 _TREE_SHADOW_TEX_CACHE: Dict[Tuple[object, ...], int] = {}
 _FOREST_FLOOR_TEX_CACHE: Dict[Tuple[object, ...], int] = {}
 _PIXEL_CLOUD_ATLAS_CACHE: Dict[Tuple[object, ...], Tuple["TextureRegion", ...]] = {}
+_SOLID_COLOR_TEX_CACHE: Dict[Tuple[int, int, int, int], int] = {}
 
 
 @dataclass(frozen=True)
@@ -259,6 +260,31 @@ def create_test_texture():
 
     print(f"Created checkerboard test texture (ID: {texture_id})")
     return texture_id
+
+
+def create_solid_color_texture(
+    color: Tuple[int, int, int, int] = (255, 255, 255, 255),
+) -> int:
+    """Return a cached one-pixel material texture.
+
+    Geometry that gets its appearance from vertex colors can still use the
+    normal-aware textured lighting pipeline by sampling this neutral texture.
+    The texture is generated in memory and does not depend on an image asset.
+    """
+
+    rgba = tuple(max(0, min(255, int(channel))) for channel in color)
+    if len(rgba) != 4:
+        raise ValueError("solid texture colors must contain four RGBA channels")
+
+    cached = _SOLID_COLOR_TEX_CACHE.get(rgba)
+    if cached is not None:
+        return cached
+
+    surface = pygame.Surface((1, 1), pygame.SRCALPHA)
+    surface.fill(rgba)
+    texture = _upload_texture_surface(surface, nearest=True, repeat=False)
+    _SOLID_COLOR_TEX_CACHE[rgba] = texture
+    return texture
 
 
 def create_shadow_texture(

@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from game.actors.creature import CombatCreature
     from game.actors.goblin import Goblin
     from game.inventory import InventoryItem
-    from game.world.objects import Chest, Door, Road, Torch, Window
+    from game.world.objects import Chest, Door, Grass, Road, Rock, Torch, Tree, Window
     from game.world.objects.building import Building
     from game.world.objects.polygon import Polygon
     from game.world.objects.wall_tile import WallTile
@@ -77,11 +77,15 @@ class WorldBuildState:
     initial_local_lights: list[LocalBrightnessLight] = field(default_factory=list)
     environment_volumes: list[EnvironmentVolume] = field(default_factory=list)
     buildings: list[Building] = field(default_factory=list)
+    trees: list[Tree] = field(default_factory=list)
+    grasses: list[Grass] = field(default_factory=list)
+    rocks: list[Rock] = field(default_factory=list)
     roads: list[Road] = field(default_factory=list)
     building_roads: list[Road] = field(default_factory=list)
     doors: list[Door] = field(default_factory=list)
     windows: list[Window] = field(default_factory=list)
     walls: list[WallTile] = field(default_factory=list)
+    building_details: list[WallTile] = field(default_factory=list)
     torches: list[Torch] = field(default_factory=list)
     creatures: list[CombatCreature] = field(default_factory=list)
     goblins: list[Goblin] = field(default_factory=list)
@@ -114,13 +118,15 @@ class WorldRenderResources:
     polygon_batches: list[RenderValue] = field(default_factory=list)
     others: list[Drawable] = field(default_factory=list)
     fence_meshes: list[RenderValue] = field(default_factory=list)
+    tree_meshes: list[RenderValue] = field(default_factory=list)
+    grass_meshes: list[RenderValue] = field(default_factory=list)
+    rock_meshes: list[RenderValue] = field(default_factory=list)
 
     ground_mesh: RenderValue | None = None
     island_boundary: Disposable | None = None
     sky: RenderValue | None = None
     road: RenderValue | None = None
     decal_batch: RenderValue | None = None
-    tree_shadow_caster: Disposable | None = None
     ground_height_sampler: Callable[[float, float], float] | None = None
     collision_cell_size: float = 128.0
     collision_spatial_index: dict[str, Any] | None = None
@@ -128,13 +134,12 @@ class WorldRenderResources:
 
     ground_tex: Any | None = None
     road_tex: Any | None = None
-    tree_textures: list[Any] = field(default_factory=list)
-    grasses_textures: list[Any] = field(default_factory=list)
-    rock_textures: list[Any] = field(default_factory=list)
     fence_textures: list[Any] = field(default_factory=list)
     item_textures: dict[str, Any] = field(default_factory=dict)
     equipment_slot_textures: dict[str, Any] = field(default_factory=dict)
     wall_tex: Any | None = None
+    roof_tex: Any | None = None
+    building_material_tex: Any | None = None
     chest_tex: Any | None = None
     torch_tex: Any | None = None
     door_tex: Any | None = None

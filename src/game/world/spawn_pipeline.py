@@ -1,4 +1,4 @@
-"""Sprite and enemy spawning pipeline for world scenes."""
+"""Procedural-tree, sprite, and enemy spawning for world scenes."""
 
 from __future__ import annotations
 
@@ -25,9 +25,17 @@ from game.config import (
 
 from game.actors.goblin import Goblin
 
+from game.world.builder_support import _dispose_values
+from game.world.objects.grass import build_grass_meshes
+from game.world.objects.rock import build_rock_meshes
+from game.world.objects.tree import build_tree_meshes
 from game.world.road_pipeline import _build_roads
 
-from game.world.world_spawner import spawn_world_sprites
+from game.world.world_spawner import (
+    spawn_world_grasses,
+    spawn_world_rocks,
+    spawn_world_trees,
+)
 
 
 def _build_roads_and_spawn_sprites(
@@ -46,48 +54,121 @@ def _build_roads_and_spawn_sprites(
 
 
 def _spawn_trees(scene, tree_count: int) -> None:
+    start_time = time.perf_counter()
+    resources = getattr(scene, "render_resources", scene)
+    build_state = getattr(scene, "build_state", scene)
 
-    _spawn_sprite_layer(
+    _remove_previous_sprites(resources, getattr(build_state, "trees", ()))
+
+    _dispose_values(getattr(resources, "tree_meshes", ()))
+    resources.tree_meshes = []
+
+    trees = spawn_world_trees(
         scene,
-        label="trees",
         count=tree_count,
-        textures=scene.tree_textures,
-        px_to_world=1.2,
         x_off=(scene.ground_bounds[0] + scene.ground_bounds[1]) / 2 + 35,
         z_off=(scene.ground_bounds[2] + scene.ground_bounds[3]) / 2 + 35,
         max_spawn_x=(scene.ground_bounds[1] - scene.ground_bounds[0]) / 2 - 35,
         max_spawn_z=(scene.ground_bounds[3] - scene.ground_bounds[2]) / 2 - 35,
+        avoid_roads=scene.roads,
+        avoid_areas=scene.buildings,
+        random_seed=getattr(scene, "world_random_seed", None),
     )
+    build_state.trees = trees
+    resources.tree_meshes = build_tree_meshes(
+        trees,
+        exposure_baseline=float(
+            getattr(getattr(scene, "camera", None), "brightness_default", 1.0)
+        ),
+    )
+
+    print(
+        f"Generated {len(trees)} procedural trees in "
+        f"{len(resources.tree_meshes)} spatial mesh batches."
+    )
+    scene.log_timing("Spawn trees", start_time, time.perf_counter())
 
 
 def _spawn_grass(scene, grass_count: int) -> None:
+    start_time = time.perf_counter()
+    resources = getattr(scene, "render_resources", scene)
+    build_state = getattr(scene, "build_state", scene)
+    _remove_previous_sprites(resources, getattr(build_state, "grasses", ()))
+    _dispose_values(getattr(resources, "grass_meshes", ()))
+    resources.grass_meshes = []
 
-    _spawn_sprite_layer(
+    grasses = spawn_world_grasses(
         scene,
-        label="grasses",
         count=grass_count,
-        textures=scene.grasses_textures,
-        px_to_world=1.5,
         x_off=(scene.ground_bounds[0] + scene.ground_bounds[1]) / 2,
         z_off=(scene.ground_bounds[2] + scene.ground_bounds[3]) / 2,
         max_spawn_x=(scene.ground_bounds[1] - scene.ground_bounds[0]) / 2,
         max_spawn_z=(scene.ground_bounds[3] - scene.ground_bounds[2]) / 2,
+        avoid_roads=scene.roads,
+        avoid_areas=scene.buildings,
+        random_seed=_nature_layer_seed(scene, 0x47524153),
     )
+    build_state.grasses = grasses
+    resources.grass_meshes = build_grass_meshes(
+        grasses,
+        exposure_baseline=float(
+            getattr(getattr(scene, "camera", None), "brightness_default", 1.0)
+        ),
+    )
+    print(
+        f"Generated {len(grasses)} procedural grass clumps in "
+        f"{len(resources.grass_meshes)} spatial mesh batches."
+    )
+    scene.log_timing("Spawn grass", start_time, time.perf_counter())
 
 
 def _spawn_rocks(scene, rock_count: int) -> None:
+    start_time = time.perf_counter()
+    resources = getattr(scene, "render_resources", scene)
+    build_state = getattr(scene, "build_state", scene)
+    _remove_previous_sprites(resources, getattr(build_state, "rocks", ()))
+    _dispose_values(getattr(resources, "rock_meshes", ()))
+    resources.rock_meshes = []
 
-    _spawn_sprite_layer(
+    rocks = spawn_world_rocks(
         scene,
-        label="rocks",
         count=rock_count,
-        textures=scene.rock_textures,
-        px_to_world=1.0,
         x_off=(scene.ground_bounds[0] + scene.ground_bounds[1]) / 2,
         z_off=(scene.ground_bounds[2] + scene.ground_bounds[3]) / 2,
         max_spawn_x=(scene.ground_bounds[1] - scene.ground_bounds[0]) / 2,
         max_spawn_z=(scene.ground_bounds[3] - scene.ground_bounds[2]) / 2,
+        avoid_roads=scene.roads,
+        avoid_areas=scene.buildings,
+        random_seed=_nature_layer_seed(scene, 0x524F434B),
     )
+    build_state.rocks = rocks
+    resources.rock_meshes = build_rock_meshes(
+        rocks,
+        exposure_baseline=float(
+            getattr(getattr(scene, "camera", None), "brightness_default", 1.0)
+        ),
+    )
+    print(
+        f"Generated {len(rocks)} procedural rocks in "
+        f"{len(resources.rock_meshes)} spatial mesh batches."
+    )
+    scene.log_timing("Spawn rocks", start_time, time.perf_counter())
+
+
+def _nature_layer_seed(scene, salt: int) -> int | None:
+    seed = getattr(scene, "world_random_seed", None)
+    if seed is None:
+        return None
+    return (int(seed) ^ int(salt)) & ((1 << 63) - 1)
+
+
+def _remove_previous_sprites(resources, values) -> None:
+    previous_ids = {id(value) for value in (values or ())}
+    if not previous_ids:
+        return
+    resources.sprite_items = [
+        item for item in resources.sprite_items if id(item) not in previous_ids
+    ]
 
 
 def _goblin_position_blocker(scene, *, block_roads: bool = True):
@@ -338,40 +419,3 @@ def _build_goblins(scene) -> None:
 
         refresh_draw_entities()
 
-
-def _spawn_sprite_layer(
-    scene,
-    *,
-    label: str,
-    count: int,
-    textures: list,
-    px_to_world: float,
-    x_off: float,
-    z_off: float,
-    max_spawn_x: float,
-    max_spawn_z: float,
-) -> None:
-
-    start_time = time.perf_counter()
-
-    sprites = spawn_world_sprites(
-        scene,
-        count=count,
-        textures=textures,
-        px_to_world=px_to_world,
-        camera=scene.camera,
-        x_off=x_off,
-        z_off=z_off,
-        max_spawn_x=max_spawn_x,
-        max_spawn_z=max_spawn_z,
-        avoid_roads=scene.roads,
-        avoid_areas=scene.buildings,
-    )
-
-    setattr(scene, label, sprites)
-
-    print(f"Spawned {len(sprites)} {label}.")
-
-    scene.log_timing(f"Spawn {label}", start_time, time.perf_counter())
-
-    scene.sprite_items.extend(sprites)

@@ -26,6 +26,7 @@ from engine.config import HEIGHT, WIDTH
 from engine.core.loading_scene import LoadingScene
 from engine.core.scene import Scene
 from engine.ui.menu import ButtonMenu, MenuOption
+from game.object_test_scene import create_object_test_scene
 from game.world.worldscene import WorldScene
 
 
@@ -50,6 +51,11 @@ class MainMenu(ButtonMenu):
         super().__init__(scene)
         self.buttons = [
             MenuOption("start_game", "Start Game", self.start_game),
+            MenuOption(
+                "object_test_scene",
+                "Object Test Scene",
+                self.start_object_test_scene,
+            ),
         ]
 
     def options(self) -> list[MenuOption]:
@@ -57,6 +63,9 @@ class MainMenu(ButtonMenu):
 
     def start_game(self, scene) -> None:
         scene.start_game()
+
+    def start_object_test_scene(self, scene) -> None:
+        scene.start_object_test_scene()
 
 
 class MainMenuScene(Scene):
@@ -75,10 +84,19 @@ class MainMenuScene(Scene):
         if self.next_scene is not None:
             return
         world = WorldScene(defer_setup=True)
+        self._queue_scene(world, title="Loading World")
+
+    def start_object_test_scene(self) -> None:
+        if self.next_scene is not None:
+            return
+        test_scene = create_object_test_scene()
+        self._queue_scene(test_scene, title="Loading Object Test Scene")
+
+    def _queue_scene(self, scene: Scene, *, title: str) -> None:
         self.next_scene = LoadingScene(
-            world,
-            title="Loading World",
-            initial_status="Preparing world",
+            scene,
+            title=title,
+            initial_status="Preparing scene",
         )
 
     def update(self, dt: float) -> None:
@@ -92,6 +110,8 @@ class MainMenuScene(Scene):
         if event.type == pygame.KEYDOWN:
             if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
                 self.start_game()
+            elif event.key == pygame.K_t:
+                self.start_object_test_scene()
             elif event.key == pygame.K_ESCAPE:
                 pygame.event.post(pygame.event.Event(pygame.QUIT))
 

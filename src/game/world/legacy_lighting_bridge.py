@@ -275,6 +275,16 @@ class LegacyLightingBridge:
             if not self.uses_texture_shader(mesh):
                 self.set_exposure_cpu(mesh, exposure)
 
+        for mesh in getattr(self.resources, "tree_meshes", ()) or ():
+            if not self.uses_texture_shader(mesh):
+                self.set_exposure_cpu(mesh, exposure)
+        for mesh in getattr(self.resources, "grass_meshes", ()) or ():
+            if not self.uses_texture_shader(mesh):
+                self.set_exposure_cpu(mesh, exposure)
+        for mesh in getattr(self.resources, "rock_meshes", ()) or ():
+            if not self.uses_texture_shader(mesh):
+                self.set_exposure_cpu(mesh, exposure)
+
         for batch in getattr(self.resources, "road_batches", ()) or ():
             if not self.uses_texture_shader(batch):
                 self.set_exposure_cpu(batch, exposure)
@@ -298,6 +308,12 @@ class LegacyLightingBridge:
             self.set_exposure_cpu(mesh, exposure)
 
         for mesh in getattr(self.resources, "fence_meshes", ()) or ():
+            self.set_exposure_cpu(mesh, exposure)
+        for mesh in getattr(self.resources, "tree_meshes", ()) or ():
+            self.set_exposure_cpu(mesh, exposure)
+        for mesh in getattr(self.resources, "grass_meshes", ()) or ():
+            self.set_exposure_cpu(mesh, exposure)
+        for mesh in getattr(self.resources, "rock_meshes", ()) or ():
             self.set_exposure_cpu(mesh, exposure)
         for batch in getattr(self.resources, "road_batches", ()) or ():
             self.set_exposure_cpu(batch, exposure)

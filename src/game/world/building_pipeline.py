@@ -12,7 +12,7 @@ from pygame.math import Vector3
 
 from engine.textures.texture_utils import load_texture
 
-from game.resources.paths import WALL1_TEXTURE_PATH
+from game.resources.paths import ROOF_TEXTURE_PATH, WALL1_TEXTURE_PATH
 
 from game.world.builder_support import _dispose_value, _dispose_values
 
@@ -613,7 +613,15 @@ def _build_buildings(scene) -> None:
 
     scene.render_resources.wall_tex = wall_tex
 
+    roof_tex = getattr(scene, "roof_tex", None) or load_texture(ROOF_TEXTURE_PATH)
+
+    scene.render_resources.roof_tex = roof_tex
+
+    material_tex = getattr(scene, "building_material_tex", None) or wall_tex
+
     scene.build_state.walls = []
+
+    scene.build_state.building_details = []
 
     lighting = getattr(scene, "lighting", None)
 
@@ -621,10 +629,14 @@ def _build_buildings(scene) -> None:
         None if lighting is not None else getattr(scene, "sun_direction", None)
     )
 
-    for building, spec in zip(
-        scene.build_state.buildings,
-        scene.build_state.building_specs,
+    for spec_index, (building, spec) in enumerate(
+        zip(
+            scene.build_state.buildings,
+            scene.build_state.building_specs,
+        )
     ):
+
+        palette = building.style_palette(spec_index)
 
         if building.target_height is None:
 
@@ -673,7 +685,8 @@ def _build_buildings(scene) -> None:
             width=spec["width"],
             depth=spec["depth"],
             max_tile_width=max(spec["width"], spec["depth"]),
-            texture=wall_tex,
+            texture=material_tex,
+            roof_texture=material_tex,
             uv_repeat=(1.0, 1.0),
             base_y=base_y,
             doorway_side=spec["doorway_side"],
@@ -682,10 +695,12 @@ def _build_buildings(scene) -> None:
             windows=windows,
             roof=True,
             roof_thickness=4.0,
-            roof_overhang=BUILDING_ROOF_OVERHANG,
+            roof_overhang=0.0,
             terrain_height_at=scene.ground_height_at,
             terrain_embed_depth=BUILDING_WALL_TERRAIN_EMBED_DEPTH,
             terrain_sample_spacing=BUILDING_WALL_TERRAIN_SAMPLE_SPACING,
+            wall_color=palette.wall,
+            roof_color=palette.roof,
         )
 
         interior = create_building_interior_layout(spec)
@@ -697,14 +712,33 @@ def _build_buildings(scene) -> None:
                 interior.get("partitions", ()),
                 wall_height=spec["height"],
                 wall_thickness=wall_thickness,
-                texture=wall_tex,
+                texture=material_tex,
                 uv_repeat=(1.0, 1.0),
                 base_y=base_y,
                 max_tile_width=max(spec["width"], spec["depth"]),
+                wall_color=palette.wall,
             )
         )
 
-        for piece in pieces:
+        details = building.create_architectural_details(
+            wall_height=spec["height"],
+            wall_thickness=wall_thickness,
+            width=spec["width"],
+            depth=spec["depth"],
+            wall_texture=material_tex,
+            roof_texture=material_tex,
+            doorway_side=spec["doorway_side"],
+            doorway_width=spec["doorway_width"],
+            doorway_height=doorway_height,
+            windows=windows,
+            base_y=base_y,
+            roof_thickness=4.0,
+            roof_overhang=BUILDING_ROOF_OVERHANG,
+            detail_variant=spec_index,
+            chimney=spec_index % 3 != 1,
+        )
+
+        for piece in (*pieces, *details):
 
             piece.sun_direction = sun_direction
 
@@ -712,12 +746,17 @@ def _build_buildings(scene) -> None:
 
         scene.build_state.walls.extend(pieces)
 
-    print(f"Built {len(scene.build_state.walls)} building pieces.")
+        scene.build_state.building_details.extend(details)
+
+    print(
+        f"Built {len(scene.build_state.walls)} structural building pieces and "
+        f"{len(scene.build_state.building_details)} architectural details."
+    )
 
     _dispose_values(getattr(scene, "wall_tile_batches", ()))
 
     scene.render_resources.wall_tile_batches = build_wall_tile_batches(
-        scene.build_state.walls,
+        [*scene.build_state.walls, *scene.build_state.building_details],
         camera=scene.camera,
         default_brightness=scene.camera.brightness_default,
         sun_direction=sun_direction,
