@@ -26,10 +26,7 @@ from game.resources.paths import (
     FENCE4_TEXTURE_PATH,
     FENCE5_TEXTURE_PATH,
     FENCE6_TEXTURE_PATH,
-    GOBLIN_BACK_TEXTURE_DIR_PATH,
     GOBLIN_FIST_TEXTURE_PATH,
-    GOBLIN_FRONT_TEXTURE_DIR_PATH,
-    GOBLIN_RIGHT_TEXTURE_DIR_PATH,
     GRASS_TEXTURE_PATH,
     HELMET_SLOT_TEXTURE_PATH,
     ROAD_TEXTURE_PATH,
@@ -41,20 +38,6 @@ from game.resources.paths import (
     WEAPON_SLOT_TEXTURE_PATH,
     WINDOW_TEXTURE_PATH,
 )
-
-
-def _frame_sort_key(path: Path) -> tuple[int, int | str]:
-    stem = path.stem
-    if stem.isdigit():
-        return (0, int(stem))
-    return (1, stem.lower())
-
-
-def _png_sequence_paths(directory: str) -> list[str]:
-    frame_dir = Path(directory)
-    if not frame_dir.is_dir():
-        return []
-    return [str(path) for path in sorted(frame_dir.glob("*.png"), key=_frame_sort_key)]
 
 
 def load_world_textures() -> Dict[str, object]:
@@ -69,7 +52,7 @@ def load_world_textures() -> Dict[str, object]:
       - torch_tex (animated frame regions when available)
       - door_tex
       - window_tex
-      - goblin_tex (front/right/back animated frame regions when available)
+      - goblin_material_tex (neutral material for generated goblin geometry)
     """
     # Core textures
     ground_tex = load_texture(GRASS_TEXTURE_PATH)
@@ -104,6 +87,9 @@ def load_world_textures() -> Dict[str, object]:
     wall_tex = load_texture(WALL1_TEXTURE_PATH)
     roof_tex = load_texture(ROOF_TEXTURE_PATH)
     building_material_tex = create_solid_color_texture()
+    # Generated models carry their palette in vertex colors. Reuse the same
+    # neutral material instead of loading the old directional sprite atlases.
+    goblin_material_tex = building_material_tex
     chest_tex = load_texture(CHEST_TEXTURE_PATH)
     torch_frame_paths = [
         path for path in TORCH_FRAME_TEXTURE_PATHS if Path(path).is_file()
@@ -115,12 +101,6 @@ def load_world_textures() -> Dict[str, object]:
     )
     door_tex = load_texture(DOOR_TEXTURE_PATH)
     window_tex = load_texture(WINDOW_TEXTURE_PATH)
-    goblin_tex = {
-        "front": load_texture_atlas(_png_sequence_paths(GOBLIN_FRONT_TEXTURE_DIR_PATH)),
-        "right": load_texture_atlas(_png_sequence_paths(GOBLIN_RIGHT_TEXTURE_DIR_PATH)),
-        "back": load_texture_atlas(_png_sequence_paths(GOBLIN_BACK_TEXTURE_DIR_PATH)),
-    }
-
     return {
         "ground_tex": ground_tex,
         "road_tex": road_tex,
@@ -134,5 +114,5 @@ def load_world_textures() -> Dict[str, object]:
         "torch_tex": torch_tex,
         "door_tex": door_tex,
         "window_tex": window_tex,
-        "goblin_tex": goblin_tex,
+        "goblin_material_tex": goblin_material_tex,
     }

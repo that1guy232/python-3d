@@ -272,15 +272,22 @@ class DirectionalShadowMap:
             glBindTexture(GL_TEXTURE_2D, 0)
 
     @contextmanager
-    def render_depth(self):
-        """Bind, clear, and restore this depth-only framebuffer."""
+    def render_depth(self, *, clear: bool = True):
+        """Bind and restore this depth-only framebuffer.
+
+        Incremental shadow refreshes clear the staging texture for their first
+        submission, then preserve its depth contents while later submissions
+        fill the rest of the map.  The default remains the complete-pass
+        behavior used by callers that render a map in one visit.
+        """
 
         previous_framebuffer = int(glGetIntegerv(GL_FRAMEBUFFER_BINDING))
         previous_viewport = tuple(int(value) for value in glGetIntegerv(GL_VIEWPORT))
         glBindFramebuffer(GL_FRAMEBUFFER, self.framebuffer)
         glViewport(0, 0, self.size, self.size)
         glEnable(GL_DEPTH_TEST)
-        glClear(GL_DEPTH_BUFFER_BIT)
+        if clear:
+            glClear(GL_DEPTH_BUFFER_BIT)
         try:
             yield
         finally:

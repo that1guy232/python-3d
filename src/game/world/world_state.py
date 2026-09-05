@@ -121,6 +121,7 @@ class WorldRenderResources:
     tree_meshes: list[RenderValue] = field(default_factory=list)
     grass_meshes: list[RenderValue] = field(default_factory=list)
     rock_meshes: list[RenderValue] = field(default_factory=list)
+    goblin_batch: RenderValue | None = None
 
     ground_mesh: RenderValue | None = None
     island_boundary: Disposable | None = None
@@ -144,7 +145,7 @@ class WorldRenderResources:
     torch_tex: Any | None = None
     door_tex: Any | None = None
     window_tex: Any | None = None
-    goblin_tex: dict[str, Any] = field(default_factory=dict)
+    goblin_material_tex: Any | None = None
 
 
 @dataclass(slots=True)

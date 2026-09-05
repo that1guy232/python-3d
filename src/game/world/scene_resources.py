@@ -15,6 +15,7 @@ class SceneResourceDisposer:
         "sky",
         "road",
         "decal_batch",
+        "goblin_batch",
     )
     COLLECTION_RESOURCE_ATTRS = (
         "tree_meshes",
@@ -132,6 +133,7 @@ class SceneResourceDisposer:
             resources._ground_height_sampler = None
         resources.road = None
         resources.decal_batch = None
+        resources.goblin_batch = None
         if hasattr(resources, "collision_spatial_index"):
             resources.collision_spatial_index = None
         else:

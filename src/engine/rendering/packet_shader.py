@@ -54,6 +54,12 @@ class PacketLightingBackendUnavailable(RuntimeError):
 
 MAX_PACKET_POINT_LIGHTS = 16
 MAX_PACKET_POINT_SHADOWS = 2
+IDENTITY_MATRIX4 = (
+    1.0, 0.0, 0.0, 0.0,
+    0.0, 1.0, 0.0, 0.0,
+    0.0, 0.0, 1.0, 0.0,
+    0.0, 0.0, 0.0, 1.0,
+)
 
 
 def validate_packet_capacity(
@@ -175,6 +181,17 @@ class PacketTextureLightingShader:
             self.active_point_light_ids = values
             self._uploaded_key = None
 
+    def set_model_matrix(self, value) -> None:
+        """Transform local-space vertices into world space for later draws."""
+
+        self._uniform_matrix4("u_model_matrix", value)
+        self._uniform1i("u_model_transform_enabled", 1)
+
+    def reset_model_matrix(self) -> None:
+        """Restore the direct world-space path used by ordinary meshes."""
+
+        self._uniform1i("u_model_transform_enabled", 0)
+
     def bind(
         self,
         packet: ReceiverLightingPacket,
@@ -184,6 +201,7 @@ class PacketTextureLightingShader:
         if self.active_point_light_ids is None:
             validate_packet_capacity(packet, self.storage.limits)
         glUseProgram(self.program)
+        self.reset_model_matrix()
         self.storage.upload_and_bind(packet)
         glActiveTexture(GL_TEXTURE0)
         self._uniform1i("u_texture", 0)
@@ -457,6 +475,8 @@ def get_packet_texture_lighting_shader() -> PacketTextureLightingShader | None:
             "u_sun_shadow_texel_size",
             "u_sun_shadow_bias",
             "u_sun_shadow_matrix",
+            "u_model_matrix",
+            "u_model_transform_enabled",
             "u_point_light_count",
             "u_point_shadow_map0",
             "u_point_shadow_map1",

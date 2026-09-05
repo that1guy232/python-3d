@@ -11,6 +11,8 @@ in shader pipeline later.
 
 from __future__ import annotations
 
+import math
+import time
 import traceback
 
 import pygame
@@ -29,6 +31,7 @@ from engine.config import (
     FULLSCREEN,
     HEIGHT,
     LIGHT_BLUE,
+    MAX_FRAME_DT,
     PERFORMANCE_LOG_INTERVAL,
     PERFORMANCE_LOG_TOP,
     PERFORMANCE_LOG_WARMUP_FRAMES,
@@ -39,6 +42,39 @@ from engine.config import (
 )
 from engine.core.performance import PerformanceLogger
 from engine.ui.text_renderer import TextRenderer
+
+
+def clamp_simulation_delta(elapsed_s: float, maximum_s: float) -> float:
+    """Return a finite, non-negative simulation step bounded by ``maximum_s``."""
+
+    maximum = float(maximum_s)
+    if not math.isfinite(maximum) or maximum <= 0.0:
+        raise ValueError("maximum frame delta must be positive and finite")
+
+    elapsed = float(elapsed_s)
+    if math.isnan(elapsed) or elapsed <= 0.0:
+        return 0.0
+    if math.isinf(elapsed):
+        return maximum
+    return min(elapsed, maximum)
+
+
+def tick_frame_clock(clock, frame_cap: int, *, precise: bool = False) -> float:
+    """Advance a pygame-style clock and return elapsed real time in seconds.
+
+    ``precise`` selects ``tick_busy_loop`` for the no-VSync/fallback path.  The
+    regular capped tick remains a low-overhead safety net when VSync was
+    accepted by the display API.
+    """
+
+    cap = max(0, int(frame_cap))
+    if precise and cap > 0:
+        elapsed_ms = clock.tick_busy_loop(cap)
+    elif cap > 0:
+        elapsed_ms = clock.tick(cap)
+    else:
+        elapsed_ms = clock.tick()
+    return max(0.0, float(elapsed_ms)) / 1000.0
 
 
 # ---------------------------------------------------------------------------
@@ -186,15 +222,22 @@ class Engine:
     # ------------------------------------------------------------------
     def run(self):  # pragma: no cover - visual
         running = True
+        previous_frame_s = time.perf_counter()
         while running:
-            # If VSYNC is disabled we don't want to artificially cap FPS here;
-            # calling tick() with no framerate argument returns elapsed ms
-            # without sleeping. If VSYNC is enabled, keep the configured FPS
-            # cap as a safety net for systems/drivers that don't honor vsync.
-            if not VSYNC:
-                dt = self.clock.tick() / 1000.0
-            else:
-                dt = self.clock.tick(FPS) / 1000.0
+            # The default path is genuinely uncapped.  A software cap is an
+            # explicit opt-in and remains independent from optional VSync.
+            # Pygame's Clock reports integer milliseconds, which visibly
+            # quantizes movement at high refresh rates, so it is used only for
+            # pacing/FPS statistics. Simulation time comes from perf_counter.
+            tick_frame_clock(
+                self.clock,
+                FPS,
+                precise=bool(FPS and not VSYNC),
+            )
+            frame_s = time.perf_counter()
+            raw_dt = frame_s - previous_frame_s
+            previous_frame_s = frame_s
+            dt = clamp_simulation_delta(raw_dt, MAX_FRAME_DT)
             self.profiler.begin_frame()
             with self.profiler.section("engine.events"):
                 running = self.handle_events(dt)

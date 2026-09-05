@@ -103,6 +103,19 @@ ROCK_LIGHTING_RECEIVER = LightingReceiver(
     clamp_lit_material=True,
 )
 
+GOBLIN_LIGHTING_RECEIVER = LightingReceiver(
+    receiver_id="world.actor.goblin",
+    directional=True,
+    local=True,
+    environment=True,
+    exposure=True,
+    fog=True,
+    shine=False,
+    point=False,
+    receives_sun_shadows=False,
+    clamp_lit_material=True,
+)
+
 CPU_BAKED_SLAB_LIGHTING_RECEIVER = LightingReceiver(
     receiver_id="world.slab.cpu_baked",
     directional=True,
@@ -206,6 +219,7 @@ PACKET_RUNTIME_LIGHTING_RECEIVERS = (
     TREE_LIGHTING_RECEIVER,
     GRASS_LIGHTING_RECEIVER,
     ROCK_LIGHTING_RECEIVER,
+    GOBLIN_LIGHTING_RECEIVER,
     TEXTURED_STATIC_WALL_LIGHTING_RECEIVER,
     DYNAMIC_SLAB_LIGHTING_RECEIVER,
     DYNAMIC_OBJECT_LIGHTING_RECEIVER,

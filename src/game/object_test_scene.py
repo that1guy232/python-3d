@@ -58,7 +58,7 @@ from engine.render_style_state import (
 )
 from engine.rendering.sprite import WorldSprite, draw_sprites_batched
 from engine.textures.texture_utils import get_texture_size
-from game.actors.goblin import Goblin
+from game.actors.goblin import Goblin, GoblinRenderBatch
 from game.resources.texture_manager import load_world_textures
 from game.world.objects import Chest, Door, GroundTile, Road, Torch, Window
 from game.world.objects.building import Building
@@ -154,6 +154,7 @@ class ObjectTestScene(Scene):
         self.polygons: list[Polygon] = []
         self.sprites: list[WorldSprite] = []
         self.goblin: Goblin | None = None
+        self.goblin_batch: GoblinRenderBatch | None = None
         self.door_batch = None
         self.window_batch = None
         self.polygon_batch = None
@@ -200,6 +201,7 @@ class ObjectTestScene(Scene):
             "wall_tex",
             "roof_tex",
             "building_material_tex",
+            "goblin_material_tex",
             "chest_tex",
             "door_tex",
             "window_tex",
@@ -219,14 +221,6 @@ class ObjectTestScene(Scene):
         if len(torch_frames) < 5:
             missing.append(f"torch_tex ({len(torch_frames)}/5 frames)")
 
-        goblin_sets = textures.get("goblin_tex") or {}
-        expected_goblin_frames = {"front": 7, "right": 7, "back": 8}
-        for direction, expected in expected_goblin_frames.items():
-            frame_count = len(tuple(goblin_sets.get(direction) or ()))
-            if frame_count < expected:
-                missing.append(
-                    f"goblin_tex.{direction} ({frame_count}/{expected} frames)"
-                )
         if missing:
             raise RuntimeError(
                 "Object test scene is missing required textures: "
@@ -450,7 +444,7 @@ class ObjectTestScene(Scene):
 
         self.goblin = Goblin(
             Vector3(280.0, 0.0, -505.0),
-            texture=self.textures["goblin_tex"],
+            material_texture=self.textures["goblin_material_tex"],
             camera=self.camera,
             ground_height_at=self.ground_height_at,
             position_blocked=None,
@@ -463,7 +457,12 @@ class ObjectTestScene(Scene):
             sound_keys=(),
         )
         self.goblin.combat_enabled = False
-        self.sprites.append(self.goblin.sprite)
+        self.goblin_batch = self._own(
+            GoblinRenderBatch(
+                (self.goblin,),
+                material_texture=self.textures["goblin_material_tex"],
+            )
+        )
 
         polygon_specs = (
             (-640.0, [(-34.0, -28.0), (34.0, -28.0), (0.0, 34.0)]),
@@ -719,9 +718,9 @@ class ObjectTestScene(Scene):
             "rock_variants": self._placed_variant_counts["rocks"],
             "fence_variants": self._placed_variant_counts["fences"],
             "torch_frames": len(Torch.animation_frames(self.textures["torch_tex"])),
-            "goblin_front_frames": len(self.textures["goblin_tex"]["front"]),
-            "goblin_right_frames": len(self.textures["goblin_tex"]["right"]),
-            "goblin_back_frames": len(self.textures["goblin_tex"]["back"]),
+            "goblin_model_vertices": (
+                self.goblin.model_vertex_count if self.goblin is not None else 0
+            ),
             "buildings": len(self.buildings),
             "wall_tiles": len(self.wall_tiles),
             "building_details": len(self.building_details),
@@ -761,7 +760,6 @@ class ObjectTestScene(Scene):
             torch.update(frame_dt)
         if self.goblin is not None:
             self.goblin.update(frame_dt)
-            self.goblin.sprite.update(frame_dt)
 
     def _update_walking(self, dt: float) -> None:
         keys = pygame.key.get_pressed()
@@ -935,6 +933,11 @@ class ObjectTestScene(Scene):
             )
         for chest in self.chests:
             chest.draw(camera=self.camera)
+        if self.goblin_batch is not None:
+            self.goblin_batch.draw(
+                camera=self.camera,
+                view_distance=self.VIEW_DISTANCE,
+            )
         draw_sprites_batched(
             self.sprites,
             self.camera,
@@ -1055,6 +1058,7 @@ class ObjectTestScene(Scene):
         self.ground_tile = None
         self.floor_mesh = None
         self.goblin = None
+        self.goblin_batch = None
         self.door_batch = None
         self.window_batch = None
         self.polygon_batch = None

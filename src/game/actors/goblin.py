@@ -1,10 +1,9 @@
-"""Roaming goblin entity backed by camera-aware directional billboards."""
+"""Roaming goblins rendered as a dynamic batch of generated low-poly models."""
 
 from __future__ import annotations
 
 import math
 import random
-from pathlib import Path
 from typing import Any, Callable, Iterable
 
 import numpy as np
@@ -13,51 +12,58 @@ from OpenGL.GL import (
     GL_ALPHA_TEST,
     GL_ARRAY_BUFFER,
     GL_BLEND,
+    GL_COLOR_ARRAY,
     GL_FLOAT,
+    GL_NORMAL_ARRAY,
     GL_ONE_MINUS_SRC_ALPHA,
     GL_POLYGON_OFFSET_FILL,
     GL_QUADS,
     GL_SRC_ALPHA,
     GL_TEXTURE_2D,
+    GL_TEXTURE0,
     GL_TEXTURE_COORD_ARRAY,
     GL_TEXTURE_ENV,
     GL_TEXTURE_ENV_MODE,
     GL_MODULATE,
     GL_VERTEX_ARRAY,
-    glBegin,
     glBindBuffer,
     glBindTexture,
     glBlendFunc,
+    glClientActiveTexture,
+    glColorPointer,
     glColor4f,
     glDepthMask,
     glDisable,
     glDisableClientState,
     glEnable,
     glEnableClientState,
-    glEnd,
     glDrawArrays,
+    glNormalPointer,
     glPolygonOffset,
-    glTexCoord2f,
     glTexEnvi,
     glTexCoordPointer,
     glVertexPointer,
-    glVertex3f,
 )
 
-from engine.rendering.sprite import AnimatedWorldSprite
+from engine.core.gl_state import use_fixed_pipeline
+from engine.core.mesh import BatchedMesh
 from engine.sound.sound_utils import Sounds
 from game.actors.creature import Creature
-from game.inventory import InventoryItem, goblin_equipment_set
-from game.resources.paths import (
-    GOBLIN_BACK_TEXTURE_DIR_PATH,
-    GOBLIN_FRONT_TEXTURE_DIR_PATH,
-    GOBLIN_RIGHT_TEXTURE_DIR_PATH,
+from game.actors.goblin_model import (
+    GOBLIN_MODEL_POSE_COUNT,
+    GOBLIN_MODEL_VARIANT_COUNT,
+    cached_goblin_local_pose_vertex_data,
+    goblin_model_pose_index,
+    prewarm_goblin_pose_cache,
+    transformed_cached_goblin_vertex_data,
 )
-from engine.textures.texture_utils import get_texture_size, load_texture_atlas
+from game.inventory import InventoryItem, goblin_equipment_set
+from game.world.lighting_receivers import GOBLIN_LIGHTING_RECEIVER
 
-GOBLIN_SPRITE_HEIGHT = 42.0
-GOBLIN_ANIMATION_FPS = 8.0
-GOBLIN_ANIMATION_FRAME_DURATION = 1.0 / GOBLIN_ANIMATION_FPS
+GOBLIN_MODEL_HEIGHT = 42.0
+# Source-compatible name for callers that used the old billboard height knob.
+GOBLIN_SPRITE_HEIGHT = GOBLIN_MODEL_HEIGHT
+GOBLIN_WALK_CYCLE_DISTANCE = 30.0
 GOBLIN_ROAM_RADIUS = 145.0
 GOBLIN_MOVE_SPEED = 32.0
 GOBLIN_COLLISION_RADIUS = 18.0
@@ -68,9 +74,8 @@ GOBLIN_MAX_HP = 5
 GOBLIN_TARGET_REACHED_DISTANCE = 7.0
 GOBLIN_MIN_IDLE_SECONDS = 0.35
 GOBLIN_MAX_IDLE_SECONDS = 1.45
-GOBLIN_VIEW_FRONT_DOT = 0.55
 GOBLIN_LOGIC_UPDATE_INTERVAL = 1.0 / 30.0
-GOBLIN_DIRECTION_UPDATE_INTERVAL = 1.0 / 20.0
+GOBLIN_DISTANT_LOGIC_UPDATE_INTERVAL = 1.0 / 15.0
 GOBLIN_SHADOW_SIZE = (30.0, 22.0)
 GOBLIN_SHADOW_ELEVATION = 0.35
 GOBLIN_PATH_SAMPLE_SPACING = 12.0
@@ -94,8 +99,6 @@ GOBLIN_STEP_INDOOR_MULTIPLIER = 0.16
 
 PositionBlockedFn = Callable[[float, float, float], bool]
 PlayerInBuildingFn = Callable[[], bool]
-AnimationFrames = tuple[Any, ...]
-AnimationSets = dict[str, AnimationFrames]
 
 
 def _shadow_batch_scratch(owner, shadow_count: int) -> dict:
@@ -115,77 +118,56 @@ def _shadow_batch_scratch(owner, shadow_count: int) -> dict:
     return scratch
 
 
-def _frame_sort_key(path: Path) -> tuple[int, int | str]:
-    stem = path.stem
-    if stem.isdigit():
-        return (0, int(stem))
-    return (1, stem.lower())
-
-
-def _frame_paths(directory: str) -> list[str]:
-    frame_dir = Path(directory)
-    if not frame_dir.is_dir():
-        return []
-    return [str(path) for path in sorted(frame_dir.glob("*.png"), key=_frame_sort_key)]
-
-
-def _load_frames(directory: str) -> AnimationFrames:
-    paths = _frame_paths(directory)
-    return tuple(load_texture_atlas(paths)) if paths else ()
-
-
 class Goblin(Creature):
-    """A simple wandering forest creature with camera-aware directional art."""
+    """A wandering forest creature with generated, poseable 3D geometry."""
 
     DEFAULT_HEIGHT = GOBLIN_SPRITE_HEIGHT
     DEFAULT_ROAM_RADIUS = GOBLIN_ROAM_RADIUS
     DEFAULT_MOVE_SPEED = GOBLIN_MOVE_SPEED
     DEFAULT_MAX_HP = GOBLIN_MAX_HP
+    packet_lighting_receiver = GOBLIN_LIGHTING_RECEIVER
+    render_batched = True
+    casts_shadows = False
 
     def __init__(
         self,
         position: Vector3,
         *,
-        texture: Any,
+        material_texture: Any | None = None,
+        texture: Any | None = None,
         camera: object,
         ground_height_at: Callable[[float, float], float],
         position_blocked: PositionBlockedFn | None = None,
         player_in_building: PlayerInBuildingFn | None = None,
-        sprite_height: float = GOBLIN_SPRITE_HEIGHT,
+        model_height: float = GOBLIN_MODEL_HEIGHT,
+        sprite_height: float | None = None,
         roam_radius: float = GOBLIN_ROAM_RADIUS,
         move_speed: float = GOBLIN_MOVE_SPEED,
         collision_radius: float = GOBLIN_COLLISION_RADIUS,
         chase_radius: float = GOBLIN_CHASE_RADIUS,
         chase_give_up_radius: float = GOBLIN_CHASE_GIVE_UP_RADIUS,
         chase_stop_distance: float = GOBLIN_CHASE_STOP_DISTANCE,
-        frame_duration: float = GOBLIN_ANIMATION_FRAME_DURATION,
+        frame_duration: float | None = None,
         shadow_texture: int | None = None,
         shadow_size: tuple[float, float] = GOBLIN_SHADOW_SIZE,
         sound_keys: Iterable[str] | None = None,
         max_hp: int = GOBLIN_MAX_HP,
         rng: random.Random | None = None,
     ) -> None:
-        animations = self.animation_sets(texture)
-        front_frames = animations.get("front", ())
-        if not front_frames:
-            raise ValueError("Goblin requires at least one texture frame")
-
         self.camera = camera
         self.ground_height_at = ground_height_at
         self.position_blocked = position_blocked
         self.player_in_building = player_in_building
         self.rng = rng or random.Random()
+        self.material_texture = (
+            material_texture if material_texture is not None else texture
+        )
         keys = GOBLIN_SOUND_KEYS if sound_keys is None else tuple(sound_keys)
         self.sound_keys = tuple(str(key) for key in keys if key)
         self._sound_channel = None
         self._sound_key: str | None = None
         self._sound_timer = self._next_sound_delay(initial=True)
         self._step_sound_timer = self.rng.uniform(0.0, GOBLIN_STEP_INTERVAL)
-        self._animations: AnimationSets = {
-            "front": front_frames,
-            "right": animations.get("right", ()) or front_frames,
-            "back": animations.get("back", ()) or front_frames,
-        }
         self.spawn_position = Vector3(float(position.x), 0.0, float(position.z))
         self.roam_radius = max(1.0, float(roam_radius))
         self.move_speed = max(0.0, float(move_speed))
@@ -196,21 +178,23 @@ class Goblin(Creature):
             float(chase_give_up_radius),
         )
         self.chase_stop_distance = max(0.0, float(chase_stop_distance))
-        self._sprite_height = max(1.0, float(sprite_height))
+        height_value = model_height if sprite_height is None else sprite_height
+        self._model_height = max(1.0, float(height_value))
         self._target: Vector3 | None = None
         self._chasing_player = False
         self._idle_timer = self.rng.uniform(0.0, GOBLIN_MAX_IDLE_SECONDS)
         self._facing_xz = Vector3(0.0, 0.0, 1.0)
         self._avoidance_turn = -1.0 if self.rng.random() < 0.5 else 1.0
-        self._current_animation = ""
-        self._current_flip_x = False
+        self._model_seed = self.rng.randrange(1 << 30)
+        self._model_variant = self._model_seed % GOBLIN_MODEL_VARIANT_COUNT
+        self._walk_phase = self.rng.uniform(0.0, math.tau)
+        self._is_moving = False
+        self._model_revision = 0
+        self._model_vertex_cache_revision = -1
+        self._model_vertex_cache: np.ndarray | None = None
         self._logic_update_elapsed = self.rng.uniform(
             0.0,
             GOBLIN_LOGIC_UPDATE_INTERVAL,
-        )
-        self._direction_update_elapsed = self.rng.uniform(
-            0.0,
-            GOBLIN_DIRECTION_UPDATE_INTERVAL,
         )
         self.shadow_texture = int(shadow_texture or 0)
         self.shadow_size = (
@@ -219,7 +203,7 @@ class Goblin(Creature):
         )
         self.shadow_render_batched = bool(self.shadow_texture)
 
-        height = self._sprite_height
+        height = self._model_height
         y = float(ground_height_at(self.spawn_position.x, self.spawn_position.z))
         self._ground_y = y
         super().__init__(
@@ -233,67 +217,64 @@ class Goblin(Creature):
             attack_damage=1,
         )
 
-        self.sprite = AnimatedWorldSprite(
-            position=self.position,
-            size=self.sprite_size_for_texture(front_frames[0], sprite_height=height),
-            texture=front_frames[0],
-            camera=camera,
-            frames=front_frames,
-            frame_duration=frame_duration,
-            frame_index=self.rng.randrange(len(front_frames)),
-        )
-        self._set_directional_animation("front")
-
-    @classmethod
-    def animation_frames(cls, texture: Any | None = None) -> tuple[Any, ...]:
-        if isinstance(texture, (list, tuple)):
-            return tuple(frame for frame in texture if frame)
-        return (texture,) if texture else ()
-
-    @classmethod
-    def animation_sets(cls, texture: Any | None = None) -> AnimationSets:
-        animations: AnimationSets = {}
-        if isinstance(texture, dict):
-            animations = {
-                "front": cls.animation_frames(texture.get("front")),
-                "right": cls.animation_frames(texture.get("right")),
-                "back": cls.animation_frames(texture.get("back")),
-            }
-        else:
-            animations["front"] = cls.animation_frames(texture)
-
-        if not animations.get("front"):
-            animations["front"] = _load_frames(GOBLIN_FRONT_TEXTURE_DIR_PATH)
-        if not animations.get("right"):
-            animations["right"] = _load_frames(GOBLIN_RIGHT_TEXTURE_DIR_PATH)
-        if not animations.get("back"):
-            animations["back"] = _load_frames(GOBLIN_BACK_TEXTURE_DIR_PATH)
-        return animations
-
-    @classmethod
-    def texture_or_load(cls, texture: Any | None = None) -> AnimationSets:
-        return cls.animation_sets(texture)
-
-    @staticmethod
-    def sprite_size_for_texture(
-        texture: Any,
-        *,
-        sprite_height: float = GOBLIN_SPRITE_HEIGHT,
-    ) -> tuple[float, float]:
-        tex_size = get_texture_size(texture)
-        aspect = (tex_size[0] / tex_size[1]) if tex_size and tex_size[1] else 1.0
-        height = max(1.0, float(sprite_height))
-        return (height * aspect, height)
-
     def get_sprites(self) -> Iterable[object]:
-        return (self.sprite,)
+        return ()
 
-    def draw(self, camera=None) -> None:  # pragma: no cover - visual
-        self._draw_shadow()
+    @property
+    def model_revision(self) -> int:
+        return self._model_revision
+
+    def model_vertex_data(self) -> np.ndarray:
+        """Return this actor's cached generated pose in world coordinates."""
+
+        if (
+            self._model_vertex_cache is None
+            or self._model_vertex_cache_revision != self._model_revision
+        ):
+            self._model_vertex_cache = transformed_cached_goblin_vertex_data(
+                (float(self.position.x), self._ground_y, float(self.position.z)),
+                facing=(float(self._facing_xz.x), float(self._facing_xz.z)),
+                height=self._model_height,
+                walk_phase=self._walk_phase,
+                moving=self._is_moving,
+                variant=self._model_variant,
+            )
+            self._model_vertex_cache_revision = self._model_revision
+        return self._model_vertex_cache
+
+    @property
+    def model_vertex_count(self) -> int:
+        return int(self.model_vertex_data().shape[0])
+
+    def get_bounding_sphere(self) -> tuple[tuple[float, float, float], float]:
+        half_height = self._model_height * 0.5
+        half_width = self._model_height * 0.34
+        return (
+            (
+                float(self.position.x),
+                float(self.position.y),
+                float(self.position.z),
+            ),
+            math.hypot(half_height, half_width),
+        )
+
+    def _mark_model_dirty(self) -> None:
+        self._model_revision += 1
+
+    def _set_model_moving(self, moving: bool) -> None:
+        moving_value = bool(moving)
+        if self._is_moving == moving_value:
+            return
+        self._is_moving = moving_value
+        self._mark_model_dirty()
+
+    def draw(self, camera=None, **_kwargs) -> None:  # pragma: no cover - visual
+        """The scene-owned :class:`GoblinRenderBatch` draws all goblin bodies."""
 
     def kill(self) -> None:
         self.enabled = False
         self.visible = False
+        self._mark_model_dirty()
         channel = self._sound_channel
         if channel is not None:
             try:
@@ -302,6 +283,9 @@ class Goblin(Creature):
                 pass
         self._sound_channel = None
         self._sound_key = None
+
+    def dispose(self) -> None:
+        self.kill()
 
     def combat_rewards(self, scene) -> tuple[InventoryItem, ...]:
         equipment = goblin_equipment_set()
@@ -314,30 +298,24 @@ class Goblin(Creature):
 
         self._update_sound(dt)
 
-        self._direction_update_elapsed += dt
-        direction_due = (
-            self._direction_update_elapsed >= GOBLIN_DIRECTION_UPDATE_INTERVAL
-        )
-        if direction_due:
-            self._direction_update_elapsed %= GOBLIN_DIRECTION_UPDATE_INTERVAL
-
+        logic_interval = self._logic_update_interval()
         self._logic_update_elapsed += dt
-        if self._logic_update_elapsed < GOBLIN_LOGIC_UPDATE_INTERVAL:
-            if direction_due:
-                self._update_directional_animation()
+        if self._logic_update_elapsed < logic_interval:
             return
 
-        logic_dt = min(self._logic_update_elapsed, GOBLIN_LOGIC_UPDATE_INTERVAL * 2.0)
-        self._logic_update_elapsed %= GOBLIN_LOGIC_UPDATE_INTERVAL
+        logic_dt = min(self._logic_update_elapsed, logic_interval * 2.0)
+        self._logic_update_elapsed %= logic_interval
+        moving = False
         try:
             chase_target = self._current_chase_target()
             if chase_target is not None:
-                self._move_towards(
+                move_result = self._move_towards(
                     chase_target,
                     logic_dt,
                     clamp_to_roam=False,
                     stop_distance=self.chase_stop_distance,
                 )
+                moving = move_result == "moved"
                 return
 
             returning_to_spawn = self._outside_roam_radius()
@@ -360,11 +338,23 @@ class Goblin(Creature):
                 clamp_to_roam=not returning_to_spawn,
                 stop_distance=GOBLIN_TARGET_REACHED_DISTANCE,
             )
+            moving = move_result == "moved"
             if move_result in {"reached", "blocked"}:
                 self._pause_before_next_roam()
         finally:
-            if direction_due:
-                self._update_directional_animation()
+            self._set_model_moving(moving)
+
+    def _logic_update_interval(self) -> float:
+        """Keep nearby combat responsive while reducing distant roaming work."""
+
+        camera_position = getattr(self.camera, "position", None)
+        if camera_position is None:
+            return GOBLIN_LOGIC_UPDATE_INTERVAL
+        dx = float(camera_position.x) - float(self.position.x)
+        dz = float(camera_position.z) - float(self.position.z)
+        if dx * dx + dz * dz <= self.chase_give_up_radius**2:
+            return GOBLIN_LOGIC_UPDATE_INTERVAL
+        return GOBLIN_DISTANT_LOGIC_UPDATE_INTERVAL
 
     def _next_sound_delay(self, *, initial: bool = False) -> float:
         minimum = max(0.1, float(GOBLIN_SOUND_MIN_INTERVAL))
@@ -723,115 +713,382 @@ class Goblin(Creature):
         )
 
     def _set_xz(self, x: float, z: float) -> None:
+        old_x = float(self.position.x)
+        old_z = float(self.position.z)
         self.position.x = float(x)
         self.position.z = float(z)
         self._ground_y = float(self.ground_height_at(self.position.x, self.position.z))
-        self.position.y = self._ground_y + self._sprite_height * 0.5
-        self.sprite.position = self.position
+        self.position.y = self._ground_y + self._model_height * 0.5
+        distance = math.hypot(self.position.x - old_x, self.position.z - old_z)
+        if distance > 1e-8:
+            self._walk_phase = (
+                self._walk_phase
+                + math.tau * distance / max(1.0, GOBLIN_WALK_CYCLE_DISTANCE)
+            ) % math.tau
+            self._mark_model_dirty()
 
     def _set_facing(self, dx: float, dz: float) -> None:
         length_sq = dx * dx + dz * dz
         if length_sq <= 1e-8:
             return
         length = math.sqrt(length_sq)
-        self._facing_xz = Vector3(dx / length, 0.0, dz / length)
+        next_facing = Vector3(dx / length, 0.0, dz / length)
+        if self._facing_xz.dot(next_facing) >= 0.99995:
+            return
+        self._facing_xz = next_facing
+        self._mark_model_dirty()
 
-    def _direction_for_camera(self) -> tuple[str, bool]:
-        camera_position = getattr(self.camera, "position", None)
-        if camera_position is None:
-            return "front", False
 
-        view_x = float(camera_position.x) - self.position.x
-        view_z = float(camera_position.z) - self.position.z
-        view_len_sq = view_x * view_x + view_z * view_z
-        if view_len_sq <= 1e-8:
-            return "front", False
+class GoblinRenderBatch:
+    """Render generated goblins from a static local-space pose atlas."""
 
-        facing = self._facing_xz
-        front_dot = facing.x * view_x + facing.z * view_z
-        front_threshold_sq = GOBLIN_VIEW_FRONT_DOT * GOBLIN_VIEW_FRONT_DOT * view_len_sq
-        if front_dot >= 0.0 and front_dot * front_dot >= front_threshold_sq:
-            return "front", False
-        if front_dot <= 0.0 and front_dot * front_dot >= front_threshold_sq:
-            return "back", False
+    packet_lighting_receiver = GOBLIN_LIGHTING_RECEIVER
+    casts_shadows = False
+    visible = True
 
-        right_x = facing.z
-        right_z = -facing.x
-        right_dot = right_x * view_x + right_z * view_z
-        return "right", right_dot > 0.0
-
-    def _set_directional_animation(
-        self, animation: str, *, flip_x: bool = False
+    def __init__(
+        self,
+        goblins: Iterable[Goblin],
+        *,
+        material_texture: Any | None = None,
+        exposure_baseline: float = 1.0,
     ) -> None:
-        frames = self._animations.get(animation, ())
-        if not frames:
-            frames = self._animations["front"]
-            animation = "front"
-            flip_x = False
-
-        visual_name = "left" if animation == "right" and flip_x else animation
-        if self._current_animation == visual_name and self._current_flip_x == bool(
-            flip_x
-        ):
-            return
-
-        self.sprite.frames = frames
-        self.sprite.flip_x = bool(flip_x)
-        self.sprite.frame_index %= len(frames)
-        self.sprite._apply_frame(self.sprite.frame_index)
-        self.sprite.size = self.sprite_size_for_texture(
-            frames[0],
-            sprite_height=self._sprite_height,
+        self.goblins = tuple(goblin for goblin in goblins if goblin is not None)
+        texture = (
+            material_texture
+            if material_texture is not None
+            else next(
+                (
+                    goblin.material_texture
+                    for goblin in self.goblins
+                    if goblin.material_texture is not None
+                ),
+                None,
+            )
         )
-        self._current_animation = visual_name
-        self._current_flip_x = bool(flip_x)
+        self.material_texture = (
+            int(getattr(texture, "texture", texture)) if texture is not None else None
+        )
+        self.exposure_baseline = float(exposure_baseline)
+        if not math.isfinite(self.exposure_baseline):
+            raise ValueError("goblin exposure_baseline must be finite")
+        variants_by_height: dict[float, set[int]] = {}
+        for goblin in self.goblins:
+            variants_by_height.setdefault(goblin._model_height, set()).add(
+                goblin._model_variant
+            )
+        for height, variants in variants_by_height.items():
+            prewarm_goblin_pose_cache(tuple(variants), height=height)
+        self._pose_ranges: dict[tuple[float, int, bool, int], tuple[int, int]] = {}
+        self._pose_mesh = self._build_pose_atlas(variants_by_height)
+        self._mesh: BatchedMesh | None = None
+        self._cache_key: tuple | None = None
+        self.visible_count = 0
+        self.visible_vertex_count = 0
 
-    def _update_directional_animation(self) -> None:
-        animation, flip_x = self._direction_for_camera()
-        self._set_directional_animation(animation, flip_x=flip_x)
+    def _build_pose_atlas(
+        self,
+        variants_by_height: dict[float, set[int]],
+    ) -> BatchedMesh | None:
+        if self.material_texture is None:
+            return None
 
-    def _draw_shadow(self) -> None:
-        if not self.shadow_texture:
+        parts: list[np.ndarray] = []
+        first_vertex = 0
+        for height in sorted(variants_by_height):
+            for variant in sorted(variants_by_height[height]):
+                pose_states = [(False, 0), *(
+                    (True, pose_index)
+                    for pose_index in range(GOBLIN_MODEL_POSE_COUNT)
+                )]
+                for moving, pose_index in pose_states:
+                    phase = math.tau * pose_index / GOBLIN_MODEL_POSE_COUNT
+                    vertex_data = cached_goblin_local_pose_vertex_data(
+                        height=height,
+                        walk_phase=phase,
+                        moving=moving,
+                        variant=variant,
+                    )
+                    count = int(vertex_data.shape[0])
+                    self._pose_ranges[(height, variant, moving, pose_index)] = (
+                        first_vertex,
+                        count,
+                    )
+                    parts.append(vertex_data)
+                    first_vertex += count
+
+        if not parts:
+            return None
+        vertex_data = np.ascontiguousarray(
+            parts[0] if len(parts) == 1 else np.concatenate(parts, axis=0),
+            dtype=np.float32,
+        )
+        return BatchedMesh.from_vertex_data(
+            vertex_data,
+            texture=self.material_texture,
+            alpha_test=False,
+            casts_shadows=False,
+            casts_sun_shadows=False,
+            casts_point_shadows=False,
+            exposure_baseline=self.exposure_baseline,
+            keep_vertex_data=False,
+            environment_lighting=True,
+            shine_enabled=False,
+            shader_lighting=True,
+            lighting_receiver=GOBLIN_LIGHTING_RECEIVER,
+        )
+
+    @staticmethod
+    def _pose_key(goblin: Goblin) -> tuple[float, int, bool, int]:
+        moving = bool(goblin._is_moving)
+        pose_index = goblin_model_pose_index(
+            goblin._walk_phase,
+            moving=moving,
+        )
+        return (
+            goblin._model_height,
+            goblin._model_variant,
+            moving,
+            pose_index,
+        )
+
+    @staticmethod
+    def _model_matrix(goblin: Goblin) -> tuple[float, ...]:
+        forward_x = float(goblin._facing_xz.x)
+        forward_z = float(goblin._facing_xz.z)
+        origin_x = float(goblin.position.x)
+        origin_y = float(goblin._ground_y)
+        origin_z = float(goblin.position.z)
+        return (
+            forward_z,
+            0.0,
+            forward_x,
+            origin_x,
+            0.0,
+            1.0,
+            0.0,
+            origin_y,
+            -forward_x,
+            0.0,
+            forward_z,
+            origin_z,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+        )
+
+    def _visible_goblins(
+        self,
+        camera=None,
+        view_distance: float | None = None,
+    ) -> tuple[Goblin, ...]:
+        active = tuple(
+            goblin
+            for goblin in self.goblins
+            if getattr(goblin, "enabled", True)
+            and getattr(goblin, "visible", True)
+        )
+        if camera is None:
+            return active
+
+        frustum_test = getattr(camera, "sphere_in_frustum", None)
+        if callable(frustum_test):
+            visible = []
+            for goblin in active:
+                center, radius = goblin.get_bounding_sphere()
+                if frustum_test(center, radius, far_distance=view_distance):
+                    visible.append(goblin)
+            return tuple(visible)
+
+        camera_position = getattr(camera, "position", None)
+        if camera_position is None or view_distance is None:
+            return active
+        visible = []
+        for goblin in active:
+            center, radius = goblin.get_bounding_sphere()
+            dx = center[0] - float(camera_position.x)
+            dy = center[1] - float(camera_position.y)
+            dz = center[2] - float(camera_position.z)
+            maximum = float(view_distance) + float(radius)
+            if dx * dx + dy * dy + dz * dz <= maximum * maximum:
+                visible.append(goblin)
+        return tuple(visible)
+
+    @staticmethod
+    def _current_cache_key(goblins: Iterable[Goblin]) -> tuple:
+        return tuple(
+            (
+                id(goblin),
+                bool(getattr(goblin, "enabled", True)),
+                bool(getattr(goblin, "visible", True)),
+                int(goblin.model_revision),
+            )
+            for goblin in goblins
+        )
+
+    def _combined_vertex_data(
+        self,
+        goblins: Iterable[Goblin] | None = None,
+    ) -> np.ndarray:
+        source = self.goblins if goblins is None else tuple(goblins)
+        parts = [
+            goblin.model_vertex_data()
+            for goblin in source
+            if getattr(goblin, "enabled", True)
+            and getattr(goblin, "visible", True)
+        ]
+        parts = [part for part in parts if part.size]
+        if not parts:
+            return np.empty((0, 11), dtype=np.float32)
+        return np.ascontiguousarray(
+            parts[0] if len(parts) == 1 else np.concatenate(parts, axis=0),
+            dtype=np.float32,
+        )
+
+    def _ensure_mesh(
+        self,
+        camera=None,
+        view_distance: float | None = None,
+    ) -> BatchedMesh | None:
+        visible_goblins = self._visible_goblins(camera, view_distance)
+        cache_key = self._current_cache_key(visible_goblins)
+        if self._mesh is not None and cache_key == self._cache_key:
+            return self._mesh
+
+        vertex_data = self._combined_vertex_data(visible_goblins)
+        if self._mesh is None:
+            if not vertex_data.size:
+                self._cache_key = cache_key
+                return None
+            self._mesh = BatchedMesh.from_vertex_data(
+                vertex_data,
+                texture=self.material_texture,
+                alpha_test=False,
+                casts_shadows=False,
+                casts_sun_shadows=False,
+                casts_point_shadows=False,
+                exposure_baseline=self.exposure_baseline,
+                keep_vertex_data=False,
+                environment_lighting=True,
+                shine_enabled=False,
+                shader_lighting=True,
+                lighting_receiver=GOBLIN_LIGHTING_RECEIVER,
+            )
+        elif vertex_data.size:
+            self._mesh.update_vertex_data(vertex_data, keep_vertex_data=False)
+        else:
+            self._mesh.vertex_count = 0
+            self._mesh.bounds_center = None
+            self._mesh.bounds_radius = 0.0
+        self._cache_key = cache_key
+        return self._mesh
+
+    def _draw_packet_instances(
+        self,
+        visible_goblins: tuple[Goblin, ...],
+        *,
+        lighting_packet,
+        packet_shader,
+    ) -> None:
+        mesh = self._pose_mesh
+        if mesh is None or not visible_goblins:
             return
 
-        x = float(self.position.x)
-        z = float(self.position.z)
-        y = float(getattr(self, "_ground_y", self.position.y)) + GOBLIN_SHADOW_ELEVATION
-        width, depth = self.shadow_size
-        half_w = width * 0.5
-        half_d = depth * 0.5
-
-        glDepthMask(False)
-        glEnable(GL_BLEND)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        packet_shader.bind(lighting_packet, directional_normal_stream=False)
+        glBindBuffer(GL_ARRAY_BUFFER, mesh.vbo_vertices)
+        glEnableClientState(GL_VERTEX_ARRAY)
+        glVertexPointer(3, GL_FLOAT, mesh._vertex_stride, None)
+        glEnableClientState(GL_COLOR_ARRAY)
+        glColorPointer(3, GL_FLOAT, mesh._vertex_stride, mesh._color_offset_ptr)
+        glEnableClientState(GL_NORMAL_ARRAY)
+        glNormalPointer(GL_FLOAT, mesh._vertex_stride, mesh._normal_offset_ptr)
+        glClientActiveTexture(GL_TEXTURE0)
+        glEnableClientState(GL_TEXTURE_COORD_ARRAY)
+        glTexCoordPointer(2, GL_FLOAT, mesh._vertex_stride, mesh._uv_offset_ptr)
         glEnable(GL_TEXTURE_2D)
-        glDisable(GL_ALPHA_TEST)
+        glDisable(GL_BLEND)
         glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE)
-        glBindTexture(GL_TEXTURE_2D, self.shadow_texture)
-        glEnable(GL_POLYGON_OFFSET_FILL)
-        glPolygonOffset(-1.0, -1.0)
-        glColor4f(1.0, 1.0, 1.0, 1.0)
+        glBindTexture(GL_TEXTURE_2D, int(mesh.texture or 0))
 
-        begun = False
         try:
-            glBegin(GL_QUADS)
-            begun = True
-            glTexCoord2f(0.0, 0.0)
-            glVertex3f(x - half_w, y, z - half_d)
-            glTexCoord2f(1.0, 0.0)
-            glVertex3f(x + half_w, y, z - half_d)
-            glTexCoord2f(1.0, 1.0)
-            glVertex3f(x + half_w, y, z + half_d)
-            glTexCoord2f(0.0, 1.0)
-            glVertex3f(x - half_w, y, z + half_d)
+            for goblin in visible_goblins:
+                first_vertex, vertex_count = self._pose_ranges[self._pose_key(goblin)]
+                packet_shader.set_model_matrix(self._model_matrix(goblin))
+                glDrawArrays(mesh.draw_mode, first_vertex, vertex_count)
         finally:
-            if begun:
-                glEnd()
-            glColor4f(1.0, 1.0, 1.0, 1.0)
-            glDisable(GL_POLYGON_OFFSET_FILL)
+            packet_shader.reset_model_matrix()
+            use_fixed_pipeline()
             glDisable(GL_TEXTURE_2D)
-            glDisable(GL_BLEND)
-            glDepthMask(True)
+            glDisableClientState(GL_TEXTURE_COORD_ARRAY)
+            glDisableClientState(GL_NORMAL_ARRAY)
+            glDisableClientState(GL_COLOR_ARRAY)
+            glDisableClientState(GL_VERTEX_ARRAY)
+            glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+    @property
+    def vertex_count(self) -> int:
+        total = 0
+        for goblin in self.goblins:
+            if not getattr(goblin, "enabled", True) or not getattr(
+                goblin,
+                "visible",
+                True,
+            ):
+                continue
+            span = self._pose_ranges.get(self._pose_key(goblin))
+            total += span[1] if span is not None else goblin.model_vertex_count
+        return int(total)
+
+    def shadow_meshes(self, camera=None) -> tuple:
+        return ()
+
+    def draw(
+        self,
+        camera=None,
+        *,
+        view_distance: float | None = None,
+        lighting_packet=None,
+        packet_shader=None,
+    ) -> None:  # pragma: no cover - visual
+        visible_goblins = self._visible_goblins(camera, view_distance)
+        self.visible_count = len(visible_goblins)
+        self.visible_vertex_count = sum(
+            self._pose_ranges[self._pose_key(goblin)][1]
+            for goblin in visible_goblins
+            if self._pose_key(goblin) in self._pose_ranges
+        )
+        if (
+            self._pose_mesh is not None
+            and packet_shader is not None
+            and lighting_packet is not None
+        ):
+            self._draw_packet_instances(
+                visible_goblins,
+                lighting_packet=lighting_packet,
+                packet_shader=packet_shader,
+            )
+            return
+
+        mesh = self._ensure_mesh(camera, view_distance)
+        if mesh is None:
+            return
+        mesh.draw(
+            camera=camera,
+            view_distance=view_distance,
+            lighting_packet=lighting_packet,
+            packet_shader=packet_shader,
+        )
+
+    def dispose(self) -> None:
+        if self._pose_mesh is not None:
+            self._pose_mesh.dispose()
+        self._pose_mesh = None
+        self._pose_ranges.clear()
+        if self._mesh is not None:
+            self._mesh.dispose()
+        self._mesh = None
+        self._cache_key = None
 
 
 def draw_goblin_shadows_batched(

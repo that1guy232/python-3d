@@ -65,6 +65,7 @@ class WorldScene(Scene):
     tree_meshes = state_alias("render_resources", "tree_meshes")
     grass_meshes = state_alias("render_resources", "grass_meshes")
     rock_meshes = state_alias("render_resources", "rock_meshes")
+    goblin_batch = state_alias("render_resources", "goblin_batch")
     ground_mesh = state_alias("render_resources", "ground_mesh")
     island_boundary = state_alias("render_resources", "island_boundary")
     sky = state_alias("render_resources", "sky")
@@ -89,7 +90,7 @@ class WorldScene(Scene):
     torch_tex = state_alias("render_resources", "torch_tex")
     door_tex = state_alias("render_resources", "door_tex")
     window_tex = state_alias("render_resources", "window_tex")
-    goblin_tex = state_alias("render_resources", "goblin_tex")
+    goblin_material_tex = state_alias("render_resources", "goblin_material_tex")
 
     building_specs = state_alias("build_state", "building_specs")
     environment_volumes = state_alias("build_state", "environment_volumes")

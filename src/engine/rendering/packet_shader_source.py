@@ -3,6 +3,8 @@
 PACKET_LIGHTING_VERTEX_SOURCE = r"""#version 120
 
 uniform vec3 u_light_dir;
+uniform mat4 u_model_matrix;
+uniform int u_model_transform_enabled;
 uniform mat4 u_sun_shadow_matrix;
 uniform int u_directional_normal_stream;
 uniform float u_local_reference;
@@ -67,26 +69,36 @@ float point_query_brightness_at_vertex(vec3 world_pos)
 
 void main()
 {
-    gl_Position = gl_ModelViewProjectionMatrix * gl_Vertex;
+    vec4 world_vertex = gl_Vertex;
+    vec3 world_normal = gl_Normal;
+    vec3 directional_normal = gl_MultiTexCoord1.xyz;
+    if (u_model_transform_enabled != 0) {
+        world_vertex = u_model_matrix * gl_Vertex;
+        world_normal = normalize(mat3(u_model_matrix) * gl_Normal);
+        directional_normal = normalize(
+            mat3(u_model_matrix) * gl_MultiTexCoord1.xyz
+        );
+    }
+    gl_Position = gl_ModelViewProjectionMatrix * world_vertex;
     v_color = gl_Color;
     v_uv = gl_MultiTexCoord0.xy;
     v_emissive = clamp(gl_MultiTexCoord0.z, 0.0, 1.0);
-    v_normal = gl_Normal;
+    v_normal = world_normal;
     v_directional_normal = u_directional_normal_stream != 0
-        ? gl_MultiTexCoord1.xyz
-        : gl_Normal;
+        ? directional_normal
+        : world_normal;
     vec3 light_dir = u_light_dir;
     if (length(light_dir) <= 0.00001) {
         light_dir = vec3(0.0, 1.0, 0.0);
     }
-    v_eye_normal = gl_NormalMatrix * gl_Normal;
+    v_eye_normal = gl_NormalMatrix * world_normal;
     v_eye_light_dir = gl_NormalMatrix * normalize(light_dir);
-    v_world_pos = gl_Vertex.xyz;
-    v_sun_shadow_coord = u_sun_shadow_matrix * gl_Vertex;
+    v_world_pos = world_vertex.xyz;
+    v_sun_shadow_coord = u_sun_shadow_matrix * world_vertex;
     v_point_query_brightness = u_local_point_query_policy == 0
         ? 1.0
-        : point_query_brightness_at_vertex(gl_Vertex.xyz);
-    vec4 eye_pos = gl_ModelViewMatrix * gl_Vertex;
+        : point_query_brightness_at_vertex(world_vertex.xyz);
+    vec4 eye_pos = gl_ModelViewMatrix * world_vertex;
     v_eye_pos = eye_pos.xyz;
     v_fog_distance = length(eye_pos.xyz);
 }

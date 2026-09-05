@@ -2,7 +2,7 @@
 
 A first-person 3D world built with Pygame Community Edition, PyOpenGL, and
 NumPy. The game includes procedural terrain and world dressing, generated 3D
-trees, grass, and rocks, buildings and interiors, interactive doors and chests, creature
+trees, grass, rocks, and goblins, buildings and interiors, interactive doors and chests, creature
 encounters (currently goblins), inventory and battle UI, and packet-based
 lighting with directional and point-light shadows. The terrain is
 presented as an island with a procedural sand shoreline and animated stylized
@@ -40,7 +40,8 @@ the project's direct third-party dependencies.
 The main menu can be started with the mouse, Enter, keypad Enter, or Space.
 Choose **Object Test Scene** (or press `T` on the main menu) to enter a
 standalone, walkable showroom containing the core runtime world objects, all
-seven tree forms, four grass forms, six rock forms, and every fence texture variant.
+seven tree forms, four grass forms, six rock forms, the generated goblin model,
+and every fence texture variant.
 In that scene, use WASD, mouse look, Shift to sprint, E to interact, and Escape
 to return to the menu.
 

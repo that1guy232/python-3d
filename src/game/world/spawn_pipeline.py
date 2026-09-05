@@ -23,7 +23,7 @@ from game.config import (
     GOBLIN_SPAWN_TREE_RADIUS,
 )
 
-from game.actors.goblin import Goblin
+from game.actors.goblin import Goblin, GoblinRenderBatch
 
 from game.world.builder_support import _dispose_values
 from game.world.objects.grass import build_grass_meshes
@@ -268,6 +268,13 @@ def _player_in_building_detector(scene):
 
 def _build_goblins(scene) -> None:
 
+    resources = getattr(scene, "render_resources", scene)
+    previous_batch = getattr(resources, "goblin_batch", None)
+    dispose_batch = getattr(previous_batch, "dispose", None)
+    if callable(dispose_batch):
+        dispose_batch()
+    resources.goblin_batch = None
+
     for goblin in getattr(scene, "goblins", ()) or ():
 
         try:
@@ -287,17 +294,13 @@ def _build_goblins(scene) -> None:
 
             continue
 
-    goblin_tex = Goblin.texture_or_load(getattr(scene, "goblin_tex", None))
-
-    scene.goblin_tex = goblin_tex
-
-    front_frames = goblin_tex.get("front", ())
+    goblin_material_tex = getattr(scene, "goblin_material_tex", None)
 
     scene.goblins = []
 
     count = max(0, int(getattr(scene, "goblin_count", GOBLIN_COUNT)))
 
-    if count <= 0 or not front_frames:
+    if count <= 0:
 
         print("Spawned 0 goblins.")
 
@@ -380,7 +383,7 @@ def _build_goblins(scene) -> None:
 
             goblin = Goblin(
                 spawn,
-                texture=goblin_tex,
+                material_texture=goblin_material_tex,
                 camera=scene.camera,
                 ground_height_at=scene.ground_height_at,
                 position_blocked=movement_blocked,
@@ -411,7 +414,15 @@ def _build_goblins(scene) -> None:
 
             scene.sprite_items.extend(goblin.get_sprites())
 
-    print(f"Spawned {len(scene.goblins)} goblins.")
+    resources.goblin_batch = GoblinRenderBatch(
+        scene.goblins,
+        material_texture=goblin_material_tex,
+        exposure_baseline=float(
+            getattr(getattr(scene, "camera", None), "brightness_default", 1.0)
+        ),
+    )
+
+    print(f"Generated {len(scene.goblins)} procedural 3D goblins.")
 
     refresh_draw_entities = getattr(scene, "refresh_immediate_entities", None)
 

@@ -138,15 +138,25 @@ class PerformanceLogger:
         total_frame_s = sum(self._frame_times_s)
         avg_frame_s = total_frame_s / self._frame_count if self._frame_count else 0.0
         max_frame_s = max(self._frame_times_s) if self._frame_times_s else 0.0
+        p50_frame_s = self._percentile(self._frame_times_s, 50.0)
         p95_frame_s = self._percentile(self._frame_times_s, 95.0)
+        p99_frame_s = self._percentile(self._frame_times_s, 99.0)
         fps = 1.0 / avg_frame_s if avg_frame_s > 0.0 else 0.0
+        over_120hz = sum(value > 1.0 / 120.0 for value in self._frame_times_s)
+        over_60hz = sum(value > 1.0 / 60.0 for value in self._frame_times_s)
+        over_120hz_pct = over_120hz * 100.0 / self._frame_count
+        over_60hz_pct = over_60hz * 100.0 / self._frame_count
 
         print(
             "[perf] "
             f"{self._frame_count} frames in {elapsed_s:.2f}s | "
             f"avg {avg_frame_s * 1000.0:.2f} ms ({fps:.1f} FPS) | "
+            f"p50 {p50_frame_s * 1000.0:.2f} ms | "
             f"p95 {p95_frame_s * 1000.0:.2f} ms | "
-            f"max {max_frame_s * 1000.0:.2f} ms"
+            f"p99 {p99_frame_s * 1000.0:.2f} ms | "
+            f"max {max_frame_s * 1000.0:.2f} ms | "
+            f">8.33ms {over_120hz_pct:.1f}% | "
+            f">16.67ms {over_60hz_pct:.1f}%"
         )
         print(
             "[perf] section                         avg/frame  avg/hit      max  hits/frame"

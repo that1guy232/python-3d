@@ -6,7 +6,7 @@ import math
 from typing import Any, Callable
 
 import numpy as np
-from OpenGL.GL import GL_QUADS
+from OpenGL.GL import GL_DYNAMIC_DRAW, GL_QUADS, GL_STATIC_DRAW
 from pygame.math import Vector3
 
 from engine.core.mesh import BatchedMesh
@@ -49,6 +49,10 @@ DOOR_CLOSE_SOUND_KEY = "door_close"
 DOOR_SOUND_AUDIBLE_RADIUS = 380.0
 DOOR_SOUND_FULL_VOLUME_RADIUS = 45.0
 DOOR_SOUND_MAX_VOLUME = 0.75
+# Keep dynamic shadows visually close to the swinging panel without turning a
+# scene-wide shadow cache into per-frame work.  Closed, half-open, and open
+# poses bound the angular mismatch to 22.5 degrees for a 90-degree swing.
+DOOR_SHADOW_POSE_STEPS = 2
 
 
 def _smooth01(value: float) -> float:
@@ -568,53 +572,156 @@ class DoorRenderBatch:
         self.doors = tuple(doors)
         self._meshes: list[BatchedMesh] = []
         self._cache_key = None
+        self._structure_cache_key = None
+        self._pose_cache_keys: tuple = ()
+        self._visual_spans: dict[int, tuple[int, int, int]] = {}
+        # Visible doors follow every animation step.  Shadow casters use a small
+        # set of quantized poses so one swing cannot invalidate scene-wide maps
+        # every frame, while the lighting still tracks the panel closely.
+        self._sun_shadow_meshes: list[BatchedMesh] = []
+        self._sun_shadow_cache_key = None
+        self._shadow_meshes: list[BatchedMesh | None] = [None] * len(self.doors)
+        self._shadow_cache_keys: list[tuple | None] = [None] * len(self.doors)
+        self._shadow_open_amounts = [
+            max(0.0, min(1.0, float(getattr(door, "open_amount", 0.0))))
+            for door in self.doors
+        ]
 
-    def dispose(self) -> None:
-        for mesh in self._meshes:
+    @staticmethod
+    def _dispose_meshes(meshes) -> None:
+        for mesh in meshes:
             try:
                 mesh.dispose()
             except Exception:
                 pass
-        self._meshes = []
-        self._cache_key = None
 
-    def _current_cache_key(self, dynamic_lighting: bool = False):
+    def dispose(self) -> None:
+        self._dispose_meshes(self._meshes)
+        self._dispose_meshes(self._sun_shadow_meshes)
+        self._dispose_meshes(self._shadow_meshes)
+        self._meshes = []
+        self._sun_shadow_meshes = []
+        self._shadow_meshes = [None] * len(self.doors)
+        self._cache_key = None
+        self._structure_cache_key = None
+        self._pose_cache_keys = ()
+        self._visual_spans = {}
+        self._sun_shadow_cache_key = None
+        self._shadow_cache_keys = [None] * len(self.doors)
+
+    def _current_structure_key(self, dynamic_lighting: bool) -> tuple:
         return (bool(dynamic_lighting),) + tuple(
             (
                 id(door),
                 bool(getattr(door, "visible", True)),
                 int(getattr(door, "texture", 0) or 0),
-                round(float(getattr(door, "open_amount", 0.0)), 5),
-                None if dynamic_lighting else door._slab_light_cache_key(),
             )
             for door in self.doors
         )
 
+    def _current_pose_keys(self, dynamic_lighting: bool) -> tuple:
+        return tuple(
+            (
+                (
+                    round(float(getattr(door, "open_amount", 0.0)), 5)
+                    if getattr(door, "visible", True)
+                    and getattr(door, "texture", 0)
+                    else None
+                ),
+                (
+                    None
+                    if dynamic_lighting
+                    or not getattr(door, "visible", True)
+                    or not getattr(door, "texture", 0)
+                    else door._slab_light_cache_key()
+                ),
+            )
+            for door in self.doors
+        )
+
+    def _current_cache_key(self, dynamic_lighting: bool = False):
+        return (
+            self._current_structure_key(dynamic_lighting),
+            self._current_pose_keys(dynamic_lighting),
+        )
+
     @property
     def shadow_revision(self) -> tuple:
-        """Identify the door poses represented by this shadow caster.
+        """Identify the bounded dynamic poses represented by the shadow caster.
 
-        Door slabs are combined into a small number of meshes.  Their aggregate
-        bounds can stay unchanged while one slab swings, so the renderer cannot
-        reliably infer a geometry change from the combined mesh alone.
+        The visible batch still follows a swinging door every frame.  Shadows
+        follow closed, half-open, and open poses, producing at most two cache
+        invalidations per interaction instead of one per animation step.
         """
 
-        return self._current_cache_key(dynamic_lighting=True)
+        return ("per-door-settled-shadows", len(self.doors))
 
-    def _rebuild(self, dynamic_lighting: bool = False) -> None:
-        self.dispose()
+    def _commit_shadow_poses(self) -> None:
+        for index, door in enumerate(self.doors):
+            amount = max(
+                0.0,
+                min(1.0, float(getattr(door, "open_amount", 0.0))),
+            )
+            target = 1.0 if bool(getattr(door, "target_open", False)) else 0.0
+            if abs(amount - target) <= 1e-4:
+                quantized = target
+            else:
+                steps = max(1, int(DOOR_SHADOW_POSE_STEPS))
+                quantized = math.floor(amount * steps + 0.5) / steps
+            self._shadow_open_amounts[index] = max(0.0, min(1.0, quantized))
+
+    def _current_shadow_cache_keys(self) -> tuple:
+        self._commit_shadow_poses()
+        return tuple(
+            (
+                id(door),
+                bool(getattr(door, "visible", True)),
+                int(getattr(door, "texture", 0) or 0),
+                round(self._shadow_open_amounts[index], 5),
+            )
+            for index, door in enumerate(self.doors)
+        )
+
+    @staticmethod
+    def _shadow_vertices(door, open_amount: float):
+        amount = _smooth01(open_amount)
+        angle = float(door.swing_radians) * amount
+        cos_a = math.cos(angle)
+        sin_a = math.sin(angle)
+        panel_axis = door.tangent * cos_a + door.open_normal * sin_a
+        depth_axis = door.normal * cos_a + door.tangent * sin_a
+        center = door.hinge + panel_axis * (float(door.width) * 0.5)
+        return door._box_vertices(
+            center,
+            panel_axis,
+            depth_axis,
+            width=door.width,
+            height=door.height,
+            thickness=door.thickness,
+        )
+
+    def _build_vertex_groups(
+        self,
+        *,
+        dynamic_lighting: bool,
+        shadow_only: bool,
+    ) -> tuple[list[tuple[int, np.ndarray]], dict[int, tuple[int, int, int]]]:
         groups = {}
 
-        for door in self.doors:
+        for index, door in enumerate(self.doors):
             if not getattr(door, "visible", True) or not getattr(door, "texture", 0):
                 continue
-            verts = door._visual_vertices()
+            verts = (
+                self._shadow_vertices(door, self._shadow_open_amounts[index])
+                if shadow_only
+                else door._visual_vertices()
+            )
             if not verts:
                 continue
             vertex_data = door._slab_vertex_data(
                 verts,
                 as_quads=True,
-                include_normals=True,
+                include_normals=not shadow_only,
                 dynamic_lighting=dynamic_lighting,
             )
             if vertex_data.size == 0:
@@ -622,26 +729,51 @@ class DoorRenderBatch:
             groups.setdefault(
                 (int(door.texture), int(vertex_data.shape[1])),
                 [],
-            ).append(vertex_data)
+            ).append((index, vertex_data))
 
-        for (texture, _columns), chunks in groups.items():
+        vertex_groups = []
+        spans: dict[int, tuple[int, int, int]] = {}
+        for group_index, ((texture, _columns), chunks) in enumerate(groups.items()):
             if not chunks:
                 continue
+            arrays = [vertex_data for _door_index, vertex_data in chunks]
             vertex_data = np.ascontiguousarray(
-                np.concatenate(chunks, axis=0),
+                arrays[0] if len(arrays) == 1 else np.concatenate(arrays, axis=0),
                 dtype=np.float32,
             )
             if vertex_data.size == 0:
                 continue
-            self._meshes.append(
+            first_vertex = 0
+            for door_index, door_data in chunks:
+                vertex_count = int(door_data.shape[0])
+                spans[door_index] = (group_index, first_vertex, vertex_count)
+                first_vertex += vertex_count
+            vertex_groups.append((texture, vertex_data))
+        return vertex_groups, spans
+
+    @staticmethod
+    def _meshes_from_vertex_groups(
+        vertex_groups,
+        *,
+        dynamic_lighting: bool,
+        shine_enabled: bool = True,
+        keep_vertex_data: bool = True,
+        usage: int = GL_STATIC_DRAW,
+    ) -> list[BatchedMesh]:
+        meshes = []
+        for texture, vertex_data in vertex_groups:
+            meshes.append(
                 BatchedMesh.from_vertex_data(
                     vertex_data,
                     texture=texture,
                     alpha_test=True,
                     exposure_baseline=1.0,
                     environment_lighting=False,
+                    shine_enabled=shine_enabled,
                     draw_mode=GL_QUADS,
+                    usage=usage,
                     shader_lighting=False,
+                    keep_vertex_data=keep_vertex_data,
                     lighting_receiver=(
                         DYNAMIC_SLAB_LIGHTING_RECEIVER
                         if dynamic_lighting
@@ -649,6 +781,145 @@ class DoorRenderBatch:
                     ),
                 )
             )
+        return meshes
+
+    def _rebuild(self, dynamic_lighting: bool = False) -> None:
+        vertex_groups, spans = self._build_vertex_groups(
+            dynamic_lighting=dynamic_lighting,
+            shadow_only=False,
+        )
+        self._dispose_meshes(self._meshes)
+        self._meshes = self._meshes_from_vertex_groups(
+            vertex_groups,
+            dynamic_lighting=dynamic_lighting,
+            usage=GL_DYNAMIC_DRAW,
+        )
+        self._visual_spans = spans
+        self._structure_cache_key = self._current_structure_key(dynamic_lighting)
+        self._pose_cache_keys = self._current_pose_keys(dynamic_lighting)
+
+    def _update_visual_meshes(self, dynamic_lighting: bool) -> None:
+        structure_key = self._current_structure_key(dynamic_lighting)
+        pose_keys = self._current_pose_keys(dynamic_lighting)
+        if (
+            structure_key != self._structure_cache_key
+            or len(pose_keys) != len(self._pose_cache_keys)
+            or not self._meshes
+        ):
+            self._rebuild(dynamic_lighting)
+            return
+
+        pending = []
+        for index, (pose_key, previous_key) in enumerate(
+            zip(pose_keys, self._pose_cache_keys)
+        ):
+            if pose_key == previous_key:
+                continue
+            span = self._visual_spans.get(index)
+            if span is None:
+                self._rebuild(dynamic_lighting)
+                return
+            door = self.doors[index]
+            vertex_data = door._slab_vertex_data(
+                door._visual_vertices(),
+                as_quads=True,
+                include_normals=True,
+                dynamic_lighting=dynamic_lighting,
+            )
+            mesh_index, first_vertex, vertex_count = span
+            if (
+                mesh_index >= len(self._meshes)
+                or int(vertex_data.shape[0]) != vertex_count
+                or int(vertex_data.shape[1]) != self._meshes[mesh_index].vertex_width
+            ):
+                self._rebuild(dynamic_lighting)
+                return
+            pending.append((self._meshes[mesh_index], first_vertex, vertex_data))
+
+        for mesh, first_vertex, vertex_data in pending:
+            mesh.update_vertex_range(first_vertex, vertex_data)
+        self._pose_cache_keys = pose_keys
+
+    def _update_shadow_mesh(self, index: int, cache_key: tuple) -> None:
+        door = self.doors[index]
+        mesh = self._shadow_meshes[index]
+        if not getattr(door, "visible", True) or not getattr(door, "texture", 0):
+            if mesh is not None:
+                self._dispose_meshes((mesh,))
+            self._shadow_meshes[index] = None
+            self._shadow_cache_keys[index] = cache_key
+            return
+
+        verts = self._shadow_vertices(door, self._shadow_open_amounts[index])
+        vertex_data = door._slab_vertex_data(
+            verts,
+            as_quads=True,
+            include_normals=False,
+            dynamic_lighting=True,
+        )
+        if vertex_data.size == 0:
+            if mesh is not None:
+                self._dispose_meshes((mesh,))
+            self._shadow_meshes[index] = None
+            self._shadow_cache_keys[index] = cache_key
+            return
+
+        if (
+            mesh is not None
+            and int(mesh.texture or 0) == int(door.texture)
+            and int(mesh.vertex_width) == int(vertex_data.shape[1])
+        ):
+            mesh.update_vertex_data(vertex_data, keep_vertex_data=False)
+        else:
+            if mesh is not None:
+                self._dispose_meshes((mesh,))
+            mesh = self._meshes_from_vertex_groups(
+                [(int(door.texture), vertex_data)],
+                dynamic_lighting=True,
+                shine_enabled=False,
+                keep_vertex_data=False,
+            )[0]
+            self._shadow_meshes[index] = mesh
+        mesh.casts_sun_shadows = False
+        mesh.casts_point_shadows = True
+        # WorldRenderer folds this per-mesh revision into its caster key.  A
+        # distant door therefore cannot invalidate an unrelated point light.
+        mesh.shadow_revision = cache_key
+        self._shadow_cache_keys[index] = cache_key
+
+    def _update_sun_shadow_meshes(self, cache_key: tuple) -> None:
+        vertex_groups, _spans = self._build_vertex_groups(
+            dynamic_lighting=True,
+            shadow_only=True,
+        )
+        can_update_in_place = len(self._sun_shadow_meshes) == len(vertex_groups) and all(
+            int(mesh.texture or 0) == int(texture)
+            and int(mesh.vertex_width) == int(vertex_data.shape[1])
+            for mesh, (texture, vertex_data) in zip(
+                self._sun_shadow_meshes,
+                vertex_groups,
+            )
+        )
+        if can_update_in_place:
+            for mesh, (_texture, vertex_data) in zip(
+                self._sun_shadow_meshes,
+                vertex_groups,
+            ):
+                mesh.update_vertex_data(vertex_data, keep_vertex_data=False)
+        else:
+            self._dispose_meshes(self._sun_shadow_meshes)
+            self._sun_shadow_meshes = self._meshes_from_vertex_groups(
+                vertex_groups,
+                dynamic_lighting=True,
+                shine_enabled=False,
+                keep_vertex_data=False,
+            )
+
+        for mesh in self._sun_shadow_meshes:
+            mesh.casts_sun_shadows = True
+            mesh.casts_point_shadows = False
+            mesh.shadow_revision = cache_key
+        self._sun_shadow_cache_key = cache_key
 
     def draw(
         self,
@@ -661,7 +932,7 @@ class DoorRenderBatch:
         dynamic_lighting = packet_shader is not None
         cache_key = self._current_cache_key(dynamic_lighting)
         if cache_key != self._cache_key:
-            self._rebuild(dynamic_lighting)
+            self._update_visual_meshes(dynamic_lighting)
             self._cache_key = cache_key
 
         BatchedMesh.draw_many(
@@ -674,13 +945,19 @@ class DoorRenderBatch:
         )
 
     def shadow_meshes(self, camera=None) -> tuple[BatchedMesh, ...]:
-        """Return current door geometry for the shared light-depth pass."""
+        """Return bounded, quantized door geometry for the light-depth pass."""
 
-        cache_key = self._current_cache_key(dynamic_lighting=True)
-        if cache_key != self._cache_key:
-            self._rebuild(dynamic_lighting=True)
-            self._cache_key = cache_key
-        return tuple(mesh for mesh in self._meshes if mesh.casts_shadows)
+        cache_keys = self._current_shadow_cache_keys()
+        if cache_keys != self._sun_shadow_cache_key:
+            self._update_sun_shadow_meshes(cache_keys)
+        for index, cache_key in enumerate(cache_keys):
+            if cache_key != self._shadow_cache_keys[index]:
+                self._update_shadow_mesh(index, cache_key)
+        return tuple(
+            mesh
+            for mesh in (*self._sun_shadow_meshes, *self._shadow_meshes)
+            if mesh is not None and mesh.casts_shadows
+        )
 
 
 def build_door_render_batch(doors) -> DoorRenderBatch | None:

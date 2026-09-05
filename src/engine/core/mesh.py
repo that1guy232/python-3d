@@ -14,6 +14,7 @@ from OpenGL.GL import (
     glGenBuffers,
     glBindBuffer,
     glBufferData,
+    glBufferSubData,
     glDeleteBuffers,
     glEnableClientState,
     glVertexPointer,
@@ -47,6 +48,7 @@ from OpenGL.GL import (
     GL_TEXTURE_ENV_MODE,
     GL_MODULATE,
     GL_TEXTURE_ENV,
+    GL_DYNAMIC_DRAW,
     GL_STATIC_DRAW,
 )
 
@@ -151,6 +153,7 @@ class BatchedMesh:
         environment_lighting: bool = True,
         shine_enabled: bool = True,
         draw_mode: int = GL_TRIANGLES,
+        usage: int = GL_STATIC_DRAW,
         shader_lighting: bool | None = None,
         lighting_receiver: LightingReceiver | None = None,
     ) -> "BatchedMesh":
@@ -173,7 +176,7 @@ class BatchedMesh:
         vbo = glGenBuffers(1)
         vbo_id = int(np.asarray(vbo).reshape(-1)[0])
         glBindBuffer(GL_ARRAY_BUFFER, vbo_id)
-        glBufferData(GL_ARRAY_BUFFER, upload_data.nbytes, upload_data, GL_STATIC_DRAW)
+        glBufferData(GL_ARRAY_BUFFER, upload_data.nbytes, upload_data, int(usage))
         baseline = float(exposure_baseline)
         bounds_center, bounds_radius = cls._bounds_from_vertex_data(upload_data)
         return cls(
@@ -205,6 +208,132 @@ class BatchedMesh:
 
         return (self,) if self.casts_shadows and self.vertex_count > 0 else ()
 
+    def update_vertex_data(
+        self,
+        vertex_data: np.ndarray,
+        *,
+        usage: int = GL_DYNAMIC_DRAW,
+        keep_vertex_data: bool | None = None,
+    ) -> None:
+        """Replace an existing VBO's rows and refresh its render bounds.
+
+        Static world batches are uploaded once through :meth:`from_vertex_data`.
+        Dynamic procedural actors use this narrower path to keep one owned VBO
+        while their generated world-space pose changes.
+        """
+
+        upload_data = np.ascontiguousarray(vertex_data, dtype=np.float32)
+        if upload_data.ndim != 2 or upload_data.shape[1] < 6:
+            raise ValueError("vertex_data must be a 2D array with at least 6 columns")
+        if not np.isfinite(upload_data).all():
+            raise ValueError("vertex_data must contain only finite values")
+        if not self.vbo_vertices:
+            raise RuntimeError("cannot update a disposed mesh")
+
+        target_exposure = (
+            self._current_exposure
+            if self.texture is None
+            else self._vbo_exposure
+        )
+        device_data = self._vertex_data_at_exposure(upload_data, target_exposure)
+        glBindBuffer(GL_ARRAY_BUFFER, self.vbo_vertices)
+        glBufferData(GL_ARRAY_BUFFER, device_data.nbytes, device_data, int(usage))
+
+        self.vertex_count = int(upload_data.shape[0])
+        self.vertex_width = int(upload_data.shape[1])
+        self._refresh_vertex_layout()
+        self.bounds_center, self.bounds_radius = self._bounds_from_vertex_data(
+            upload_data
+        )
+
+        retain = self._base_vertex_data is not None
+        if keep_vertex_data is not None:
+            retain = bool(keep_vertex_data)
+        self._base_vertex_data = upload_data.copy() if retain else None
+        self._vbo_exposure = float(target_exposure)
+
+    def update_vertex_range(
+        self,
+        first_vertex: int,
+        vertex_data: np.ndarray,
+        *,
+        expand_bounds: bool = True,
+    ) -> None:
+        """Replace a fixed-size slice of an existing interleaved VBO.
+
+        This is the inexpensive path for a small moving part inside an
+        otherwise static aggregate batch (for example, one door among all
+        building doors).  The allocation and unaffected rows remain intact.
+        """
+
+        upload_data = np.ascontiguousarray(vertex_data, dtype=np.float32)
+        if upload_data.ndim != 2 or upload_data.shape[1] != self.vertex_width:
+            raise ValueError(
+                "vertex_data must be a 2D array matching the mesh vertex width"
+            )
+        if not np.isfinite(upload_data).all():
+            raise ValueError("vertex_data must contain only finite values")
+        if not self.vbo_vertices:
+            raise RuntimeError("cannot update a disposed mesh")
+
+        first = int(first_vertex)
+        count = int(upload_data.shape[0])
+        if first < 0 or first + count > self.vertex_count:
+            raise ValueError("vertex range falls outside the mesh")
+        if count <= 0:
+            return
+
+        byte_offset = first * int(self.vertex_width) * np.dtype(np.float32).itemsize
+        # Match the exposure already resident in the rest of the VBO.  Uploading
+        # baseline colours into only this slice would otherwise create a mixed
+        # exposure buffer until a later full redraw happened to repair it.
+        device_data = self._vertex_data_at_exposure(
+            upload_data,
+            self._vbo_exposure,
+        )
+        glBindBuffer(GL_ARRAY_BUFFER, self.vbo_vertices)
+        glBufferSubData(
+            GL_ARRAY_BUFFER,
+            byte_offset,
+            device_data.nbytes,
+            device_data,
+        )
+
+        if self._base_vertex_data is not None:
+            self._base_vertex_data[first : first + count] = upload_data
+        if not expand_bounds:
+            return
+        new_center, new_radius = self._bounds_from_vertex_data(upload_data)
+        if new_center is None:
+            return
+        if self.bounds_center is None:
+            self.bounds_center = new_center
+            self.bounds_radius = new_radius
+            return
+
+        old_center = tuple(float(value) for value in self.bounds_center)
+        old_radius = max(0.0, float(self.bounds_radius))
+        dx = new_center[0] - old_center[0]
+        dy = new_center[1] - old_center[1]
+        dz = new_center[2] - old_center[2]
+        separation = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if separation + new_radius <= old_radius:
+            return
+        if separation + old_radius <= new_radius:
+            self.bounds_center = new_center
+            self.bounds_radius = new_radius
+            return
+
+        combined_radius = (old_radius + separation + new_radius) * 0.5
+        if separation > 1e-8:
+            shift = (combined_radius - old_radius) / separation
+            self.bounds_center = (
+                old_center[0] + dx * shift,
+                old_center[1] + dy * shift,
+                old_center[2] + dz * shift,
+            )
+        self.bounds_radius = combined_radius
+
     def draw_shadow(
         self,
         caster_shader: "ShadowCasterShader",
@@ -212,27 +341,84 @@ class BatchedMesh:
     ) -> None:
         """Draw geometry into a light-space depth map."""
 
-        if not self.casts_shadows or self.vertex_count <= 0:
+        self.draw_shadows_many((self,), caster_shader, light_matrix)
+
+    @staticmethod
+    def draw_shadows_many(
+        meshes,
+        caster_shader: "ShadowCasterShader",
+        light_matrix: tuple[float, ...],
+    ) -> None:
+        """Submit a collection of sun-shadow meshes with shared GL state.
+
+        A shadow refresh can contain hundreds of spatial batches.  Leaving and
+        re-entering the shader and client-array state for every VBO turns that
+        refresh into a CPU/driver spike, even though most casters share one
+        opaque material.  Sort by the tiny depth-material key and keep the
+        common state live for the complete pass.
+        """
+
+        drawable = [
+            mesh
+            for mesh in meshes
+            if getattr(mesh, "casts_shadows", False)
+            and int(getattr(mesh, "vertex_count", 0)) > 0
+            and int(getattr(mesh, "vbo_vertices", 0) or 0)
+        ]
+        if not drawable:
             return
-        cutout = bool(self.alpha_test and self.texture)
-        glBindBuffer(GL_ARRAY_BUFFER, self.vbo_vertices)
+
+        def material_key(mesh):
+            cutout = bool(mesh.alpha_test and mesh.texture)
+            return (
+                cutout,
+                int(mesh.texture or 0) if cutout else 0,
+                float(mesh.alpha_cutoff) if cutout else 0.0,
+            )
+
+        drawable.sort(key=material_key)
+        glClientActiveTexture(GL_TEXTURE0)
         glEnableClientState(GL_VERTEX_ARRAY)
-        glVertexPointer(3, GL_FLOAT, self._vertex_stride, ctypes.c_void_p(0))
-        if cutout:
-            glClientActiveTexture(GL_TEXTURE0)
-            glEnableClientState(GL_TEXTURE_COORD_ARRAY)
-            glTexCoordPointer(2, GL_FLOAT, self._vertex_stride, self._uv_offset_ptr)
-        caster_shader.bind(
-            light_matrix,
-            texture=int(self.texture or 0),
-            alpha_cutout=cutout,
-            alpha_cutoff=self.alpha_cutoff,
-        )
+        texcoords_enabled = False
+        active_material = None
         try:
-            glDrawArrays(self.draw_mode, 0, self.vertex_count)
+            for mesh in drawable:
+                key = material_key(mesh)
+                cutout = key[0]
+                if cutout and not texcoords_enabled:
+                    glEnableClientState(GL_TEXTURE_COORD_ARRAY)
+                    texcoords_enabled = True
+                elif not cutout and texcoords_enabled:
+                    glDisableClientState(GL_TEXTURE_COORD_ARRAY)
+                    texcoords_enabled = False
+
+                if key != active_material:
+                    caster_shader.bind(
+                        light_matrix,
+                        texture=key[1],
+                        alpha_cutout=cutout,
+                        alpha_cutoff=key[2],
+                    )
+                    active_material = key
+
+                glBindBuffer(GL_ARRAY_BUFFER, mesh.vbo_vertices)
+                glVertexPointer(
+                    3,
+                    GL_FLOAT,
+                    mesh._vertex_stride,
+                    ctypes.c_void_p(0),
+                )
+                if cutout:
+                    glTexCoordPointer(
+                        2,
+                        GL_FLOAT,
+                        mesh._vertex_stride,
+                        mesh._uv_offset_ptr,
+                    )
+                glDrawArrays(mesh.draw_mode, 0, mesh.vertex_count)
         finally:
             use_fixed_pipeline()
-            if cutout:
+            if texcoords_enabled:
                 glDisableClientState(GL_TEXTURE_COORD_ARRAY)
             glDisableClientState(GL_VERTEX_ARRAY)
             glBindBuffer(GL_ARRAY_BUFFER, 0)
@@ -246,29 +432,87 @@ class BatchedMesh:
     ) -> None:
         """Draw geometry into one face of a radial point-light depth cube."""
 
-        if not self.casts_shadows or self.vertex_count <= 0:
-            return
-        cutout = bool(self.alpha_test and self.texture)
-        glBindBuffer(GL_ARRAY_BUFFER, self.vbo_vertices)
-        glEnableClientState(GL_VERTEX_ARRAY)
-        glVertexPointer(3, GL_FLOAT, self._vertex_stride, ctypes.c_void_p(0))
-        if cutout:
-            glClientActiveTexture(GL_TEXTURE0)
-            glEnableClientState(GL_TEXTURE_COORD_ARRAY)
-            glTexCoordPointer(2, GL_FLOAT, self._vertex_stride, self._uv_offset_ptr)
-        caster_shader.bind(
+        self.draw_point_shadows_many(
+            (self,),
+            caster_shader,
             light_matrix,
             light_position,
             light_range,
-            texture=int(self.texture or 0),
-            alpha_cutout=cutout,
-            alpha_cutoff=self.alpha_cutoff,
         )
+
+    @staticmethod
+    def draw_point_shadows_many(
+        meshes,
+        caster_shader: "PointShadowCasterShader",
+        light_matrix: tuple[float, ...],
+        light_position,
+        light_range: float,
+    ) -> None:
+        """Submit one point-shadow face without per-mesh shader teardown."""
+
+        drawable = [
+            mesh
+            for mesh in meshes
+            if getattr(mesh, "casts_shadows", False)
+            and int(getattr(mesh, "vertex_count", 0)) > 0
+            and int(getattr(mesh, "vbo_vertices", 0) or 0)
+        ]
+        if not drawable:
+            return
+
+        def material_key(mesh):
+            cutout = bool(mesh.alpha_test and mesh.texture)
+            return (
+                cutout,
+                int(mesh.texture or 0) if cutout else 0,
+                float(mesh.alpha_cutoff) if cutout else 0.0,
+            )
+
+        drawable.sort(key=material_key)
+        glClientActiveTexture(GL_TEXTURE0)
+        glEnableClientState(GL_VERTEX_ARRAY)
+        texcoords_enabled = False
+        active_material = None
         try:
-            glDrawArrays(self.draw_mode, 0, self.vertex_count)
+            for mesh in drawable:
+                key = material_key(mesh)
+                cutout = key[0]
+                if cutout and not texcoords_enabled:
+                    glEnableClientState(GL_TEXTURE_COORD_ARRAY)
+                    texcoords_enabled = True
+                elif not cutout and texcoords_enabled:
+                    glDisableClientState(GL_TEXTURE_COORD_ARRAY)
+                    texcoords_enabled = False
+
+                if key != active_material:
+                    caster_shader.bind(
+                        light_matrix,
+                        light_position,
+                        light_range,
+                        texture=key[1],
+                        alpha_cutout=cutout,
+                        alpha_cutoff=key[2],
+                    )
+                    active_material = key
+
+                glBindBuffer(GL_ARRAY_BUFFER, mesh.vbo_vertices)
+                glVertexPointer(
+                    3,
+                    GL_FLOAT,
+                    mesh._vertex_stride,
+                    ctypes.c_void_p(0),
+                )
+                if cutout:
+                    glTexCoordPointer(
+                        2,
+                        GL_FLOAT,
+                        mesh._vertex_stride,
+                        mesh._uv_offset_ptr,
+                    )
+                glDrawArrays(mesh.draw_mode, 0, mesh.vertex_count)
         finally:
             use_fixed_pipeline()
-            if cutout:
+            if texcoords_enabled:
                 glDisableClientState(GL_TEXTURE_COORD_ARRAY)
             glDisableClientState(GL_VERTEX_ARRAY)
             glBindBuffer(GL_ARRAY_BUFFER, 0)
@@ -295,6 +539,25 @@ class BatchedMesh:
         if abs(base) <= 1e-8:
             return exposure_value
         return exposure_value / base
+
+    def _vertex_data_at_exposure(
+        self,
+        vertex_data: np.ndarray,
+        exposure: float,
+    ) -> np.ndarray:
+        """Return baseline vertex rows encoded for one VBO exposure."""
+
+        exposure_value = float(exposure)
+        if (
+            vertex_data.shape[1] < 6
+            or abs(exposure_value - float(self.exposure_baseline)) <= 1e-6
+        ):
+            return vertex_data
+        result = vertex_data.copy()
+        result[:, 3:6] = vertex_data[:, 3:6] * self._exposure_scale(
+            exposure_value
+        )
+        return np.ascontiguousarray(result, dtype=np.float32)
 
     def _upload_vertex_data_for_exposure(self, exposure: float) -> None:
         if self.vertex_count == 0 or not self.vbo_vertices:

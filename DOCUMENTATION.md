@@ -133,7 +133,9 @@ delegates to `WorldRenderer.render()`, which:
   evaluated per fragment, with foam following the same contour as the beach.
 - Supplies receiver-specific lighting packets to the packet shader and uses
   static VBO batches when available, falling back to immediate rendering for
-  objects that need it.
+  objects that need it. Generated goblins reuse a static atlas of low-poly idle
+  and walking poses; per-actor GPU transforms avoid rebuilding their geometry as
+  they roam.
 
 ### Input
 
@@ -206,7 +208,7 @@ separately releases its directional and point-shadow GPU resources.
 | `src/engine/core/scene.py` | Base scene protocol: optional camera plus event, render, and dispose hooks. |
 | `src/engine/core/performance.py` | Lightweight named-section profiler used by engine and world code. |
 | `src/engine/core/object3d.py` | Base local-vertex object with cached world vertices, XZ/XYZ bounds, and bounding spheres. |
-| `src/engine/core/mesh.py` | VBO-backed `BatchedMesh`, explicit lighting-receiver projection with a legacy fallback, and `GroundHeightSampler`. |
+| `src/engine/core/mesh.py` | VBO-backed `BatchedMesh`, static and dynamic vertex uploads, explicit lighting-receiver projection with a legacy fallback, and `GroundHeightSampler`. |
 | `src/engine/core/compat_shader.py` | Compatibility-profile shader helpers for textured exposure, lighting, fog, vibrance, shine state, and fixed-capacity overflow warnings. |
 | `src/engine/core/gl_state.py` | Restores the fixed-function pipeline after programmable packet, shadow, or compatibility draws. |
 | `src/engine/core/legacy_shader_adapter.py` | Lazy boundary for loading the deprecated compatibility lighting shader only when a legacy draw requests it. |
@@ -236,8 +238,8 @@ the lighting implementation is being changed.
 | `src/engine/rendering/lighting.py` | Authoritative revisioned scene-lighting owner with immutable typed local-light exposure, CPU lighting math, and textured-normal data. It stores neither local-light dictionaries nor covered regions. |
 | `src/engine/rendering/lighting_state.py` | Immutable revisioned lighting snapshots plus typed directional and local scalar-light records. |
 | `src/engine/rendering/lighting_adapter.py` | Builds uncapped backend-neutral receiver packets and explicit legacy projections. |
-| `src/engine/rendering/packet_shader.py` | Packet-driven lighting program, receiver-policy binding, and device-capacity validation. |
-| `src/engine/rendering/packet_shader_source.py` | Standalone packet GLSL, including fragment surface lighting and vertex-interpolated polygon point queries. |
+| `src/engine/rendering/packet_shader.py` | Packet-driven lighting program, receiver-policy binding, local-to-world model transforms, and device-capacity validation. |
+| `src/engine/rendering/packet_shader_source.py` | Standalone packet GLSL, including model-transformed vertices/normals, fragment surface lighting, and vertex-interpolated polygon point queries. |
 | `src/engine/rendering/directional_shadow.py` | Directional depth-map ownership, light-space matrices, and the shared opaque/alpha-cutout caster shader. |
 | `src/engine/rendering/point_shadow.py` | Point-light depth cubemaps, six face matrices, bindings, and radial-depth caster shader. |
 | `src/engine/rendering/gl_program.py` | Shared GLSL compile/link helper used by packet and shadow programs. |
@@ -274,10 +276,10 @@ the lighting implementation is being changed.
 | `src/game/world/terrain_pipeline.py` | Terrain and boundary construction: ground mesh generation, island shoreline/water creation, and fence ring rebuilding. |
 | `src/game/world/island_boundary.py` | Exact terrain-render bounds, continuous irregular multi-ring beach geometry, a hidden-underlap flat ocean mesh, and the animated cellular GLSL 1.20 water renderer. |
 | `src/game/world/road_pipeline.py` | Road construction and batching for the main road plus building access roads. |
-| `src/game/world/spawn_pipeline.py` | Procedural tree, grass, and rock generation plus goblin placement/registration. |
+| `src/game/world/spawn_pipeline.py` | Procedural tree, grass, and rock generation plus generated-goblin placement, registration, and pose-atlas batching. |
 | `src/game/world/detail_pipeline.py` | Ground-detail/contact-shadow decal batching for procedural nature. |
 | `src/game/world/world_runtime.py` | Per-frame runtime helpers: bounds checks, road checks, height queries, entity updates, interaction, pause/inventory input, and mouse delta forwarding. |
-| `src/game/world/world_renderer.py` | World render pipeline: fog/projection/camera setup, sky, water/terrain/beach ordering, object passes, and HUD text/panel delegation. |
+| `src/game/world/world_renderer.py` | World render pipeline: fog/projection/camera setup, sky, water/terrain/beach ordering, generated-goblin model/contact-shadow passes, object passes, and HUD text/panel delegation. |
 | `src/game/world/collision_index.py` | Spatial collision candidate index for wall and polygon meshes, including dynamic/fallback mesh handling. |
 | `src/game/world/entity_registry.py` | Runtime entity registry that keeps entity/creature lists, immediate draw lists, sprites, and collision meshes synchronized. |
 | `src/game/world/environment.py` | Typed indoor volumes and portals, point queries, and legacy covered-region projection during lighting migration. |
@@ -318,7 +320,8 @@ the lighting implementation is being changed.
 | --- | --- |
 | `src/game/actors/__init__.py` | Shared actor contract exports without pulling actor implementations into the world-object package. |
 | `src/game/actors/creature.py` | Generic combat-creature contract and reusable base state for names, health, attacks, encounter ranges, intents, and creature-owned rewards. |
-| `src/game/actors/goblin.py` | Runtime roaming/chasing sprite entity with directional animation frames, batched shadows, and random single-piece equipment rewards. |
+| `src/game/actors/goblin.py` | Runtime roaming/chasing generated-3D entity, frustum culling, static pose-atlas rendering, batched contact shadows, and random single-piece equipment rewards. |
+| `src/game/actors/goblin_model.py` | Deterministic low-poly goblin geometry, visual variants, quantized walking poses, bounds, and shared immutable pose caches. |
 | `src/game/combat/__init__.py` | Combat controller and card-loadout exports. |
 | `src/game/combat/controller.py` | Creature-agnostic battle controller for entering/leaving combat, announced enemy intent, turn resolution, Guard mitigation, healing, damage rolls, rewards, and battle mouse state. |
 | `src/game/combat/cards.py` | Owns deck/hand/discard piles, full-loadout and remaining-draw snapshots, draw-and-reshuffle rules, automatic turn endings, passive equipment rules, Scrap state, and slot-keyed equipment/default card contributions. |
