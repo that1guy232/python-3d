@@ -51,6 +51,7 @@ class MainMenu(ButtonMenu):
         super().__init__(scene)
         self.buttons = [
             MenuOption("start_game", "Start Game", self.start_game),
+            MenuOption("undersea_crypt", "Under sea Crypt", self.start_undersea_crypt),
             MenuOption(
                 "object_test_scene",
                 "Object Test Scene",
@@ -66,6 +67,9 @@ class MainMenu(ButtonMenu):
 
     def start_object_test_scene(self, scene) -> None:
         scene.start_object_test_scene()
+
+    def start_undersea_crypt(self, scene) -> None:
+        scene.start_undersea_crypt()
 
 
 class MainMenuScene(Scene):
@@ -92,6 +96,13 @@ class MainMenuScene(Scene):
         test_scene = create_object_test_scene()
         self._queue_scene(test_scene, title="Loading Object Test Scene")
 
+    def start_undersea_crypt(self) -> None:
+        if self.next_scene is not None:
+            return
+        from game.undersea_crypt_scene import UnderseaCryptScene
+
+        self._queue_scene(UnderseaCryptScene(), title="Loading Under sea Crypt")
+
     def _queue_scene(self, scene: Scene, *, title: str) -> None:
         self.next_scene = LoadingScene(
             scene,
@@ -112,6 +123,8 @@ class MainMenuScene(Scene):
                 self.start_game()
             elif event.key == pygame.K_t:
                 self.start_object_test_scene()
+            elif event.key == pygame.K_c:
+                self.start_undersea_crypt()
             elif event.key == pygame.K_ESCAPE:
                 pygame.event.post(pygame.event.Event(pygame.QUIT))
 

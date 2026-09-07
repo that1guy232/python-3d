@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from engine.rendering.lighting_adapter import RenderLightingAdapter
+from engine.rendering.scene_lighting import SceneLightingRenderer
 from game.world.environment import environment_render_snapshot
 from game.world.lighting_receivers import (
     FENCE_LIGHTING_RECEIVER,
@@ -49,7 +49,7 @@ class LightingUpdateDiagnostics:
     render_packet_rebuilds: int = 0
 
 
-class StaticLightingController:
+class StaticLightingController(SceneLightingRenderer):
     """Own lighting rebuilds that still operate on scene-owned resources."""
 
     def __init__(
@@ -59,15 +59,11 @@ class StaticLightingController:
         resources: WorldRenderResources | None = None,
         build_state: WorldBuildState | None = None,
     ) -> None:
+        super().__init__(receivers=PACKET_RUNTIME_LIGHTING_RECEIVERS)
         self.scene = scene
         self.resources = resources or getattr(scene, "render_resources", scene)
         self.build_state = build_state or getattr(scene, "build_state", scene)
         self.diagnostics = LightingUpdateDiagnostics()
-        self.render_adapter = RenderLightingAdapter()
-        self.render_snapshot = None
-        self.render_environment_snapshot = None
-        self.render_packets = {}
-        self._render_packet_input_key = None
         self._legacy_bridge = None
 
     def _get_legacy_bridge(self):
@@ -98,30 +94,8 @@ class StaticLightingController:
     def prepare_render_packets(self, snapshot, environment_snapshot=None) -> None:
         """Cache packets for receiver families migrated to the new backend."""
 
-        if snapshot is None:
-            self.render_snapshot = None
-            self.render_environment_snapshot = None
-            self.render_packets = {}
-            self._render_packet_input_key = None
-            return
-        input_key = (int(snapshot.revision), environment_snapshot)
-        self.render_snapshot = snapshot
-        self.render_environment_snapshot = environment_snapshot
-        self.render_packets = {
-            receiver.receiver_id: self.render_adapter.packet_for(
-                snapshot,
-                receiver,
-                environment_snapshot,
-            )
-            for receiver in PACKET_RUNTIME_LIGHTING_RECEIVERS
-        }
-        if self._render_packet_input_key != input_key:
+        if super().prepare_render_packets(snapshot, environment_snapshot):
             self.diagnostics.render_packet_rebuilds += 1
-            self.render_adapter.retain_inputs(
-                snapshot.revision,
-                environment_snapshot,
-            )
-            self._render_packet_input_key = input_key
 
     def render_packet_for(self, receiver):
         """Return a packet for any receiver from the latest prepared snapshot."""
@@ -135,15 +109,7 @@ class StaticLightingController:
                 "packet lighting backend cannot packetize rollback-only receiver "
                 f"{receiver_id!r}"
             )
-        if self.render_snapshot is None:
-            return None
-        packet = self.render_adapter.packet_for(
-            self.render_snapshot,
-            receiver,
-            self.render_environment_snapshot,
-        )
-        self.render_packets[receiver_id] = packet
-        return packet
+        return super().render_packet_for(receiver)
 
     def sync_aliases(self):
         """Delegate rollback scene projection to the lazy legacy bridge."""

@@ -4,16 +4,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import numpy as np
+
 from OpenGL.GL import (
     GL_TEXTURE_2D,
     GL_TEXTURE_CUBE_MAP,
     GL_TEXTURE0,
     GL_TEXTURE4,
-    GL_TEXTURE5,
-    GL_TEXTURE6,
     GL_TRUE,
     glActiveTexture,
     glBindTexture,
+    glDeleteProgram,
     glGetUniformLocation,
     glUniform1f,
     glUniform1i,
@@ -30,8 +31,8 @@ from engine.rendering.point_shadow import PointShadowBinding
 from engine.lighting_receiver import LightingEvaluation, LocalLightPolicy
 from engine.rendering.lighting_adapter import ReceiverLightingPacket
 from engine.rendering.packet_shader_source import (
-    PACKET_LIGHTING_FRAGMENT_SOURCE,
     PACKET_LIGHTING_VERTEX_SOURCE,
+    packet_lighting_fragment_source,
 )
 from engine.rendering.packet_gpu_storage import (
     PacketGpuStorage,
@@ -53,7 +54,7 @@ class PacketLightingBackendUnavailable(RuntimeError):
 
 
 MAX_PACKET_POINT_LIGHTS = 16
-MAX_PACKET_POINT_SHADOWS = 2
+MAX_PACKET_POINT_SHADOWS = 8
 IDENTITY_MATRIX4 = (
     1.0, 0.0, 0.0, 0.0,
     0.0, 1.0, 0.0, 0.0,
@@ -117,6 +118,11 @@ class PacketTextureLightingShader:
     locations: dict[str, int]
     storage: PacketGpuStorage
     _uploaded_key: tuple | None = field(default=None, init=False, repr=False)
+    # Uniform values belong to this program and survive switches to other
+    # programs. Receiver changes need only upload values that actually differ.
+    _uniform_values: dict[str, object] = field(
+        default_factory=dict, init=False, repr=False
+    )
     directional_shadow: DirectionalShadowBinding | None = field(
         default=None,
         init=False,
@@ -132,6 +138,12 @@ class PacketTextureLightingShader:
         init=False,
         repr=False,
     )
+    _bound_point_shadow_count: int = field(default=0, init=False, repr=False)
+
+    @property
+    def point_shadow_capacity(self) -> int:
+        # Material, three record textures and the sun map occupy units 0..4.
+        return min(MAX_PACKET_POINT_SHADOWS, max(0, self.storage.limits.texture_image_units - 5))
 
     def set_directional_shadow(
         self,
@@ -150,17 +162,12 @@ class PacketTextureLightingShader:
 
     def set_point_shadows(self, shadows) -> None:
         values = tuple(shadows or ())
-        if len(values) > MAX_PACKET_POINT_SHADOWS:
+        if len(values) > self.point_shadow_capacity:
             raise ValueError(
-                f"at most {MAX_PACKET_POINT_SHADOWS} point shadows may be bound"
+                f"at most {self.point_shadow_capacity} point shadows may be bound"
             )
         if not all(isinstance(value, PointShadowBinding) for value in values):
             raise TypeError("point shadows must be PointShadowBinding values")
-        if values and self.storage.limits.texture_image_units < 7:
-            raise PacketLightingBackendUnavailable(
-                "point shadow sampling requires seven fragment texture units; "
-                f"available={self.storage.limits.texture_image_units}"
-            )
         if values != self.point_shadows:
             self.point_shadows = values
             self._uploaded_key = None
@@ -209,8 +216,8 @@ class PacketTextureLightingShader:
         self._uniform1i("u_environment_region_records", 2)
         self._uniform1i("u_environment_portal_records", 3)
         self._uniform1i("u_sun_shadow_map", 4)
-        self._uniform1i("u_point_shadow_map0", 5)
-        self._uniform1i("u_point_shadow_map1", 6)
+        for index in range(self.point_shadow_capacity):
+            self._uniform1i(f"u_point_shadow_map{index}", 5 + index)
         self._bind_directional_shadow_texture()
         self._bind_point_shadow_textures()
         local_width, region_width, portal_width = self.storage.widths
@@ -328,14 +335,8 @@ class PacketTextureLightingShader:
                     -2 if light.casts_shadows else -1,
                 ),
             )
-        self._uniform1f(
-            "u_point_shadow_bias0",
-            self.point_shadows[0].bias if len(self.point_shadows) > 0 else 0.0,
-        )
-        self._uniform1f(
-            "u_point_shadow_bias1",
-            self.point_shadows[1].bias if len(self.point_shadows) > 1 else 0.0,
-        )
+        for index, shadow in enumerate(self.point_shadows):
+            self._uniform1f(f"u_point_shadow_bias{index}", shadow.bias)
 
     def _upload_environment(self, packet: ReceiverLightingPacket) -> None:
         environment = packet.environment
@@ -355,16 +356,17 @@ class PacketTextureLightingShader:
             glActiveTexture(GL_TEXTURE0)
 
     def _bind_point_shadow_textures(self) -> None:
-        units = (GL_TEXTURE5, GL_TEXTURE6)
         try:
-            for index, unit in enumerate(units):
+            count = len(self.point_shadows)
+            for index in range(max(count, self._bound_point_shadow_count)):
                 texture = (
                     self.point_shadows[index].texture
                     if index < len(self.point_shadows)
                     else 0
                 )
-                glActiveTexture(unit)
+                glActiveTexture(GL_TEXTURE0 + 5 + index)
                 glBindTexture(GL_TEXTURE_CUBE_MAP, int(texture))
+            self._bound_point_shadow_count = count
         finally:
             glActiveTexture(GL_TEXTURE0)
 
@@ -391,32 +393,55 @@ class PacketTextureLightingShader:
     def _uniform1i(self, name: str, value: int) -> None:
         location = self.locations[name]
         if location >= 0:
-            glUniform1i(location, int(value))
+            value = int(value)
+            if self._uniform_values.get(name) != value:
+                glUniform1i(location, value)
+                self._uniform_values[name] = value
 
     def _uniform1f(self, name: str, value: float) -> None:
         location = self.locations[name]
         if location >= 0:
-            glUniform1f(location, float(value))
+            value = float(value)
+            if self._uniform_values.get(name) != value:
+                glUniform1f(location, value)
+                self._uniform_values[name] = value
 
     def _uniform2f(self, name: str, value) -> None:
         location = self.locations[name]
         if location >= 0:
-            glUniform2f(location, float(value[0]), float(value[1]))
+            values = (float(value[0]), float(value[1]))
+            if self._uniform_values.get(name) != values:
+                glUniform2f(location, *values)
+                self._uniform_values[name] = values
 
     def _uniform3f(self, name: str, value) -> None:
         location = self.locations[name]
         if location >= 0:
-            glUniform3f(location, float(value[0]), float(value[1]), float(value[2]))
+            values = (float(value[0]), float(value[1]), float(value[2]))
+            if self._uniform_values.get(name) != values:
+                glUniform3f(location, *values)
+                self._uniform_values[name] = values
 
     def _uniform4f(self, name: str, value) -> None:
         location = self.locations[name]
         if location >= 0:
-            self._location_uniform4f(location, value)
+            values = (
+                float(value[0]), float(value[1]), float(value[2]), float(value[3])
+            )
+            if self._uniform_values.get(name) != values:
+                self._location_uniform4f(location, values)
+                self._uniform_values[name] = values
 
     def _uniform_matrix4(self, name: str, value) -> None:
         location = self.locations[name]
         if location >= 0:
-            glUniformMatrix4fv(location, 1, GL_TRUE, value)
+            matrix = np.ascontiguousarray(value, dtype=np.float32)
+            # Keep a value snapshot so in-place edits to model matrices still
+            # reach the GPU. Tuples and 2D arrays follow the same upload path.
+            key = matrix.tobytes()
+            if self._uniform_values.get(name) != key:
+                glUniformMatrix4fv(location, 1, GL_TRUE, matrix)
+                self._uniform_values[name] = key
 
     @staticmethod
     def _location_uniform4f(location: int, value) -> None:
@@ -450,10 +475,16 @@ def get_packet_texture_lighting_shader() -> PacketTextureLightingShader | None:
     if _packet_shader_failed:
         return None
 
+    storage = None
+    program = None
     try:
+        storage = PacketGpuStorage.from_context()
+        point_shadow_capacity = min(
+            MAX_PACKET_POINT_SHADOWS, max(0, storage.limits.texture_image_units - 5)
+        )
         program = compile_program(
             PACKET_LIGHTING_VERTEX_SOURCE,
-            PACKET_LIGHTING_FRAGMENT_SOURCE,
+            packet_lighting_fragment_source(point_shadow_capacity),
         )
         scalar_names = (
             "u_texture",
@@ -478,10 +509,6 @@ def get_packet_texture_lighting_shader() -> PacketTextureLightingShader | None:
             "u_model_matrix",
             "u_model_transform_enabled",
             "u_point_light_count",
-            "u_point_shadow_map0",
-            "u_point_shadow_map1",
-            "u_point_shadow_bias0",
-            "u_point_shadow_bias1",
             "u_brightness_area_count",
             "u_local_light_records",
             "u_local_light_record_width",
@@ -513,14 +540,23 @@ def get_packet_texture_lighting_shader() -> PacketTextureLightingShader | None:
                 f"u_point_light_shadow_slots[{index}]"
                 for index in range(MAX_PACKET_POINT_LIGHTS)
             ),
+            *tuple(
+                name
+                for index in range(point_shadow_capacity)
+                for name in (f"u_point_shadow_map{index}", f"u_point_shadow_bias{index}")
+            ),
         )
         _packet_shader = PacketTextureLightingShader(
             program=program,
             locations=_locations(program, scalar_names),
-            storage=PacketGpuStorage.from_context(),
+            storage=storage,
         )
         return _packet_shader
     except Exception as exc:
+        if storage is not None:
+            storage.dispose()
+        if program is not None:
+            glDeleteProgram(program)
         _packet_shader_failed = True
         print(f"Warning: packet lighting shader unavailable: {exc}")
         return None

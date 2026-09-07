@@ -1,5 +1,7 @@
 """Explicit world receiver policies introduced during lighting migration."""
 
+from dataclasses import replace
+
 from engine.lighting_receiver import (
     LightingEvaluation,
     LightingReceiver,
@@ -116,6 +118,10 @@ GOBLIN_LIGHTING_RECEIVER = LightingReceiver(
     clamp_lit_material=True,
 )
 
+SKELETON_LIGHTING_RECEIVER = replace(
+    GOBLIN_LIGHTING_RECEIVER, receiver_id="world.actor.skeleton", point=True
+)
+
 CPU_BAKED_SLAB_LIGHTING_RECEIVER = LightingReceiver(
     receiver_id="world.slab.cpu_baked",
     directional=True,
@@ -220,6 +226,7 @@ PACKET_RUNTIME_LIGHTING_RECEIVERS = (
     GRASS_LIGHTING_RECEIVER,
     ROCK_LIGHTING_RECEIVER,
     GOBLIN_LIGHTING_RECEIVER,
+    SKELETON_LIGHTING_RECEIVER,
     TEXTURED_STATIC_WALL_LIGHTING_RECEIVER,
     DYNAMIC_SLAB_LIGHTING_RECEIVER,
     DYNAMIC_OBJECT_LIGHTING_RECEIVER,

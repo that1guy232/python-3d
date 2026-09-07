@@ -16,6 +16,7 @@ class SceneResourceDisposer:
         "road",
         "decal_batch",
         "goblin_batch",
+        "skeleton_batch",
     )
     COLLECTION_RESOURCE_ATTRS = (
         "tree_meshes",
@@ -117,6 +118,7 @@ class SceneResourceDisposer:
                 "torches",
                 "creatures",
                 "goblins",
+                "skeletons",
                 "chests",
                 "showcase_chests",
                 "showcase_polygons",
@@ -134,6 +136,7 @@ class SceneResourceDisposer:
         resources.road = None
         resources.decal_batch = None
         resources.goblin_batch = None
+        resources.skeleton_batch = None
         if hasattr(resources, "collision_spatial_index"):
             resources.collision_spatial_index = None
         else:
@@ -166,6 +169,7 @@ class SceneResourceDisposer:
                 "torches",
                 "creatures",
                 "goblins",
+                "skeletons",
                 "chests",
                 "showcase_chests",
                 "showcase_polygons",

@@ -17,11 +17,7 @@ from OpenGL.GL import (
     glBufferSubData,
     glDeleteBuffers,
     glEnableClientState,
-    glVertexPointer,
-    glColorPointer,
-    glTexCoordPointer,
     glClientActiveTexture,
-    glNormalPointer,
     glDrawArrays,
     glDisableClientState,
     glBindTexture,
@@ -50,6 +46,15 @@ from OpenGL.GL import (
     GL_TEXTURE_ENV,
     GL_DYNAMIC_DRAW,
     GL_STATIC_DRAW,
+)
+# Every pointer below is an offset into a bound VBO, never a Python array.
+# The raw entry points avoid client-memory conversion and lifetime tracking
+# on each draw while retaining PyOpenGL's normal OpenGL error checks.
+from OpenGL.raw.GL.VERSION.GL_1_1 import (
+    glColorPointer,
+    glNormalPointer,
+    glTexCoordPointer,
+    glVertexPointer,
 )
 
 from engine.lighting_receiver import LightingReceiver, ReceiverShaderFlags

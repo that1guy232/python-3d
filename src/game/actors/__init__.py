@@ -9,6 +9,7 @@ _EXPORTS = {
     "CombatIntent": (".creature", "CombatIntent"),
     "Creature": (".creature", "Creature"),
     "Goblin": (".goblin", "Goblin"),
+    "Skeleton": (".skeleton", "Skeleton"),
 }
 
 __all__ = list(_EXPORTS)

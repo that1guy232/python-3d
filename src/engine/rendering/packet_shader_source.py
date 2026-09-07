@@ -104,7 +104,7 @@ void main()
 }
 """
 
-PACKET_LIGHTING_FRAGMENT_SOURCE = r"""#version 120
+_PACKET_LIGHTING_FRAGMENT_TEMPLATE = r"""#version 120
 
 uniform sampler2D u_texture;
 uniform float u_exposure;
@@ -128,10 +128,7 @@ uniform int u_point_light_count;
 uniform vec4 u_point_light_position_ranges[MAX_POINT_LIGHTS];
 uniform vec4 u_point_light_color_intensities[MAX_POINT_LIGHTS];
 uniform int u_point_light_shadow_slots[MAX_POINT_LIGHTS];
-uniform samplerCube u_point_shadow_map0;
-uniform samplerCube u_point_shadow_map1;
-uniform float u_point_shadow_bias0;
-uniform float u_point_shadow_bias1;
+__POINT_SHADOW_UNIFORMS__
 uniform int u_brightness_area_count;
 uniform sampler2D u_local_light_records;
 uniform float u_local_light_record_width;
@@ -416,11 +413,10 @@ float point_shadow_visibility(
     if (shadow_slot < -1) {
         return 0.0;
     }
-    float normalized_depth = shadow_slot == 0
-        ? textureCube(u_point_shadow_map0, light_to_fragment).r
-        : textureCube(u_point_shadow_map1, light_to_fragment).r;
+    float normalized_depth = 1.0;
+    float bias = 0.0;
+__POINT_SHADOW_SAMPLES__
     float closest_distance = normalized_depth * light_range;
-    float bias = shadow_slot == 0 ? u_point_shadow_bias0 : u_point_shadow_bias1;
     return distance_to_light - bias <= closest_distance ? 1.0 : 0.0;
 }
 
@@ -598,3 +594,26 @@ void main()
     gl_FragColor = vec4(rgb, texel.a * v_color.a);
 }
 """
+
+
+def packet_lighting_fragment_source(point_shadow_capacity: int = 2) -> str:
+    """Use explicit sampler branches, compatible with GLSL 1.20 drivers."""
+    capacity = max(0, int(point_shadow_capacity))
+    uniforms = "\n".join(
+        f"uniform samplerCube u_point_shadow_map{i};\n"
+        f"uniform float u_point_shadow_bias{i};"
+        for i in range(capacity)
+    )
+    samples = "\n".join(
+        f"    {'if' if i == 0 else 'else if'} (shadow_slot == {i}) {{\n"
+        f"        normalized_depth = textureCube(u_point_shadow_map{i}, light_to_fragment).r;\n"
+        f"        bias = u_point_shadow_bias{i};\n"
+        "    }"
+        for i in range(capacity)
+    )
+    return _PACKET_LIGHTING_FRAGMENT_TEMPLATE.replace(
+        "__POINT_SHADOW_UNIFORMS__", uniforms
+    ).replace("__POINT_SHADOW_SAMPLES__", samples)
+
+
+PACKET_LIGHTING_FRAGMENT_SOURCE = packet_lighting_fragment_source()

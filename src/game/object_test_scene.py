@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterator
-from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -39,14 +38,6 @@ from pygame.math import Vector3
 from engine.camera import Camera
 from engine.collision import movement_blocked_by_wall
 from engine.config import HEIGHT, WIDTH
-from engine.core.compat_shader import (
-    get_texture_color_exposure_scale,
-    get_texture_lighting_state,
-    set_texture_fog_state,
-    set_texture_lighting_state,
-    set_texture_shine_state,
-    set_texture_vibrance_state,
-)
 from engine.core.gl_state import use_fixed_pipeline
 from engine.core.mesh import BatchedMesh
 from engine.core.scene import Scene
@@ -55,11 +46,22 @@ from engine.render_style_state import (
     get_render_shine_state,
     get_render_vibrance_state,
     update_render_fog_state,
+    update_render_shine_state,
+    update_render_vibrance_state,
 )
+from engine.rendering.lighting import SceneLighting
+from engine.rendering.scene_lighting import SceneLightingRenderer
 from engine.rendering.sprite import WorldSprite, draw_sprites_batched
 from engine.textures.texture_utils import get_texture_size
 from game.actors.goblin import Goblin, GoblinRenderBatch
+from game.actors.skeleton import Skeleton, SkeletonRenderBatch
 from game.resources.texture_manager import load_world_textures
+from game.world.lighting_receivers import (
+    GROUND_LIGHTING_RECEIVER,
+    PACKET_RUNTIME_LIGHTING_RECEIVERS,
+    ROAD_LIGHTING_RECEIVER,
+    SPRITE_LIGHTING_RECEIVER,
+)
 from game.world.objects import Chest, Door, GroundTile, Road, Torch, Window
 from game.world.objects.building import Building
 from game.world.objects.door import build_door_render_batch
@@ -155,11 +157,25 @@ class ObjectTestScene(Scene):
         self.sprites: list[WorldSprite] = []
         self.goblin: Goblin | None = None
         self.goblin_batch: GoblinRenderBatch | None = None
+        self.skeleton: Skeleton | None = None
+        self.skeleton_batch: SkeletonRenderBatch | None = None
         self.door_batch = None
         self.window_batch = None
         self.polygon_batch = None
         self.object_manifest: dict[str, int] = {}
         self.sun_direction = Vector3(-0.35, -1.0, 0.20).normalize()
+        center = Vector3(0.0, 0.0, self.FLOOR_CENTER_Z)
+        self.lighting = SceneLighting(
+            sun_position=center - self.sun_direction * 2200.0,
+            sun_target=center,
+            sky_color=self.CLEAR_COLOR,
+        )
+        self.lighting_renderer = SceneLightingRenderer(
+            receivers=PACKET_RUNTIME_LIGHTING_RECEIVERS,
+            shadow_sources=self._shadow_sources,
+            view_distance=self.VIEW_DISTANCE,
+        )
+        self.lighting_renderer.shadows.sun_shadow_extent = 1400.0
 
     def initialize_steps(self) -> Iterator[tuple[str, float]]:
         """Create the scene incrementally for ``LoadingScene``."""
@@ -229,33 +245,19 @@ class ObjectTestScene(Scene):
         self.textures = textures
 
     def _configure_render_style(self) -> None:
-        # Compatibility-shader state is shared between scenes, so replace the
-        # normal world's lighting/fog snapshot with a neutral showroom setup.
         if self._previous_render_style is None:
             self._previous_render_style = (
                 get_render_fog_state(),
                 get_render_vibrance_state(),
                 get_render_shine_state(),
-                get_texture_lighting_state(),
-                get_texture_color_exposure_scale(),
             )
-        set_texture_lighting_state(
-            base_brightness=1.0,
-            sun_direction=self.sun_direction,
-            brightness_areas=(),
-            covered_regions=(),
-            ambient=1.0,
-            diffuse=0.0,
-            max_factor=1.0,
-            exposure_scale=1.0,
-        )
-        set_texture_fog_state(
+        update_render_fog_state(
             enabled=False,
             density=0.0,
             color=self.CLEAR_COLOR,
         )
-        set_texture_vibrance_state(1.0)
-        set_texture_shine_state(enabled=False)
+        update_render_vibrance_state(1.0)
+        update_render_shine_state(enabled=True)
 
     def _own(self, value: Any) -> Any:
         if value is not None and callable(getattr(value, "dispose", None)):
@@ -287,7 +289,8 @@ class ObjectTestScene(Scene):
             vertex = vertices[index]
             u, v = uvs[index]
             rows.append(
-                (vertex.x, vertex.y, vertex.z, 0.82, 0.86, 0.78, u, v)
+                (vertex.x, vertex.y, vertex.z, 0.82, 0.86, 0.78,
+                 0.0, 1.0, 0.0, u, v)
             )
 
         ground_texture = int(self.textures["ground_tex"])
@@ -304,6 +307,7 @@ class ObjectTestScene(Scene):
                 exposure_baseline=1.0,
                 environment_lighting=False,
                 shine_enabled=False,
+                lighting_receiver=GROUND_LIGHTING_RECEIVER,
             )
         )
 
@@ -322,7 +326,7 @@ class ObjectTestScene(Scene):
             default_brightness=1.0,
             lighting=None,
             sun_direction=self.sun_direction,
-            dynamic_lighting=False,
+            dynamic_lighting=True,
         )
         self.roads.append(self._own(road))
 
@@ -425,7 +429,7 @@ class ObjectTestScene(Scene):
                 default_brightness=1.0,
                 lighting=None,
                 sun_direction=self.sun_direction,
-                dynamic_lighting=False,
+                dynamic_lighting=True,
             )
             for mesh in meshes:
                 self.fence_meshes.append(self._own(mesh))
@@ -463,6 +467,19 @@ class ObjectTestScene(Scene):
                 material_texture=self.textures["goblin_material_tex"],
             )
         )
+
+        self.skeleton = self._own(Skeleton(
+            Vector3(130.0, 0.0, -505.0),
+            material_texture=self.textures["building_material_tex"],
+            camera=self.camera,
+            ground_height_at=self.ground_height_at,
+            move_speed=0.0,
+            roam_radius=1.0,
+            chase_radius=0.0,
+            chase_give_up_radius=0.0,
+        ))
+        self.skeleton.combat_enabled = False
+        self.skeleton_batch = self._own(SkeletonRenderBatch((self.skeleton,)))
 
         polygon_specs = (
             (-640.0, [(-34.0, -28.0), (34.0, -28.0), (0.0, 34.0)]),
@@ -688,6 +705,7 @@ class ObjectTestScene(Scene):
                 spec,
                 building_index=building_index,
             )
+            self.lighting.extend_point_lights(point_lights)
             building_torches = Torch.build_for_point_lights(
                 point_lights,
                 texture=self.textures["torch_tex"],
@@ -702,7 +720,7 @@ class ObjectTestScene(Scene):
             default_brightness=1.0,
             sun_direction=self.sun_direction,
             lighting=None,
-            dynamic_lighting=False,
+            dynamic_lighting=True,
         )
         for batch in self.wall_batches:
             self._own(batch)
@@ -730,6 +748,10 @@ class ObjectTestScene(Scene):
             "chests": len(self.chests),
             "polygons": len(self.polygons),
             "goblins": 1 if self.goblin is not None else 0,
+            "skeletons": 1 if self.skeleton is not None else 0,
+            "skeleton_model_vertices": (
+                self.skeleton.model_vertex_count if self.skeleton is not None else 0
+            ),
         }
 
     def apply_mouse_delta(
@@ -760,6 +782,8 @@ class ObjectTestScene(Scene):
             torch.update(frame_dt)
         if self.goblin is not None:
             self.goblin.update(frame_dt)
+        if self.skeleton is not None:
+            self.skeleton.update(frame_dt)
 
     def _update_walking(self, dt: float) -> None:
         keys = pygame.key.get_pressed()
@@ -813,6 +837,9 @@ class ObjectTestScene(Scene):
     def handle_event(self, event) -> None:
         if event.type != pygame.KEYDOWN:
             return
+        if event.key == pygame.K_l:
+            self.lighting_renderer.toggle()
+            return
         if event.key == pygame.K_ESCAPE:
             if self.next_scene is not None:
                 return
@@ -857,6 +884,19 @@ class ObjectTestScene(Scene):
                 best_target = target
         return best_target
 
+    def _shadow_sources(self):
+        """Supply the same authored objects to the shared shadow renderer."""
+        yield from self.tree_meshes
+        yield from self.grass_meshes
+        yield from self.rock_meshes
+        yield from self.fence_meshes
+        yield from self.wall_batches
+        yield from self.roads
+        yield from self.chests
+        yield self.door_batch
+        yield self.window_batch
+        yield self.polygon_batch
+
     def render(
         self,
         *,
@@ -864,6 +904,12 @@ class ObjectTestScene(Scene):
         text=None,
         fps: float | None = None,
     ) -> None:  # pragma: no cover - visual
+        self.lighting_renderer.begin_frame(
+            camera=self.camera,
+            lighting=self.lighting,
+            profiler=getattr(self, "profiler", None),
+        )
+        batch_lighting = self.lighting_renderer.batch_draw_args()
         use_fixed_pipeline()
         glEnable(GL_DEPTH_TEST)
         glDisable(GL_CULL_FACE)
@@ -898,45 +944,64 @@ class ObjectTestScene(Scene):
             self.floor_mesh.draw(
                 camera=self.camera,
                 view_distance=self.VIEW_DISTANCE,
+                **self.lighting_renderer.draw_args(GROUND_LIGHTING_RECEIVER),
             )
         for road in self.roads:
-            road.draw(camera=self.camera, view_distance=self.VIEW_DISTANCE)
+            road.draw(
+                camera=self.camera,
+                view_distance=self.VIEW_DISTANCE,
+                **self.lighting_renderer.draw_args(ROAD_LIGHTING_RECEIVER),
+            )
         BatchedMesh.draw_many(
             self.wall_batches,
             camera=self.camera,
             view_distance=self.VIEW_DISTANCE,
+            **batch_lighting,
         )
         if self.polygon_batch is not None:
             self.polygon_batch.draw(
                 camera=self.camera,
                 view_distance=self.VIEW_DISTANCE,
+                **batch_lighting,
             )
         BatchedMesh.draw_many(
             self.fence_meshes,
             camera=self.camera,
             view_distance=self.VIEW_DISTANCE,
+            **batch_lighting,
         )
         BatchedMesh.draw_many(
             (*self.tree_meshes, *self.grass_meshes, *self.rock_meshes),
             camera=self.camera,
             view_distance=self.VIEW_DISTANCE,
+            **batch_lighting,
         )
         if self.door_batch is not None:
             self.door_batch.draw(
                 camera=self.camera,
                 view_distance=self.VIEW_DISTANCE,
+                **batch_lighting,
             )
         if self.window_batch is not None:
             self.window_batch.draw(
                 camera=self.camera,
                 view_distance=self.VIEW_DISTANCE,
+                **batch_lighting,
             )
         for chest in self.chests:
-            chest.draw(camera=self.camera)
-        if self.goblin_batch is not None:
-            self.goblin_batch.draw(
+            chest.draw(
+                camera=self.camera,
+                **self.lighting_renderer.draw_args(chest.packet_lighting_receiver),
+            )
+        for actor_batch in (self.goblin_batch, self.skeleton_batch):
+            if actor_batch is None:
+                continue
+            actor_batch.draw(
                 camera=self.camera,
                 view_distance=self.VIEW_DISTANCE,
+                **self.lighting_renderer.draw_args(
+                    actor_batch.packet_lighting_receiver
+                ),
             )
         draw_sprites_batched(
             self.sprites,
@@ -946,6 +1011,7 @@ class ObjectTestScene(Scene):
             sun_direction=self.sun_direction,
             profiler=getattr(self, "profiler", None),
             static_data=False,
+            **self.lighting_renderer.draw_args(SPRITE_LIGHTING_RECEIVER),
         )
 
         if show_hud and text is not None:
@@ -964,14 +1030,14 @@ class ObjectTestScene(Scene):
                 key="object_test_title",
             )
             text.draw_text(
-                "WASD move  |  Mouse look  |  Shift sprint  |  E interact  |  Esc menu",
+                "WASD move  |  Mouse look  |  Shift sprint  |  E interact  |  L lighting  |  Esc menu",
                 24,
                 52,
                 color=(218, 229, 235, 255),
                 key="object_test_controls",
             )
             text.draw_text(
-                f"Exhibit: {section}",
+                f"Exhibit: {section}  |  Lighting: {'ON' if self.lighting_renderer.enabled else 'OFF (unlit)'}",
                 24,
                 80,
                 color=(255, 222, 154, 255),
@@ -1015,7 +1081,7 @@ class ObjectTestScene(Scene):
         if z > -390.0:
             return "Fence variants"
         if z > -600.0:
-            return "Chest and goblin"
+            return "Chest, goblin, and skeleton"
         if z > -830.0:
             return "Extruded polygons"
         return "Buildings, doors, windows, and torches"
@@ -1024,6 +1090,7 @@ class ObjectTestScene(Scene):
         if self._disposed:
             return
         self._disposed = True
+        self.lighting_renderer.dispose()
         if self.goblin is not None:
             self.goblin.kill()
 
@@ -1059,6 +1126,8 @@ class ObjectTestScene(Scene):
         self.floor_mesh = None
         self.goblin = None
         self.goblin_batch = None
+        self.skeleton = None
+        self.skeleton_batch = None
         self.door_batch = None
         self.window_batch = None
         self.polygon_batch = None
@@ -1069,98 +1138,18 @@ class ObjectTestScene(Scene):
         self._previous_render_style = None
         if previous is None:
             return
-        fog, vibrance, shine, lighting, exposure_scale = previous
-        try:
-            brightness_areas = self._brightness_areas_from_snapshot(lighting)
-            covered_regions = self._covered_regions_from_snapshot(lighting)
-            lighting_source = SimpleNamespace(
-                light_direction=lighting.light_direction,
-                ambient=lighting.light_ambient,
-                diffuse=lighting.light_diffuse,
-                max_factor=lighting.light_max_factor,
-            )
-            set_texture_lighting_state(
-                base_brightness=lighting.base_brightness,
-                lighting=lighting_source,
-                brightness_areas=brightness_areas,
-                covered_regions=covered_regions,
-                ambient=lighting.light_ambient,
-                diffuse=lighting.light_diffuse,
-                max_factor=lighting.light_max_factor,
-                exposure_scale=exposure_scale,
-            )
-            set_texture_fog_state(
-                enabled=fog.enabled,
-                density=fog.density,
-                color=fog.color,
-            )
-            set_texture_vibrance_state(vibrance.vibrance)
-            set_texture_shine_state(
-                enabled=shine.enabled,
-                strength=shine.strength,
-                power=shine.power,
-                fresnel=shine.fresnel,
-                tint=shine.tint,
-            )
-        except Exception:
-            pass
-
-    @staticmethod
-    def _brightness_areas_from_snapshot(lighting) -> list[dict[str, Any]]:
-        areas: list[dict[str, Any]] = []
-        for index, packed in enumerate(lighting.brightness_areas):
-            center_x, center_z, radius, value = packed
-            packed_bounds = lighting.brightness_bounds[index]
-            bounds = None if packed_bounds[0] > packed_bounds[1] else packed_bounds
-            areas.append(
-                {
-                    "center": Vector3(center_x, 0.0, center_z),
-                    "radius": radius,
-                    "value": value,
-                    "falloff": lighting.brightness_falloffs[index],
-                    "bounds": bounds,
-                    "indoor_only": bool(lighting.brightness_indoor_only[index]),
-                    "floor_scale": lighting.brightness_floor_scales[index],
-                }
-            )
-        return areas
-
-    @staticmethod
-    def _covered_regions_from_snapshot(lighting) -> list[dict[str, Any]]:
-        regions = [
-            {
-                "min_x": bounds[0],
-                "max_x": bounds[1],
-                "min_z": bounds[2],
-                "max_z": bounds[3],
-                "factor": lighting.environment_region_factors[index],
-                "openings": [],
-            }
-            for index, bounds in enumerate(lighting.environment_regions)
-        ]
-        side_names = ("north", "east", "south", "west")
-        for packed, params in zip(
-            lighting.environment_openings,
-            lighting.environment_opening_params,
-        ):
-            region_index, side_code, center_x, center_z = packed
-            width, depth, side_fade, edge_factor = params
-            index = int(round(region_index))
-            side_index = int(round(side_code))
-            if not (0 <= index < len(regions) and 0 <= side_index < len(side_names)):
-                continue
-            regions[index]["openings"].append(
-                {
-                    "side": side_names[side_index],
-                    "center_x": center_x,
-                    "center_z": center_z,
-                    "width": width,
-                    "depth": depth,
-                    "side_fade": side_fade,
-                    "edge_factor": edge_factor,
-                }
-            )
-        return regions
+        fog, vibrance, shine = previous
+        update_render_fog_state(
+            enabled=fog.enabled, density=fog.density, color=fog.color
+        )
+        update_render_vibrance_state(vibrance.vibrance)
+        update_render_shine_state(
+            enabled=shine.enabled,
+            strength=shine.strength,
+            power=shine.power,
+            fresnel=shine.fresnel,
+            tint=shine.tint,
+        )
 
 
 def create_object_test_scene() -> ObjectTestScene:

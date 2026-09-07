@@ -21,6 +21,7 @@ from game.config import (
     FOV,
     HEIGHT,
     PERFORMANCE_SETUP_TIMING,
+    SKELETON_COUNT,
     STARTING_POS,
     WIDTH,
 )
@@ -66,6 +67,7 @@ class WorldScene(Scene):
     grass_meshes = state_alias("render_resources", "grass_meshes")
     rock_meshes = state_alias("render_resources", "rock_meshes")
     goblin_batch = state_alias("render_resources", "goblin_batch")
+    skeleton_batch = state_alias("render_resources", "skeleton_batch")
     ground_mesh = state_alias("render_resources", "ground_mesh")
     island_boundary = state_alias("render_resources", "island_boundary")
     sky = state_alias("render_resources", "sky")
@@ -107,6 +109,7 @@ class WorldScene(Scene):
     torches = state_alias("build_state", "torches")
     creatures = state_alias("build_state", "creatures")
     goblins = state_alias("build_state", "goblins")
+    skeletons = state_alias("build_state", "skeletons")
     chests = state_alias("build_state", "chests")
     showcase_chests = state_alias("build_state", "showcase_chests")
     showcase_polygons = state_alias("build_state", "showcase_polygons")
@@ -167,6 +170,7 @@ class WorldScene(Scene):
         grass_count: int = 2000,
         rock_count: int = 750,
         building_count: int = 10,
+        skeleton_count: int = SKELETON_COUNT,
         world_content: WorldContent | None = None,
         world_random_seed: int | None = None,
         defer_setup: bool = False,
@@ -174,6 +178,7 @@ class WorldScene(Scene):
     ) -> None:
         super().__init__()
         self.build_state = WorldBuildState()
+        self.skeleton_count = max(0, int(skeleton_count))
         self.render_resources = WorldRenderResources()
         self.ui_state = WorldUIState()
         self._texture_lighting_sync_key = None

@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from game.world.environment import EnvironmentVolume
     from game.actors.creature import CombatCreature
     from game.actors.goblin import Goblin
+    from game.actors.skeleton import Skeleton
     from game.inventory import InventoryItem
     from game.world.objects import Chest, Door, Grass, Road, Rock, Torch, Tree, Window
     from game.world.objects.building import Building
@@ -89,6 +90,7 @@ class WorldBuildState:
     torches: list[Torch] = field(default_factory=list)
     creatures: list[CombatCreature] = field(default_factory=list)
     goblins: list[Goblin] = field(default_factory=list)
+    skeletons: list[Skeleton] = field(default_factory=list)
     chests: list[Chest] = field(default_factory=list)
     showcase_chests: list[Chest] = field(default_factory=list)
     showcase_polygons: list[Polygon] = field(default_factory=list)
@@ -122,6 +124,7 @@ class WorldRenderResources:
     grass_meshes: list[RenderValue] = field(default_factory=list)
     rock_meshes: list[RenderValue] = field(default_factory=list)
     goblin_batch: RenderValue | None = None
+    skeleton_batch: RenderValue | None = None
 
     ground_mesh: RenderValue | None = None
     island_boundary: Disposable | None = None

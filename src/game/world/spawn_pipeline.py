@@ -17,6 +17,7 @@ from game.config import (
     GOBLIN_CHASE_GIVE_UP_RADIUS,
     GOBLIN_CHASE_RADIUS,
     GOBLIN_COUNT,
+    SKELETON_COUNT,
     GOBLIN_MIN_SEPARATION,
     GOBLIN_SPAWN_ATTEMPTS,
     GOBLIN_SPAWN_CLEARANCE,
@@ -24,6 +25,7 @@ from game.config import (
 )
 
 from game.actors.goblin import Goblin, GoblinRenderBatch
+from game.actors.skeleton import Skeleton, SkeletonRenderBatch
 
 from game.world.builder_support import _dispose_values
 from game.world.objects.grass import build_grass_meshes
@@ -47,6 +49,7 @@ def _build_roads_and_spawn_sprites(
     _spawn_trees(scene, tree_count)
 
     _build_goblins(scene)
+    _build_skeletons(scene)
 
     _spawn_grass(scene, grass_count)
 
@@ -267,166 +270,82 @@ def _player_in_building_detector(scene):
 
 
 def _build_goblins(scene) -> None:
+    _build_roaming_enemies(
+        scene, species="goblin", actor_type=Goblin,
+        batch_type=GoblinRenderBatch, default_count=GOBLIN_COUNT,
+    )
 
+
+def _build_skeletons(scene) -> None:
+    _build_roaming_enemies(
+        scene, species="skeleton", actor_type=Skeleton,
+        batch_type=SkeletonRenderBatch, default_count=SKELETON_COUNT,
+        seed_salt=0x534B454C,
+    )
+
+
+def _build_roaming_enemies(
+    scene, *, species, actor_type, batch_type, default_count, seed_salt=0
+) -> None:
+    """Spawn a species using shared terrain, road, and creature clearance rules."""
     resources = getattr(scene, "render_resources", scene)
-    previous_batch = getattr(resources, "goblin_batch", None)
-    dispose_batch = getattr(previous_batch, "dispose", None)
-    if callable(dispose_batch):
-        dispose_batch()
-    resources.goblin_batch = None
-
-    for goblin in getattr(scene, "goblins", ()) or ():
-
-        try:
-            remove_entity = getattr(scene, "remove_entity", None)
-            if callable(remove_entity):
-                remove_entity(goblin)
-            else:
-                if goblin in scene.entities:
-                    scene.entities.remove(goblin)
-                if goblin in getattr(scene, "creatures", ()):
-                    scene.creatures.remove(goblin)
-                for sprite in goblin.get_sprites() or ():
-                    if sprite in scene.sprite_items:
-                        scene.sprite_items.remove(sprite)
-
-        except Exception:
-
-            continue
-
-    goblin_material_tex = getattr(scene, "goblin_material_tex", None)
-
-    scene.goblins = []
-
-    count = max(0, int(getattr(scene, "goblin_count", GOBLIN_COUNT)))
-
+    batch_name = f"{species}_batch"
+    collection_name = f"{species}s"
+    previous_batch = getattr(resources, batch_name, None)
+    if previous_batch is not None:
+        previous_batch.dispose()
+    setattr(resources, batch_name, None)
+    for actor in tuple(getattr(scene, collection_name, ())):
+        scene.remove_entity(actor)
+    actors = []
+    setattr(scene, collection_name, actors)
+    count = max(0, int(getattr(scene, f"{species}_count", default_count)))
     if count <= 0:
-
-        print("Spawned 0 goblins.")
-
         return
 
+    material = getattr(scene, "building_material_tex", None)
     shadow_texture = create_shadow_texture(
-        width_px=96,
-        height_px=96,
-        max_alpha=0.24,
-        inner_ratio=0.14,
-        outer_ratio=0.92,
-        falloff_exp=1.8,
-        pixelated=False,
+        width_px=96, height_px=96, max_alpha=0.24, inner_ratio=0.14,
+        outer_ratio=0.92, falloff_exp=1.8, pixelated=False,
     )
-
-    rng = random.Random(getattr(scene, "world_random_seed", None))
-
+    seed = getattr(scene, "world_random_seed", None)
+    rng = random.Random(None if seed is None else int(seed) ^ seed_salt)
     spawn_blocked = _goblin_position_blocker(scene, block_roads=True)
-
     movement_blocked = _goblin_position_blocker(scene, block_roads=False)
-
-    clearance = max(
-        float(GOBLIN_SPAWN_CLEARANCE),
-        float(getattr(Goblin, "DEFAULT_HEIGHT", 0.0)) * 0.3,
-    )
-
-    min_separation_sq = max(0.0, float(GOBLIN_MIN_SEPARATION)) ** 2
-
-    max_attempts = max(1, int(GOBLIN_SPAWN_ATTEMPTS))
-
-    add_entity = getattr(scene, "add_entity", None)
-
     player_in_building = _player_in_building_detector(scene)
-
-    chase_radius = float(getattr(scene, "goblin_chase_radius", GOBLIN_CHASE_RADIUS))
-
-    chase_give_up_radius = float(
-        getattr(scene, "goblin_chase_give_up_radius", GOBLIN_CHASE_GIVE_UP_RADIUS)
-    )
-
+    clearance = max(float(GOBLIN_SPAWN_CLEARANCE), actor_type.DEFAULT_HEIGHT*0.3)
+    min_separation_sq = max(0.0, float(GOBLIN_MIN_SEPARATION))**2
     for _ in range(count):
-
         spawn = None
-
-        for _attempt in range(max_attempts):
-
+        for _attempt in range(max(1, int(GOBLIN_SPAWN_ATTEMPTS))):
             x, z = _random_goblin_spawn_near_tree(scene, rng)
-
             if spawn_blocked(x, z, clearance):
-
                 continue
-
-            too_close = False
-
-            for other in scene.goblins:
-
-                dx = other.spawn_position.x - x
-
-                dz = other.spawn_position.z - z
-
-                if dx * dx + dz * dz < min_separation_sq:
-
-                    too_close = True
-
-                    break
-
-            if too_close:
-
+            if any(
+                (other.position.x-x)**2 + (other.position.z-z)**2 < min_separation_sq
+                for other in scene.creatures
+            ):
                 continue
-
             spawn = Vector3(x, scene.ground_height_at(x, z), z)
-
             break
-
         if spawn is None:
-
             continue
-
-        try:
-
-            goblin = Goblin(
-                spawn,
-                material_texture=goblin_material_tex,
-                camera=scene.camera,
-                ground_height_at=scene.ground_height_at,
-                position_blocked=movement_blocked,
-                player_in_building=player_in_building,
-                chase_radius=chase_radius,
-                chase_give_up_radius=chase_give_up_radius,
-                shadow_texture=shadow_texture,
-                sound_keys=getattr(scene, "goblin_sound_keys", None),
-                rng=random.Random(rng.randrange(1 << 30)),
-            )
-
-        except (TypeError, ValueError, AttributeError):
-
-            continue
-
-        scene.goblins.append(goblin)
-
-        if callable(add_entity):
-
-            add_entity(goblin)
-
-        else:
-
-            scene.entities.append(goblin)
-
-            if goblin not in scene.creatures:
-                scene.creatures.append(goblin)
-
-            scene.sprite_items.extend(goblin.get_sprites())
-
-    resources.goblin_batch = GoblinRenderBatch(
-        scene.goblins,
-        material_texture=goblin_material_tex,
-        exposure_baseline=float(
-            getattr(getattr(scene, "camera", None), "brightness_default", 1.0)
-        ),
-    )
-
-    print(f"Generated {len(scene.goblins)} procedural 3D goblins.")
-
-    refresh_draw_entities = getattr(scene, "refresh_immediate_entities", None)
-
-    if callable(refresh_draw_entities):
-
-        refresh_draw_entities()
-
+        actor = actor_type(
+            spawn, material_texture=material, camera=scene.camera,
+            ground_height_at=scene.ground_height_at,
+            position_blocked=movement_blocked,
+            player_in_building=player_in_building,
+            chase_radius=float(getattr(scene, f"{species}_chase_radius", GOBLIN_CHASE_RADIUS)),
+            chase_give_up_radius=float(getattr(scene, f"{species}_chase_give_up_radius", GOBLIN_CHASE_GIVE_UP_RADIUS)),
+            shadow_texture=shadow_texture,
+            sound_keys=getattr(scene, f"{species}_sound_keys", () if species == "skeleton" else None),
+            rng=random.Random(rng.randrange(1 << 30)),
+        )
+        actors.append(actor)
+        scene.add_entity(actor)
+    setattr(resources, batch_name, batch_type(
+        actors, material_texture=material,
+        exposure_baseline=float(getattr(scene.camera, "brightness_default", 1.0)),
+    ))
+    print(f"Generated {len(actors)} procedural 3D {collection_name}.")
+    scene.refresh_immediate_entities()

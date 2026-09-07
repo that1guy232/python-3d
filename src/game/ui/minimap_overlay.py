@@ -99,7 +99,7 @@ class MiniMapOverlay:
     the compass/sword HUD sprites instead of a hard-pinned screen overlay.
     """
 
-    _DEFAULT_LAYER_KEYS = frozenset(("roads", "buildings", "goblins", "player"))
+    _DEFAULT_LAYER_KEYS = frozenset(("roads", "buildings", "goblins", "skeletons", "player"))
 
     def __init__(
         self,
@@ -119,6 +119,7 @@ class MiniMapOverlay:
             "roads": MiniMapLayer("roads"),
             "buildings": MiniMapLayer("buildings"),
             "goblins": MiniMapLayer("goblins"),
+            "skeletons": MiniMapLayer("skeletons"),
             "player": MiniMapLayer("player"),
         }
         self._texture_id = 0
@@ -199,7 +200,10 @@ class MiniMapOverlay:
             glDisable(GL_TEXTURE_2D)
             if self._layer_visible("goblins"):
                 with self._profile("minimap.draw_goblin_markers"):
-                    self._draw_goblin_markers(context, right, up)
+                    self._draw_creature_markers(context, right, up, "goblins")
+            if self._layer_visible("skeletons"):
+                with self._profile("minimap.draw_skeleton_markers"):
+                    self._draw_creature_markers(context, right, up, "skeletons")
             if self._layer_visible("player"):
                 with self._profile("minimap.draw_player_marker"):
                     self._draw_player_marker(context, right, up)
@@ -466,15 +470,16 @@ class MiniMapOverlay:
             pygame.draw.rect(surface, (224, 184, 107, 188), rect)
             pygame.draw.rect(surface, (255, 230, 158, 235), rect, width=1)
 
-    def _draw_goblin_markers(
+    def _draw_creature_markers(
         self,
         context: MiniMapContext,
         right: Vector3,
         up: Vector3,
+        species: str,
     ) -> None:
         marker_radius = 3.5
         drawn = 0
-        goblins = getattr(context.scene, "goblins", ()) or ()
+        goblins = getattr(context.scene, species, ()) or ()
         vertices = self._goblin_vertices_for_capacity(len(goblins))
         radius_right = right * (
             (marker_radius / context.panel_size) * self.world_size[0]
@@ -501,11 +506,14 @@ class MiniMapOverlay:
             drawn += 1
 
         if drawn <= 0:
-            self._count("minimap.goblins_drawn", 0)
+            self._count(f"minimap.{species}_drawn", 0)
             return
 
         vertex_count = drawn * 4
-        glColor4f(0.34, 0.95, 0.43, 0.95)
+        if species == "skeletons":
+            glColor4f(0.94, 0.88, 0.70, 0.95)
+        else:
+            glColor4f(0.34, 0.95, 0.43, 0.95)
         glBindBuffer(GL_ARRAY_BUFFER, 0)
         glEnableClientState(GL_VERTEX_ARRAY)
         try:
@@ -513,7 +521,7 @@ class MiniMapOverlay:
             glDrawArrays(GL_QUADS, 0, vertex_count)
         finally:
             glDisableClientState(GL_VERTEX_ARRAY)
-            self._count("minimap.goblins_drawn", drawn)
+            self._count(f"minimap.{species}_drawn", drawn)
 
     def _goblin_vertices_for_capacity(self, goblin_count: int) -> np.ndarray:
         vertex_count = max(0, int(goblin_count)) * 4

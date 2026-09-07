@@ -2,8 +2,8 @@
 
 A first-person 3D world built with Pygame Community Edition, PyOpenGL, and
 NumPy. The game includes procedural terrain and world dressing, generated 3D
-trees, grass, rocks, and goblins, buildings and interiors, interactive doors and chests, creature
-encounters (currently goblins), inventory and battle UI, and packet-based
+trees, grass, rocks, goblins and skeletons, buildings and interiors, interactive doors and chests, creature
+encounters, inventory and battle UI, and packet-based
 lighting with directional and point-light shadows. The terrain is
 presented as an island with a procedural sand shoreline and animated stylized
 water that fades into the atmospheric horizon.
@@ -40,10 +40,16 @@ the project's direct third-party dependencies.
 The main menu can be started with the mouse, Enter, keypad Enter, or Space.
 Choose **Object Test Scene** (or press `T` on the main menu) to enter a
 standalone, walkable showroom containing the core runtime world objects, all
-seven tree forms, four grass forms, six rock forms, the generated goblin model,
+seven tree forms, four grass forms, six rock forms, generated goblin and skeleton models,
 and every fence texture variant.
 In that scene, use WASD, mouse look, Shift to sprint, E to interact, and Escape
-to return to the menu.
+to return to the menu. Press `L` to toggle its shared scene lighting.
+
+Choose **Under sea Crypt** (or press `C` on the main menu) to test the flooded
+crypt level. It has connected vaulted chambers, burial niches, skeletons and
+an interactive reliquary. It uses the normal player controls, settings and
+starting inventory; entering the level grants no equipment. `L` toggles lighting
+for inspection. Use Escape and **Exit to Main Menu** to leave.
 
 ## Project structure
 

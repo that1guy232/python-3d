@@ -19,6 +19,7 @@ from game.world.road_pipeline import (
 )
 from game.world.spawn_pipeline import (
     _build_goblins,
+    _build_skeletons,
     _spawn_grass,
     _spawn_rocks,
     _spawn_trees,
@@ -163,6 +164,7 @@ def create_world_object_step_specs(
             lambda: _spawn_trees(scene, tree_count),
         ),
         WorldObjectBuildStep("Spawning goblins", lambda: _build_goblins(scene)),
+        WorldObjectBuildStep("Spawning skeletons", lambda: _build_skeletons(scene)),
         WorldObjectBuildStep(
             "Generating procedural grass", lambda: _spawn_grass(scene, grass_count)
         ),

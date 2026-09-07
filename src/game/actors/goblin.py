@@ -125,6 +125,12 @@ class Goblin(Creature):
     DEFAULT_ROAM_RADIUS = GOBLIN_ROAM_RADIUS
     DEFAULT_MOVE_SPEED = GOBLIN_MOVE_SPEED
     DEFAULT_MAX_HP = GOBLIN_MAX_HP
+    DISPLAY_NAME = "Goblin"
+    DEFAULT_ATTACK_DAMAGE = 1
+    MODEL_VARIANT_COUNT = GOBLIN_MODEL_VARIANT_COUNT
+    WALK_CYCLE_DISTANCE = GOBLIN_WALK_CYCLE_DISTANCE
+    transformed_pose_vertex_data = staticmethod(transformed_cached_goblin_vertex_data)
+    pose_index = staticmethod(goblin_model_pose_index)
     packet_lighting_receiver = GOBLIN_LIGHTING_RECEIVER
     render_batched = True
     casts_shadows = False
@@ -186,7 +192,7 @@ class Goblin(Creature):
         self._facing_xz = Vector3(0.0, 0.0, 1.0)
         self._avoidance_turn = -1.0 if self.rng.random() < 0.5 else 1.0
         self._model_seed = self.rng.randrange(1 << 30)
-        self._model_variant = self._model_seed % GOBLIN_MODEL_VARIANT_COUNT
+        self._model_variant = self._model_seed % self.MODEL_VARIANT_COUNT
         self._walk_phase = self.rng.uniform(0.0, math.tau)
         self._is_moving = False
         self._model_revision = 0
@@ -212,9 +218,9 @@ class Goblin(Creature):
                 y + height * 0.5,
                 self.spawn_position.z,
             ),
-            display_name="Goblin",
+            display_name=self.DISPLAY_NAME,
             max_hp=max_hp,
-            attack_damage=1,
+            attack_damage=self.DEFAULT_ATTACK_DAMAGE,
         )
 
     def get_sprites(self) -> Iterable[object]:
@@ -231,7 +237,7 @@ class Goblin(Creature):
             self._model_vertex_cache is None
             or self._model_vertex_cache_revision != self._model_revision
         ):
-            self._model_vertex_cache = transformed_cached_goblin_vertex_data(
+            self._model_vertex_cache = self.transformed_pose_vertex_data(
                 (float(self.position.x), self._ground_y, float(self.position.z)),
                 facing=(float(self._facing_xz.x), float(self._facing_xz.z)),
                 height=self._model_height,
@@ -723,7 +729,7 @@ class Goblin(Creature):
         if distance > 1e-8:
             self._walk_phase = (
                 self._walk_phase
-                + math.tau * distance / max(1.0, GOBLIN_WALK_CYCLE_DISTANCE)
+                + math.tau * distance / max(1.0, self.WALK_CYCLE_DISTANCE)
             ) % math.tau
             self._mark_model_dirty()
 
@@ -745,6 +751,9 @@ class GoblinRenderBatch:
     packet_lighting_receiver = GOBLIN_LIGHTING_RECEIVER
     casts_shadows = False
     visible = True
+    pose_count = GOBLIN_MODEL_POSE_COUNT
+    cached_pose_vertex_data = staticmethod(cached_goblin_local_pose_vertex_data)
+    prewarm_pose_cache = staticmethod(prewarm_goblin_pose_cache)
 
     def __init__(
         self,
@@ -778,7 +787,7 @@ class GoblinRenderBatch:
                 goblin._model_variant
             )
         for height, variants in variants_by_height.items():
-            prewarm_goblin_pose_cache(tuple(variants), height=height)
+            self.prewarm_pose_cache(tuple(variants), height=height)
         self._pose_ranges: dict[tuple[float, int, bool, int], tuple[int, int]] = {}
         self._pose_mesh = self._build_pose_atlas(variants_by_height)
         self._mesh: BatchedMesh | None = None
@@ -799,11 +808,11 @@ class GoblinRenderBatch:
             for variant in sorted(variants_by_height[height]):
                 pose_states = [(False, 0), *(
                     (True, pose_index)
-                    for pose_index in range(GOBLIN_MODEL_POSE_COUNT)
+                    for pose_index in range(self.pose_count)
                 )]
                 for moving, pose_index in pose_states:
-                    phase = math.tau * pose_index / GOBLIN_MODEL_POSE_COUNT
-                    vertex_data = cached_goblin_local_pose_vertex_data(
+                    phase = math.tau * pose_index / self.pose_count
+                    vertex_data = self.cached_pose_vertex_data(
                         height=height,
                         walk_phase=phase,
                         moving=moving,
@@ -835,13 +844,13 @@ class GoblinRenderBatch:
             environment_lighting=True,
             shine_enabled=False,
             shader_lighting=True,
-            lighting_receiver=GOBLIN_LIGHTING_RECEIVER,
+            lighting_receiver=self.packet_lighting_receiver,
         )
 
     @staticmethod
     def _pose_key(goblin: Goblin) -> tuple[float, int, bool, int]:
         moving = bool(goblin._is_moving)
-        pose_index = goblin_model_pose_index(
+        pose_index = goblin.pose_index(
             goblin._walk_phase,
             moving=moving,
         )
@@ -973,7 +982,7 @@ class GoblinRenderBatch:
                 environment_lighting=True,
                 shine_enabled=False,
                 shader_lighting=True,
-                lighting_receiver=GOBLIN_LIGHTING_RECEIVER,
+                lighting_receiver=self.packet_lighting_receiver,
             )
         elif vertex_data.size:
             self._mesh.update_vertex_data(vertex_data, keep_vertex_data=False)

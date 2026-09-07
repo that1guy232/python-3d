@@ -43,6 +43,8 @@ py src/main.py
 | `F3` | Toggle performance logging |
 | `F4` | Reset the performance timing window |
 | `T` on the main menu | Load the standalone Object Test Scene |
+| `C` on the main menu | Load Under sea Crypt for testing |
+| `L` in the Object Test Scene or crypt | Toggle scene lighting |
 
 The Object Test Scene uses WASD, mouse look, Shift, E, and Escape; it deliberately
 omits the normal world's jump, inventory, minimap, battle, and pause systems.
@@ -55,7 +57,8 @@ omits the normal world's jump, inventory, minimap, battle, and pause systems.
    first active scene at boot.
 3. The main menu keeps the mouse cursor visible. **Start Game** creates
    `game.world.worldscene.WorldScene(defer_setup=True)`; **Object Test Scene**
-   creates `game.object_test_scene.ObjectTestScene`. Both targets are wrapped in
+   creates `game.object_test_scene.ObjectTestScene`; **Under sea Crypt** creates
+   `game.undersea_crypt_scene.UnderseaCryptScene` for level testing. All targets are wrapped in
    `engine.core.loading_scene.LoadingScene`.
 4. `engine.core.engine.Engine` initializes Pygame/OpenGL, attaches the performance
    logger, forwards input to the active scene, calls scene update/render hooks,
@@ -134,8 +137,37 @@ delegates to `WorldRenderer.render()`, which:
 - Supplies receiver-specific lighting packets to the packet shader and uses
   static VBO batches when available, falling back to immediate rendering for
   objects that need it. Generated goblins reuse a static atlas of low-poly idle
-  and walking poses; per-actor GPU transforms avoid rebuilding their geometry as
+  and walking poses, as do skeletons through their own pose atlas; per-actor GPU transforms avoid rebuilding their geometry as
   they roam.
+
+`BatchedMesh` submits VBO offsets through raw PyOpenGL pointer entry points,
+avoiding Python client-array conversion and retention on each draw. These calls
+require a bound VBO; client-memory arrays must use the regular wrappers. The
+packet shader caches uniform values for its program, so switching receiver
+families only uploads changed values. Matrix values are copied into cache keys
+to detect in-place edits, and a new shader instance starts with an empty cache.
+
+`engine.rendering.scene_lighting.SceneLightingRenderer` provides reusable packet
+lighting and shadow ownership without a dependency on a world scene. Register
+receiver policies and a callable that supplies shadow-casting objects, then call
+`begin_frame(camera=..., lighting=...)`. Pass `batch_draw_args()` to mesh batches
+or `draw_args(receiver)` to individual objects. `set_enabled()` and `toggle()`
+switch lighting without mutating authored lights or rebuilding geometry. Dispose
+the renderer before releasing the GL context. `StaticLightingController` extends
+this renderer with the world's rebuild and compatibility policies.
+
+`SceneShadowRenderer` keeps a two-cubemap budget by default. The packet shader
+supports up to eight point-shadow samplers, bounded by the context's available
+texture units. A compact scene can increase `max_point_shadows` to retain all its
+lights. The crypt retains all seven torch maps and completes their initial faces
+during loading. Traversal then reuses those maps, preventing distant torchlight
+from switching off as camera priorities change. Geometry changes still trigger
+staged refreshes, so the opening reliquary updates its affected shadows.
+
+The crypt reuses world movement, collision, combat, inventory and UI. Its room
+layout and masonry are authored in `crypt_geometry.py`; `crypt_water.py` adds
+translucent animated water over the mosaic floor. The level does not grant a
+starter loadout or change player movement and encounter defaults.
 
 ### Input
 
@@ -193,7 +225,10 @@ separately releases its directional and point-shadow GPU resources.
 | --- | --- |
 | `src/main.py` | Minimal launch file. Builds the first scene and starts `Engine.run()`. |
 | `src/game/__init__.py` | Game package marker for actors, combat, inventory, player systems, UI, resources, and worlds. |
-| `src/game/main_menu.py` | Boot menu scene with buttons for the normal world and the standalone object test scene. |
+| `src/game/main_menu.py` | Boot menu with entries for the normal world, crypt level testing and the standalone object test scene. |
+| `src/game/undersea_crypt_scene.py` | Flooded dungeon orchestration, torch lighting, skeleton encounters and interactive reliquary. |
+| `src/game/world/crypt_geometry.py` | Authored rooms, procedural masonry, vaults, columns, burial niches and collision shapes. |
+| `src/game/world/crypt_water.py` | Translucent tide with animated caustics, highlights and fog. |
 | `src/game/object_test_scene.py` | Independent flat showroom scene with its own loading, first-person movement, collision, exhibit layout, rendering, interactions, and cleanup. |
 | `src/engine/config.py` | Engine display, view, audio mute, and performance defaults. Reads `PY3D_*` environment flags. |
 | `src/game/config.py` | Game movement, sky, island shoreline/water, player, and goblin tuning. Re-exports engine defaults for game modules. |
@@ -242,6 +277,8 @@ the lighting implementation is being changed.
 | `src/engine/rendering/packet_shader_source.py` | Standalone packet GLSL, including model-transformed vertices/normals, fragment surface lighting, and vertex-interpolated polygon point queries. |
 | `src/engine/rendering/directional_shadow.py` | Directional depth-map ownership, light-space matrices, and the shared opaque/alpha-cutout caster shader. |
 | `src/engine/rendering/point_shadow.py` | Point-light depth cubemaps, six face matrices, bindings, and radial-depth caster shader. |
+| `src/engine/rendering/scene_lighting.py` | Reusable scene lighting packets, enable/disable controls and shadow ownership. |
+| `src/engine/rendering/scene_shadows.py` | Scene-independent sun and point-shadow selection, caching and staged refreshes. |
 | `src/engine/rendering/gl_program.py` | Shared GLSL compile/link helper used by packet and shadow programs. |
 | `src/engine/rendering/packet_gpu_storage.py` | Persistent RGBA32F record textures with revision-equivalent subimage updates plus fragment/vertex texture capability checks for local-light, region, and portal input. |
 | `src/engine/rendering/frame_comparison.py` | Stable-pixel masking and quantitative RGB parity metrics for renderer A/B gates. |
@@ -276,7 +313,7 @@ the lighting implementation is being changed.
 | `src/game/world/terrain_pipeline.py` | Terrain and boundary construction: ground mesh generation, island shoreline/water creation, and fence ring rebuilding. |
 | `src/game/world/island_boundary.py` | Exact terrain-render bounds, continuous irregular multi-ring beach geometry, a hidden-underlap flat ocean mesh, and the animated cellular GLSL 1.20 water renderer. |
 | `src/game/world/road_pipeline.py` | Road construction and batching for the main road plus building access roads. |
-| `src/game/world/spawn_pipeline.py` | Procedural tree, grass, and rock generation plus generated-goblin placement, registration, and pose-atlas batching. |
+| `src/game/world/spawn_pipeline.py` | Procedural nature and species-aware goblin/skeleton placement, registration and pose-atlas batching. |
 | `src/game/world/detail_pipeline.py` | Ground-detail/contact-shadow decal batching for procedural nature. |
 | `src/game/world/world_runtime.py` | Per-frame runtime helpers: bounds checks, road checks, height queries, entity updates, interaction, pause/inventory input, and mouse delta forwarding. |
 | `src/game/world/world_renderer.py` | World render pipeline: fog/projection/camera setup, sky, water/terrain/beach ordering, generated-goblin model/contact-shadow passes, object passes, and HUD text/panel delegation. |
@@ -322,6 +359,9 @@ the lighting implementation is being changed.
 | `src/game/actors/creature.py` | Generic combat-creature contract and reusable base state for names, health, attacks, encounter ranges, intents, and creature-owned rewards. |
 | `src/game/actors/goblin.py` | Runtime roaming/chasing generated-3D entity, frustum culling, static pose-atlas rendering, batched contact shadows, and random single-piece equipment rewards. |
 | `src/game/actors/goblin_model.py` | Deterministic low-poly goblin geometry, visual variants, quantized walking poses, bounds, and shared immutable pose caches. |
+| `src/game/actors/model_geometry.py` | Shared deterministic faceted primitives and model transforms. |
+| `src/game/actors/skeleton.py` | Skeleton species using shared roaming, collision, combat and batching with its own stats and bone reward. |
+| `src/game/actors/skeleton_model.py` | Procedural skull, rib cage and limbs, with four variants and eight cached walking poses. |
 | `src/game/combat/__init__.py` | Combat controller and card-loadout exports. |
 | `src/game/combat/controller.py` | Creature-agnostic battle controller for entering/leaving combat, announced enemy intent, turn resolution, Guard mitigation, healing, damage rolls, rewards, and battle mouse state. |
 | `src/game/combat/cards.py` | Owns deck/hand/discard piles, full-loadout and remaining-draw snapshots, draw-and-reshuffle rules, automatic turn endings, passive equipment rules, Scrap state, and slot-keyed equipment/default card contributions. |

@@ -100,6 +100,8 @@ def _ambient_birds_volume(scene) -> float:
 
 
 def _update_ambient_birds(scene) -> None:
+    if not getattr(scene, "ambient_birds_enabled", True):
+        return
     volume = _ambient_birds_volume(scene)
     if Sounds.is_playing(_AMBIENT_BIRDS_KEY):
         Sounds.set_playing_volume(_AMBIENT_BIRDS_KEY, volume)

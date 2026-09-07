@@ -77,7 +77,7 @@ class SceneEntityRegistry:
         resources.entities = without_item(resources.entities)
         resources.immediate_entities = without_item(resources.immediate_entities)
         build_state = self.build_state
-        for attr_name in ("creatures", "goblins", "chests", "showcase_chests"):
+        for attr_name in ("creatures", "goblins", "skeletons", "chests", "showcase_chests"):
             if hasattr(build_state, attr_name):
                 setattr(
                     build_state,
