@@ -18,6 +18,20 @@ from OpenGL.GL import (
 )
 
 from game.config import HEIGHT, WIDTH
+from game.ui.theme import (
+    CREAM_TEXT,
+    FOREST,
+    GOLD_DARK,
+    GOLD_LIGHT,
+    INK_TEXT,
+    MUTED_TEXT,
+    PAPER_LIGHT,
+    draw_button,
+    draw_frame,
+    draw_inset,
+    draw_pixel_icon,
+    draw_rect,
+)
 
 
 class BattleResourceOverlay:
@@ -227,64 +241,71 @@ class BattleResourceOverlay:
         return center_x - 62.0, center_y - 17.0, 124.0, 34.0
 
     @staticmethod
-    def _deck_view_rect() -> tuple[float, float, float, float]:
-        panel_w = min(max(320.0, float(WIDTH) - 96.0), 1120.0)
-        panel_h = min(max(300.0, float(HEIGHT) - 96.0), 520.0)
-        return (
-            (float(WIDTH) - panel_w) * 0.5,
-            (float(HEIGHT) - panel_h) * 0.5,
-            panel_w,
-            panel_h,
-        )
+    def _deck_view_layout(card_count: int = 4) -> tuple[
+        tuple[float, float, float, float],
+        tuple[tuple[float, float, float, float], ...],
+    ]:
+        """Fit the viewer to its cards, growing into rows for larger decks."""
+
+        count = max(0, int(card_count))
+        max_panel_w = min(1120.0, max(240.0, float(WIDTH) - 64.0))
+        max_panel_h = min(680.0, max(240.0, float(HEIGHT) - 80.0))
+        content_w = max_panel_w - 64.0
+        content_h = max_panel_h - 160.0
+        columns = rows = 0
+        card_w = card_h = 0.0
+        gap = min(18.0, min(content_w, content_h) / (3.0 * max(1, math.ceil(math.sqrt(count)))))
+        if count:
+            # Prefer the largest readable cards, then the fewest rows.
+            candidates = []
+            for candidate_columns in range(1, count + 1):
+                candidate_rows = math.ceil(count / candidate_columns)
+                width = min(
+                    150.0,
+                    (content_w - gap * (candidate_columns - 1)) / candidate_columns,
+                    (content_h - gap * (candidate_rows - 1)) / (candidate_rows * 1.38),
+                )
+                candidates.append((width, -candidate_rows, -candidate_columns))
+            card_w, negative_rows, negative_columns = max(candidates)
+            columns, rows = -negative_columns, -negative_rows
+            card_h = card_w * 1.38
+            panel_w = max(440.0, columns * card_w + (columns - 1) * gap + 64.0)
+            panel_h = rows * card_h + (rows - 1) * gap + 160.0
+        else:
+            panel_w, panel_h = 500.0, 300.0
+        panel_w = min(panel_w, max_panel_w)
+        panel_h = min(panel_h, max_panel_h)
+        panel_x = (float(WIDTH) - panel_w) * 0.5
+        panel_y = (float(HEIGHT) - panel_h) * 0.5
+        rects: list[tuple[float, float, float, float]] = []
+        for row in range(rows):
+            row_count = min(columns, count - row * columns)
+            row_w = row_count * card_w + max(0, row_count - 1) * gap
+            first_x = panel_x + (panel_w - row_w) * 0.5
+            for column in range(row_count):
+                rects.append((
+                    first_x + column * (card_w + gap),
+                    panel_y + 104.0 + row * (card_h + gap),
+                    card_w,
+                    card_h,
+                ))
+        return (panel_x, panel_y, panel_w, panel_h), tuple(rects)
 
     @classmethod
-    def _deck_view_close_rect(cls) -> tuple[float, float, float, float]:
-        panel_x, panel_y, panel_w, _panel_h = cls._deck_view_rect()
-        return panel_x + panel_w - 52.0, panel_y + 16.0, 36.0, 36.0
+    def _deck_view_rect(cls, card_count: int = 4) -> tuple[float, float, float, float]:
+        return cls._deck_view_layout(card_count)[0]
+
+    @classmethod
+    def _deck_view_close_rect(cls, card_count: int = 4) -> tuple[float, float, float, float]:
+        panel_x, panel_y, panel_w, _panel_h = cls._deck_view_rect(card_count)
+        return panel_x + panel_w - 52.0, panel_y + 18.0, 32.0, 32.0
 
     @classmethod
     def _deck_view_card_rects(
         cls,
         card_count: int,
     ) -> tuple[tuple[float, float, float, float], ...]:
-        count = max(0, int(card_count))
-        if count == 0:
-            return ()
-
-        panel_x, panel_y, panel_w, panel_h = cls._deck_view_rect()
-        content_x = panel_x + 32.0
-        content_y = panel_y + 92.0
-        content_w = panel_w - 64.0
-        content_h = panel_h - 140.0
-        gap = 18.0
-        max_columns = max(1, int((content_w + gap) // (92.0 + gap)))
-        columns = min(count, max_columns, 6)
-        rows = max(1, math.ceil(count / columns))
-        card_w = min(
-            118.0,
-            (content_w - gap * (columns - 1)) / columns,
-            (content_h - gap * (rows - 1)) / (rows * 1.38),
-        )
-        card_w = max(36.0, card_w)
-        card_h = card_w * 1.38
-        total_h = rows * card_h + (rows - 1) * gap
-        first_y = content_y + max(0.0, (content_h - total_h) * 0.5)
-        rects: list[tuple[float, float, float, float]] = []
-        for row in range(rows):
-            row_start = row * columns
-            row_count = min(columns, count - row_start)
-            row_w = row_count * card_w + max(0, row_count - 1) * gap
-            first_x = content_x + (content_w - row_w) * 0.5
-            for column in range(row_count):
-                rects.append(
-                    (
-                        first_x + column * (card_w + gap),
-                        first_y + row * (card_h + gap),
-                        card_w,
-                        card_h,
-                    )
-                )
-        return tuple(rects)
+        return cls._deck_view_layout(card_count)[1]
 
     @staticmethod
     def _play_rect() -> tuple[float, float, float, float]:
@@ -336,112 +357,80 @@ class BattleResourceOverlay:
         viewing_loadout = self._deck_view_kind == "loadout"
         cards = self._loadout_cards() if viewing_loadout else self._deck_cards()
         cards.sort(key=lambda card: (str(card.title), str(card.action)))
-        panel_x, panel_y, panel_w, panel_h = self._deck_view_rect()
-        close_x, close_y, close_w, close_h = self._deck_view_close_rect()
-        close_hovered = self._contains(
-            (close_x, close_y, close_w, close_h),
-            mouse_pos,
-        )
+        count = len(cards)
+        panel, card_rects = self._deck_view_layout(count)
+        panel_x, panel_y, panel_w, panel_h = panel
+        close_rect = self._deck_view_close_rect(count)
+        close_x, close_y, close_w, close_h = close_rect
+        close_hovered = self._contains(close_rect, mouse_pos)
 
         glDisable(GL_TEXTURE_2D)
-        self._draw_quad(
-            0.0,
-            0.0,
-            float(WIDTH),
-            float(HEIGHT),
-            (0.0, 0.0, 0.0, 0.68),
-        )
-        self._draw_quad(
-            panel_x + 8.0,
-            panel_y + 10.0,
-            panel_w,
-            panel_h,
-            (0.0, 0.0, 0.0, 0.36),
-        )
-        self._draw_quad(
-            panel_x,
-            panel_y,
-            panel_w,
-            panel_h,
-            (0.045, 0.038, 0.034, 0.98),
-        )
-        self._draw_quad(
-            panel_x + 4.0,
-            panel_y + 4.0,
-            panel_w - 8.0,
-            panel_h - 8.0,
-            (0.12, 0.09, 0.07, 0.98),
-        )
-        self._draw_quad(
-            close_x,
-            close_y,
-            close_w,
-            close_h,
-            (0.64, 0.28, 0.08, 0.98)
-            if close_hovered
-            else (0.34, 0.16, 0.06, 0.96),
-        )
+        draw_rect((0.0, 0.0, float(WIDTH), float(HEIGHT)), (0.07, 0.11, 0.075, 0.38))
+        draw_frame(panel)
+        draw_rect((panel_x + 8.0, panel_y + 8.0, panel_w - 16.0, 54.0), FOREST)
+        draw_rect((panel_x + 8.0, panel_y + 62.0, panel_w - 16.0, 2.0), GOLD_LIGHT)
+        draw_pixel_icon("cards", (panel_x + 24.0, panel_y + 21.0, 28.0, 28.0), color=GOLD_LIGHT)
+        draw_button(close_rect, hovered=close_hovered)
+        draw_pixel_icon("close", (close_x + 10.0, close_y + 10.0, 12.0, 12.0), color=PAPER_LIGHT)
+        draw_inset((panel_x + 20.0, panel_y + 92.0, panel_w - 40.0, panel_h - 134.0), fill=PAPER_LIGHT)
         glEnable(GL_TEXTURE_2D)
 
-        count = len(cards)
         text.draw_text(
             "Your Deck" if viewing_loadout else "Draw Pile",
-            panel_x + panel_w * 0.5,
-            panel_y + 27.0,
-            color=(255, 242, 220, 255),
-            align="center",
-            max_width=panel_w - 140.0,
-            max_height=28.0,
+            panel_x + 65.0,
+            panel_y + 23.0,
+            color=(*CREAM_TEXT, 255),
+            max_width=panel_w - 130.0,
+            max_height=26.0,
         )
         text.draw_text(
             (
-                f"{count} card{'s' if count != 1 else ''} in current loadout"
+                f"{count} card{'s' if count != 1 else ''} from your equipment"
                 if viewing_loadout
-                else f"{count} card{'s' if count != 1 else ''} remaining"
+                else f"{count} card{'s' if count != 1 else ''} left to draw"
             ),
             panel_x + panel_w * 0.5,
-            panel_y + 58.0,
-            color=(218, 205, 188, 255),
+            panel_y + 79.0,
+            color=(*MUTED_TEXT, 255),
             align="center",
-            max_width=panel_w - 100.0,
-            max_height=20.0,
-        )
-        text.draw_text(
-            "X",
-            close_x + close_w * 0.5,
-            close_y + close_h * 0.5,
-            color=(255, 244, 224, 255),
-            align="center",
-            max_width=18.0,
+            max_width=panel_w - 56.0,
             max_height=18.0,
         )
 
         if cards:
-            for card, rect in zip(cards, self._deck_view_card_rects(count)):
-                card.draw_at(text, rect, enabled=True, raised=False)
+            for card, rect in zip(cards, card_rects):
+                card.draw_at(text, rect, enabled=True, raised=self._contains(rect, mouse_pos))
         else:
+            glDisable(GL_TEXTURE_2D)
+            draw_pixel_icon("cards", (panel_x + panel_w * 0.5 - 22.0, panel_y + 117.0, 44.0, 44.0), color=GOLD_DARK)
+            glEnable(GL_TEXTURE_2D)
             text.draw_text(
-                (
-                    "No cards are in the current loadout."
-                    if viewing_loadout
-                    else "No cards remain in the draw pile."
-                ),
+                "Your deck is empty" if viewing_loadout else "The draw pile is empty",
                 panel_x + panel_w * 0.5,
-                panel_y + panel_h * 0.5,
-                color=(225, 214, 198, 255),
+                panel_y + 185.0,
+                color=(*INK_TEXT, 255),
                 align="center",
-                max_width=panel_w - 80.0,
-                max_height=28.0,
+                max_width=panel_w - 60.0,
+                max_height=22.0,
+            )
+            text.draw_text(
+                "Equip items to add their cards." if viewing_loadout else "Your other cards are in hand or discarded.",
+                panel_x + panel_w * 0.5,
+                panel_y + 216.0,
+                color=(*MUTED_TEXT, 255),
+                align="center",
+                max_width=panel_w - 60.0,
+                max_height=18.0,
             )
 
         text.draw_text(
-            "Click outside or press Escape to close",
+            "Escape or click outside to return",
             panel_x + panel_w * 0.5,
-            panel_y + panel_h - 24.0,
-            color=(188, 178, 165, 255),
+            panel_y + panel_h - 23.0,
+            color=(*MUTED_TEXT, 255),
             align="center",
-            max_width=panel_w - 80.0,
-            max_height=18.0,
+            max_width=panel_w - 48.0,
+            max_height=17.0,
         )
 
     def draw_deck_view(self, text, mouse_pos) -> bool:  # pragma: no cover - visual
@@ -649,8 +638,9 @@ class BattleResourceOverlay:
             self._deck_view_block_release = False
             return False
         self._deck_view_block_release = True
-        if self._contains(self._deck_view_close_rect(), pos) or not self._contains(
-            self._deck_view_rect(),
+        count = len(self._loadout_cards() if self.loadout_view_open else self._deck_cards())
+        if self._contains(self._deck_view_close_rect(count), pos) or not self._contains(
+            self._deck_view_rect(count),
             pos,
         ):
             self.close_deck_view(preserve_release=True)

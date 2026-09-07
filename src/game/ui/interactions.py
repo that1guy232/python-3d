@@ -47,87 +47,35 @@ class WorldUIInteractions:
         width: int = WIDTH,
         height: int = HEIGHT,
     ) -> InventoryLayout:
-        outer_w = min(float(width) - 72.0, 930.0)
-        outer_h = min(float(height) - 72.0, 560.0)
+        # One scaled layout owns both drawing and hit boxes. Keep the complete
+        # panel on smaller displays without squeezing the stats into the slots.
+        scale = min(1.0, (float(width) - 40.0) / 960.0,
+                    (float(height) - 40.0) / 620.0)
+        scale = max(0.1, scale)
+        outer_w, outer_h = 960.0 * scale, 620.0 * scale
         outer_x = (float(width) - outer_w) * 0.5
         outer_y = (float(height) - outer_h) * 0.5
-        padding = 24.0
-        gap = 22.0
-        stats_w = min(280.0, max(230.0, outer_w * 0.31))
-        grid_x = outer_x + padding
-        grid_w = outer_w - padding * 2.0 - stats_w - gap
-        stats_x = grid_x + grid_w + gap
-        slot_gap = 10.0
-        cols = 6
-        rows = BACKPACK_SLOT_COUNT // cols
-        equipment_gap = 14.0
-        equipment_size = min(
-            70.0,
-            max(
-                44.0,
-                (grid_w - equipment_gap * (EQUIPMENT_SLOT_COUNT - 1))
-                / EQUIPMENT_SLOT_COUNT,
-            ),
-        )
-        equipment_y = outer_y + 74.0
-        equipment_w = (
-            EQUIPMENT_SLOT_COUNT * equipment_size
-            + (EQUIPMENT_SLOT_COUNT - 1) * equipment_gap
-        )
-        equipment_x = grid_x + max(0.0, (grid_w - equipment_w) * 0.5)
+
+        def rect(x, y, w, h):
+            return (outer_x + x * scale, outer_y + y * scale,
+                    w * scale, h * scale)
+
         equipment_slot_rects = tuple(
-            (
-                equipment_x + index * (equipment_size + equipment_gap),
-                equipment_y,
-                equipment_size,
-                equipment_size,
-            )
+            rect(167.0 + index * 84.0, 104.0, 70.0, 70.0)
             for index in range(EQUIPMENT_SLOT_COUNT)
         )
-        grid_y = equipment_y + equipment_size + 32.0
-        available_grid_h = outer_y + outer_h - padding - grid_y
-        slot_size = min(
-            72.0,
-            max(
-                44.0,
-                min(
-                    (grid_w - slot_gap * (cols - 1)) / cols,
-                    (available_grid_h - slot_gap * (rows - 1)) / rows,
-                ),
-            ),
-        )
-        grid_h = rows * slot_size + (rows - 1) * slot_gap
-        close_size = 34.0
-        close_rect = (
-            outer_x + outer_w - close_size - 20.0,
-            outer_y + 18.0,
-            close_size,
-            close_size,
-        )
-        deck_w = min(136.0, max(112.0, grid_w * 0.28))
-        deck_rect = (
-            grid_x + grid_w - deck_w,
-            outer_y + 18.0,
-            deck_w,
-            close_size,
-        )
         backpack_slot_rects = tuple(
-            (
-                grid_x + (index % cols) * (slot_size + slot_gap),
-                grid_y + (index // cols) * (slot_size + slot_gap),
-                slot_size,
-                slot_size,
-            )
+            rect(69.0 + (index % 6) * 88.0,
+                 230.0 + (index // 6) * 88.0, 78.0, 78.0)
             for index in range(BACKPACK_SLOT_COUNT)
         )
-        slot_rects = backpack_slot_rects + equipment_slot_rects
         return InventoryLayout(
             outer_rect=(outer_x, outer_y, outer_w, outer_h),
-            close_rect=close_rect,
-            deck_rect=deck_rect,
-            grid_rect=(grid_x, grid_y, grid_w, grid_h),
-            stats_rect=(stats_x, outer_y + 62.0, stats_w, outer_h - 86.0),
-            slot_rects=slot_rects,
+            close_rect=rect(898.0, 20.0, 34.0, 34.0),
+            deck_rect=rect(734.0, 20.0, 150.0, 34.0),
+            grid_rect=rect(69.0, 230.0, 518.0, 342.0),
+            stats_rect=rect(652.0, 76.0, 280.0, 504.0),
+            slot_rects=backpack_slot_rects + equipment_slot_rects,
             equipment_slot_rects=equipment_slot_rects,
         )
 

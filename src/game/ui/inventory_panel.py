@@ -24,6 +24,7 @@ from game.inventory import (
     slot_accepts_item,
 )
 from game.ui.interactions import WorldUIInteractions
+from game.ui import theme
 
 
 class InventoryPanel:
@@ -227,463 +228,210 @@ class InventoryPanel:
 
         text.begin()
         try:
-            if profile is None:
-                text.draw_text(
-                    fps_label,
-                    12,
-                    10,
-                    key="fps",
-                    align="topleft",
-                    color=[255, 0, 0, 0],
-                )
-            else:
-                with profile("hud_text.fps"):
-                    text.draw_text(
-                        fps_label,
-                        12,
-                        10,
-                        key="fps",
-                        align="topleft",
-                        color=[255, 0, 0, 0],
-                    )
+            mx, my = pygame.mouse.get_pos()
+            battle_overlay = getattr(self.scene, "battle_overlay", None)
+            if getattr(battle_overlay, "loadout_view_open", False):
+                battle_overlay.draw_deck_view(text, (mx, my))
+                return
 
             layout = WorldUIInteractions.inventory_layout()
-            outer_x, outer_y, outer_w, outer_h = layout.outer_rect
-            padding = 24.0
-            grid_x, grid_y, grid_w, grid_h = layout.grid_rect
-            stats_x, _stats_panel_y, stats_w, _stats_panel_h = layout.stats_rect
-            stats_y = outer_y + 82.0
-            equipment_slot_rects = layout.equipment_slot_rects
-            equipment_y = equipment_slot_rects[0][1]
+            outer_x, outer_y, outer_w, _outer_h = layout.outer_rect
+            scale = outer_w / 960.0
 
-            rows = self._player_stat_rows()
+            def rect(x, y, w, h):
+                return (outer_x + x * scale, outer_y + y * scale,
+                        w * scale, h * scale)
+
+            def label(value, x, y, *, color=theme.INK_TEXT, align="topleft",
+                      width=None, height=18.0):
+                text.draw_text(
+                    value, outer_x + x * scale, outer_y + y * scale,
+                    color=(*color, 255), align=align,
+                    max_width=None if width is None else width * scale,
+                    max_height=height * scale,
+                )
+
             items = list(getattr(self.scene, "inventory_items", ()) or ())
-            slot_rects = layout.slot_rects
-            slot_count = len(slot_rects)
-            close_x, close_y, close_w, close_h = layout.close_rect
-            deck_x, deck_y, deck_w, deck_h = layout.deck_rect
-            battle_overlay = getattr(self.scene, "battle_overlay", None)
-            deck_view_open = bool(
-                getattr(battle_overlay, "loadout_view_open", False)
+            selected_slot = getattr(self.scene, "inventory_selected_slot", None)
+            drag_source = getattr(self.scene, "inventory_drag_source", None)
+            hovered_slot = WorldUIInteractions.inventory_slot_at((mx, my))
+            dragged_item = (
+                items[drag_source] if isinstance(drag_source, int)
+                and 0 <= drag_source < len(items) else None
+            )
+            selected_item = (
+                items[selected_slot] if isinstance(selected_slot, int)
+                and 0 <= selected_slot < len(items) else None
             )
             battle_cards = getattr(self.scene, "battle_cards", None)
             loadout_cards = getattr(battle_cards, "loadout_cards", ())
             if callable(loadout_cards):
                 loadout_cards = loadout_cards()
             deck_count = len(loadout_cards or ())
-            selected_slot = getattr(self.scene, "inventory_selected_slot", None)
-            drag_source = getattr(self.scene, "inventory_drag_source", None)
-            mx, my = pygame.mouse.get_pos()
-            hovered_slot = WorldUIInteractions.inventory_slot_at((mx, my))
-            close_hovered = (
-                not deck_view_open
-                and close_x <= mx <= close_x + close_w
-                and close_y <= my <= close_y + close_h
-            )
-            deck_hovered = (
-                not deck_view_open
-                and deck_x <= mx <= deck_x + deck_w
-                and deck_y <= my <= deck_y + deck_h
-            )
-            deck_pressed = bool(
-                getattr(
-                    getattr(self.scene, "ui_interactions", None),
-                    "inventory_deck_pressed",
-                    False,
-                )
-            )
+            occupied = sum(item is not None for item in items[:BACKPACK_SLOT_COUNT])
+            rows = self._player_stat_rows()
+
+            def contains(bounds):
+                x, y, w, h = bounds
+                return x <= mx <= x + w and y <= my <= y + h
 
             glDisable(GL_TEXTURE_2D)
-            self._draw_overlay_rect(0, 0, WIDTH, HEIGHT, (0.0, 0.0, 0.0, 0.55))
-            self._draw_overlay_rect(
-                outer_x,
-                outer_y,
-                outer_w,
-                outer_h,
-                (0.035, 0.04, 0.045, 0.96),
+            theme.draw_rect((0, 0, WIDTH, HEIGHT), (0.04, 0.08, 0.05, 0.30))
+            theme.draw_frame(layout.outer_rect, inset=4.0 * scale)
+            theme.draw_rect(rect(12, 12, 936, 52), theme.FOREST)
+            theme.draw_rect(rect(12, 64, 936, 3), theme.GOLD)
+            theme.draw_pixel_icon("bag", rect(28, 25, 26, 26), color=theme.PAPER_LIGHT)
+            theme.draw_inset(rect(28, 76, 600, 504), fill=theme.PAPER)
+            theme.draw_inset(layout.stats_rect, fill=theme.PAPER_LIGHT)
+            theme.draw_rect(rect(48, 202, 560, 2), theme.PAPER_DARK)
+            theme.draw_rect(rect(670, 314, 244, 2), theme.PAPER_DARK)
+            theme.draw_button(layout.close_rect, hovered=contains(layout.close_rect))
+            theme.draw_pixel_icon("close", rect(908, 30, 14, 14), color=theme.PAPER_LIGHT)
+            theme.draw_button(
+                layout.deck_rect, hovered=contains(layout.deck_rect),
+                pressed=bool(getattr(getattr(self.scene, "ui_interactions", None),
+                                     "inventory_deck_pressed", False)),
             )
-            self._draw_overlay_rect(
-                outer_x + 4.0,
-                outer_y + 4.0,
-                outer_w - 8.0,
-                outer_h - 8.0,
-                (0.085, 0.075, 0.065, 0.9),
-            )
-            self._draw_overlay_rect(
-                grid_x - 12.0,
-                equipment_y - 14.0,
-                grid_w + 24.0,
-                grid_y + grid_h - equipment_y + 28.0,
-                (0.025, 0.026, 0.03, 0.72),
-            )
-            self._draw_overlay_rect(
-                stats_x,
-                outer_y + 62.0,
-                stats_w,
-                outer_h - 86.0,
-                (0.025, 0.026, 0.03, 0.72),
-            )
-            details_y = outer_y + 350.0
-            self._draw_overlay_rect(
-                stats_x + 14.0,
-                details_y - 13.0,
-                stats_w - 28.0,
-                2.0,
-                (0.28, 0.24, 0.19, 0.8),
-            )
-            self._draw_overlay_rect(
-                close_x,
-                close_y,
-                close_w,
-                close_h,
-                (
-                    (0.30, 0.12, 0.10, 0.96)
-                    if close_hovered
-                    else (0.12, 0.08, 0.075, 0.92)
-                ),
-            )
-            self._draw_overlay_rect(
-                close_x + 3.0,
-                close_y + 3.0,
-                close_w - 6.0,
-                close_h - 6.0,
-                (0.48, 0.18, 0.14, 0.74) if close_hovered else (0.22, 0.13, 0.11, 0.64),
-            )
-            self._draw_overlay_rect(
-                deck_x,
-                deck_y,
-                deck_w,
-                deck_h,
-                (0.38, 0.24, 0.10, 0.98)
-                if deck_hovered or deck_pressed
-                else (0.12, 0.09, 0.07, 0.96),
-            )
-            self._draw_overlay_rect(
-                deck_x + 3.0,
-                deck_y + 3.0,
-                deck_w - 6.0,
-                deck_h - 6.0,
-                (0.60, 0.36, 0.12, 0.72)
-                if deck_hovered or deck_pressed
-                else (0.25, 0.17, 0.10, 0.68),
-            )
+            theme.draw_pixel_icon("cards", rect(744, 27, 20, 20), color=theme.PAPER_LIGHT)
 
-            for index, (x, y, slot_w, slot_h) in enumerate(slot_rects):
+            for index, bounds in enumerate(layout.slot_rects):
+                x, y, w, h = bounds
                 filled = index < len(items) and items[index] is not None
                 selected = index == selected_slot
-                drop_target = (
-                    drag_source is not None
-                    and hovered_slot == index
-                    and drag_source != index
-                    and 0 <= drag_source < len(items)
-                    and items[drag_source] is not None
-                )
+                hovered = index == hovered_slot
+                drop_target = dragged_item is not None and hovered and drag_source != index
                 drop_valid = bool(
-                    drop_target
-                    and slot_accepts_item(index, items[drag_source])
-                    and slot_accepts_item(
-                        drag_source,
-                        items[index] if index < len(items) else None,
-                    )
+                    drop_target and slot_accepts_item(index, dragged_item)
+                    and slot_accepts_item(drag_source, items[index] if filled else None)
                 )
-                self._draw_overlay_rect(
-                    x,
-                    y,
-                    slot_w,
-                    slot_h,
-                    (
-                        ((0.13, 0.42, 0.20, 1.0) if drop_valid else (0.48, 0.13, 0.10, 1.0))
-                        if drop_target
-                        else (
-                            (0.55, 0.39, 0.12, 1.0)
-                            if selected
-                            else (
-                                (0.12, 0.105, 0.09, 0.96)
-                                if filled
-                                else (0.06, 0.058, 0.055, 0.92)
-                            )
-                        )
-                    ),
+                border = (theme.FOREST_LIGHT if drop_valid else theme.RED) if drop_target else (
+                    theme.GOLD if selected or hovered else theme.PAPER_DARK
                 )
-                self._draw_overlay_rect(
-                    x + 3.0,
-                    y + 3.0,
-                    slot_w - 6.0,
-                    slot_h - 6.0,
-                    ((0.23, 0.18, 0.12, 0.54) if filled else (0.11, 0.105, 0.1, 0.5)),
-                )
+                theme.draw_rect(bounds, border)
+                inset = (4.0 if selected or drop_target else 2.0) * scale
+                theme.draw_inset((x + inset, y + inset, w - inset * 2, h - inset * 2),
+                                 fill=theme.PAPER_LIGHT if filled or hovered else theme.PAPER)
+                # A tiny corner mark distinguishes an occupied slot at a glance.
+                if filled:
+                    theme.draw_rect((x + 6 * scale, y + 6 * scale, 4 * scale, 4 * scale),
+                                    theme.FOREST)
 
+            # Health and mana echo the warm/cool colors of the compass needle.
+            for index, (_name, value) in enumerate(rows[:2]):
+                x = 670 + index * 128
+                theme.draw_inset(rect(x, 112, 116, 47), fill=theme.PAPER)
+                current, maximum = (int(part) for part in value.split("/"))
+                theme.draw_rect(rect(x + 7, 147, 102, 5), theme.PAPER_DARK)
+                theme.draw_rect(rect(x + 7, 147, 102 * min(1, current / max(1, maximum)), 5),
+                                theme.RED if index == 0 else theme.BLUE)
+
+            resources = getattr(self.scene, "render_resources", self.scene)
+            equipment_textures = getattr(resources, "equipment_slot_textures", {}) or {}
+            item_textures = getattr(resources, "item_textures", {}) or {}
             glEnable(GL_TEXTURE_2D)
-            equipment_textures = getattr(
-                getattr(self.scene, "render_resources", self.scene),
-                "equipment_slot_textures",
-                {},
-            ) or {}
-            item_textures = getattr(
-                getattr(self.scene, "render_resources", self.scene),
-                "item_textures",
-                {},
-            ) or {}
             for offset, item_kind in enumerate(EQUIPMENT_TYPES):
                 index = BACKPACK_SLOT_COUNT + offset
-                x, y, slot_w, slot_h = equipment_slot_rects[offset]
-                filled = index < len(items) and items[index] is not None
-                inset = max(6.0, slot_w * 0.13)
-                self._draw_textured_rect(
-                    equipment_textures.get(item_kind.value),
-                    x + inset,
-                    y + inset,
-                    slot_w - inset * 2.0,
-                    slot_h - inset * 2.0,
-                    alpha=0.28 if filled else 0.62,
-                )
+                # Empty-slot silhouettes stay legible on the parchment backing.
+                if index < len(items) and items[index] is not None:
+                    continue
+                x, y, w, h = layout.equipment_slot_rects[offset]
+                inset = 12.0 * scale
+                self._draw_textured_rect(equipment_textures.get(item_kind.value),
+                                         x + inset, y + inset, w - inset * 2, h - inset * 2,
+                                         alpha=0.48)
 
-            for index, item in enumerate(items[:slot_count]):
+            for index, item in enumerate(items[:len(layout.slot_rects)]):
+                if item is None or index == drag_source:
+                    continue
+                x, y, w, h = layout.slot_rects[index]
                 texture = item_textures.get(self._item_icon(item))
-                if not texture or index == drag_source:
-                    continue
-                x, y, slot_w, slot_h = slot_rects[index]
-                max_icon_size = min(42.0, slot_w - 12.0, slot_h - 12.0)
-                icon_w, icon_h = self._icon_dimensions(texture, max_icon_size)
-                self._draw_textured_rect(
-                    texture,
-                    x + (slot_w - icon_w) * 0.5,
-                    y + (slot_h - icon_h) * 0.5,
-                    icon_w,
-                    icon_h,
-                )
+                if texture:
+                    icon_w, icon_h = self._icon_dimensions(texture, min(w, h) - 22 * scale)
+                    self._draw_textured_rect(texture, x + (w - icon_w) / 2,
+                                             y + (h - icon_h) / 2, icon_w, icon_h)
+                else:
+                    text.draw_text(self._item_label(item), x + w / 2, y + h / 2,
+                                   color=(*theme.INK_TEXT, 255), align="center",
+                                   max_width=w - 12 * scale, max_height=16 * scale)
 
-            text.draw_text(
-                "Inventory",
-                outer_x + padding,
-                outer_y + 24.0,
-                color=(255, 245, 230, 255),
-                align="topleft",
-            )
-            text.draw_text(
-                "Stats",
-                stats_x + 16.0,
-                outer_y + 24.0,
-                color=(255, 245, 230, 255),
-                align="topleft",
-            )
-            text.draw_text(
-                "Item Details",
-                stats_x + 16.0,
-                details_y,
-                color=(255, 245, 230, 255),
-                align="topleft",
-            )
-            text.draw_text(
-                "X",
-                close_x + close_w * 0.5,
-                close_y + close_h * 0.5,
-                color=(255, 245, 230, 255),
-                align="center",
-            )
-            text.draw_text(
-                f"View Deck ({deck_count})",
-                deck_x + deck_w * 0.5,
-                deck_y + deck_h * 0.5,
-                color=(255, 238, 204, 255),
-                align="center",
-                max_width=deck_w - 16.0,
-                max_height=18.0,
-            )
+            label("Inventory", 66, 27, color=theme.CREAM_TEXT, align="topleft", height=22)
+            label("View Deck (%d)" % deck_count, 817, 37,
+                  color=theme.CREAM_TEXT, align="center", width=108, height=16)
+            label("EQUIPMENT", 48, 85, color=theme.MUTED_TEXT, height=13)
+            label("BACKPACK", 48, 211, color=theme.MUTED_TEXT, height=13)
+            label(f"{occupied} / {BACKPACK_SLOT_COUNT}", 608, 211,
+                  color=theme.MUTED_TEXT, align="topright", height=13)
+            equipment_names = ("Body", "Boots", "Weapon", "Helmet")
+            for offset, name in enumerate(equipment_names):
+                label(name, 202 + offset * 84, 186, color=theme.MUTED_TEXT,
+                      align="center", height=14)
 
-            for offset, item_kind in enumerate(EQUIPMENT_TYPES):
-                x, y, slot_w, slot_h = equipment_slot_rects[offset]
-                text.draw_text(
-                    item_kind.value.title(),
-                    x + slot_w * 0.5,
-                    y + slot_h + 13.0,
-                    color=(185, 180, 170, 255),
-                    align="center",
-                )
+            label("CHARACTER", 670, 87, color=theme.MUTED_TEXT, height=13)
+            for index, (name, value) in enumerate(rows[:2]):
+                x = 678 + index * 128
+                label(name, x, 122, color=theme.MUTED_TEXT, height=15)
+                label(value, x + 99, 122, align="topright", height=15)
+            for index, (name, value) in enumerate(rows[2:]):
+                y = 175 + index * 27
+                label(name, 672, y, color=theme.MUTED_TEXT, width=195, height=16)
+                label(value, 912, y, align="topright", width=42, height=16)
+            label("ITEM DETAILS", 670, 329, color=theme.MUTED_TEXT, height=13)
 
-            for index, item in enumerate(items[:slot_count]):
-                label = self._item_label(item)
-                if (
-                    not label
-                    or index == drag_source
-                    or item_textures.get(self._item_icon(item))
-                ):
-                    continue
-                x, y, slot_w, slot_h = slot_rects[index]
-                label = self._fit_text_width(text, label, slot_w - 10.0)
-                if not label:
-                    continue
-                text.draw_text(
-                    label,
-                    x + slot_w * 0.5,
-                    y + slot_h * 0.5,
-                    color=(245, 235, 215, 255),
-                    align="center",
-                )
-
-            selected_item = (
-                items[selected_slot]
-                if isinstance(selected_slot, int)
-                and 0 <= selected_slot < len(items)
-                else None
-            )
-            detail_x = stats_x + 18.0
-            detail_w = stats_w - 36.0
             if selected_item is None:
-                for line_index, line in enumerate(
-                    self._wrap_text(
-                        text,
-                        "Click an item to view its details.",
-                        detail_w,
-                        2,
-                    )
-                ):
-                    text.draw_text(
-                        line,
-                        detail_x,
-                        details_y + 38.0 + line_index * 22.0,
-                        color=(175, 176, 180, 255),
-                        align="topleft",
-                    )
+                glDisable(GL_TEXTURE_2D)
+                theme.draw_pixel_icon("bag", rect(773, 385, 40, 40), color=theme.PAPER_DARK)
+                glEnable(GL_TEXTURE_2D)
+                label("Select an item", 792, 452, align="center", height=17)
+                label("to view its details", 792, 477, color=theme.MUTED_TEXT,
+                      align="center", height=15)
             else:
-                name = self._fit_text_width(
-                    text,
-                    self._item_label(selected_item),
-                    detail_w,
-                )
-                text.draw_text(
-                    name,
-                    detail_x,
-                    details_y + 34.0,
-                    color=(245, 221, 164, 255),
-                    align="topleft",
-                )
-                text.draw_text(
-                    f"Type: {item_type(selected_item).value.title()}",
-                    detail_x,
-                    details_y + 60.0,
-                    color=(205, 207, 212, 255),
-                    align="topleft",
-                )
-                detail_line = details_y + 87.0
+                label(self._item_label(selected_item), 670, 357, width=244, height=18)
+                label(item_type(selected_item).value.title(), 670, 384,
+                      color=theme.MUTED_TEXT, height=14)
                 description = self._item_description(selected_item)
+                # Wrap and fit the whole block, so a long item record cannot
+                # collide with the attributes below it on smaller displays.
                 if description:
-                    for line in self._wrap_text(text, description, detail_w, 2):
-                        text.draw_text(
-                            line,
-                            detail_x,
-                            detail_line,
-                            color=(180, 181, 185, 255),
-                            align="topleft",
-                        )
-                        detail_line += 22.0
-                for label, value in self._item_attributes(selected_item)[:2]:
-                    if detail_line > outer_y + outer_h - 28.0:
-                        break
-                    text.draw_text(
-                        label,
-                        detail_x,
-                        detail_line,
-                        color=(195, 197, 202, 255),
-                        align="topleft",
+                    text.draw_text_multiline(
+                        description, outer_x + 670 * scale, outer_y + 410 * scale,
+                        color=(*theme.INK_TEXT, 255), max_width=244 * scale,
+                        max_height=57 * scale, line_spacing=1.15, wrap=True,
                     )
-                    text.draw_text(
-                        value,
-                        stats_x + stats_w - 18.0,
-                        detail_line,
-                        color=(245, 221, 164, 255),
-                        align="topright",
-                    )
-                    detail_line += 22.0
+                for index, (name, value) in enumerate(self._item_attributes(selected_item)[:2]):
+                    y = 488 + index * 39
+                    label(name, 670, y, color=theme.MUTED_TEXT, width=244, height=12)
+                    label(value, 670, y + 16, width=244, height=15)
 
-            stat_line_h = 38.0
-            for index, (label, value) in enumerate(rows):
-                y = stats_y + index * stat_line_h
-                text.draw_text(
-                    label,
-                    stats_x + 18.0,
-                    y,
-                    color=(210, 214, 220, 255),
-                    align="topleft",
-                )
-                text.draw_text(
-                    value,
-                    stats_x + stats_w - 18.0,
-                    y,
-                    color=(255, 245, 230, 255),
-                    align="topright",
-                )
+            label("Drag items to move or equip", 48, 596, color=theme.MUTED_TEXT,
+                  align="topleft", width=480, height=13)
+            label("I / Tab / Esc   Close", 932, 596, color=theme.MUTED_TEXT,
+                  align="topright", height=13)
 
-            if (
-                isinstance(drag_source, int)
-                and 0 <= drag_source < len(items)
-                and items[drag_source] is not None
-            ):
-                dragged_item = items[drag_source]
+            if dragged_item is not None:
                 drag_texture = item_textures.get(self._item_icon(dragged_item))
                 if drag_texture:
-                    icon_w, icon_h = self._icon_dimensions(drag_texture, 42.0)
-                    self._draw_textured_rect(
-                        drag_texture,
-                        mx - icon_w * 0.5,
-                        my - icon_h * 0.5,
-                        icon_w,
-                        icon_h,
-                    )
+                    icon_w, icon_h = self._icon_dimensions(drag_texture, 48 * scale)
+                    self._draw_textured_rect(drag_texture, mx - icon_w / 2,
+                                             my - icon_h / 2, icon_w, icon_h)
                 else:
-                    drag_label = self._fit_text_width(
-                        text,
-                        self._item_label(dragged_item),
-                        180.0,
-                    )
-                    text.draw_text(
-                        drag_label,
-                        mx + 14.0,
-                        my + 14.0,
-                        color=(255, 238, 195, 255),
-                        align="topleft",
-                    )
+                    text.draw_text(self._item_label(dragged_item), mx + 14, my + 14,
+                                   color=(*theme.CREAM_TEXT, 255), max_width=180,
+                                   max_height=18)
 
             hovered_item = (
-                items[hovered_slot]
-                if isinstance(hovered_slot, int)
-                and 0 <= hovered_slot < len(items)
-                else None
+                items[hovered_slot] if isinstance(hovered_slot, int)
+                and 0 <= hovered_slot < len(items) else None
             )
             if hovered_item is not None and drag_source is None:
-                tooltip_label = self._item_label(hovered_item)
-                tooltip_x, tooltip_y, tooltip_w, tooltip_h = self._tooltip_rect(
-                    text,
-                    tooltip_label,
-                    (mx, my),
+                tooltip_label = self._fit_text_width(
+                    text, self._item_label(hovered_item), WIDTH - 48,
                 )
+                tooltip_rect = self._tooltip_rect(text, tooltip_label, (mx, my))
                 glDisable(GL_TEXTURE_2D)
-                self._draw_overlay_rect(
-                    tooltip_x,
-                    tooltip_y,
-                    tooltip_w,
-                    tooltip_h,
-                    (0.03, 0.028, 0.025, 0.98),
-                )
-                self._draw_overlay_rect(
-                    tooltip_x + 2.0,
-                    tooltip_y + 2.0,
-                    tooltip_w - 4.0,
-                    tooltip_h - 4.0,
-                    (0.19, 0.15, 0.10, 0.98),
-                )
+                theme.draw_frame(tooltip_rect, fill=theme.PAPER_LIGHT, inset=2)
                 glEnable(GL_TEXTURE_2D)
-                text.draw_text(
-                    tooltip_label,
-                    tooltip_x + tooltip_w * 0.5,
-                    tooltip_y + tooltip_h * 0.5,
-                    color=(255, 238, 202, 255),
-                    align="center",
-                )
-
-            if deck_view_open:
-                draw_deck_view = getattr(battle_overlay, "draw_deck_view", None)
-                if callable(draw_deck_view):
-                    draw_deck_view(text, (mx, my))
+                x, y, w, h = tooltip_rect
+                text.draw_text(tooltip_label, x + w / 2, y + h / 2,
+                               color=(*theme.INK_TEXT, 255), align="center")
         finally:
             text.end()

@@ -16,21 +16,39 @@ from OpenGL.GL import (
     GL_TEXTURE_2D,
 )
 
+from game.ui.theme import (
+    BLUE,
+    CREAM_TEXT,
+    FOREST,
+    FOREST_LIGHT,
+    GOLD,
+    GOLD_DARK,
+    GOLD_LIGHT,
+    INK_TEXT,
+    PAPER,
+    PAPER_DARK,
+    PAPER_LIGHT,
+    draw_frame,
+    draw_pixel_icon,
+)
+
 CardHandler = Callable[[object], None]
 CardPredicate = Callable[[object], bool]
 
 
 @dataclass(frozen=True)
 class CardStyle:
-    shadow: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.30)
-    border: tuple[float, float, float, float] = (0.055, 0.045, 0.038, 0.98)
-    border_hover: tuple[float, float, float, float] = (0.72, 0.44, 0.18, 1.0)
-    face: tuple[float, float, float, float] = (0.16, 0.12, 0.09, 0.96)
-    face_hover: tuple[float, float, float, float] = (0.22, 0.16, 0.10, 0.98)
-    panel: tuple[float, float, float, float] = (0.055, 0.052, 0.055, 0.92)
-    accent: tuple[float, float, float, float] = (0.58, 0.16, 0.10, 0.96)
-    accent_hover: tuple[float, float, float, float] = (0.78, 0.23, 0.12, 1.0)
-    disabled_tint: tuple[float, float, float, float] = (0.07, 0.07, 0.075, 0.66)
+    shadow: tuple[float, float, float, float] = (0.10, 0.08, 0.04, 0.26)
+    border: tuple[float, float, float, float] = GOLD_DARK
+    border_hover: tuple[float, float, float, float] = GOLD
+    face: tuple[float, float, float, float] = PAPER
+    face_hover: tuple[float, float, float, float] = PAPER_LIGHT
+    panel: tuple[float, float, float, float] = PAPER_DARK
+    accent: tuple[float, float, float, float] = FOREST
+    accent_hover: tuple[float, float, float, float] = FOREST_LIGHT
+    disabled_tint: tuple[float, float, float, float] = (0.22, 0.20, 0.14, 0.42)
+    trim: tuple[float, float, float, float] = GOLD_LIGHT
+    mana: tuple[float, float, float, float] = BLUE
 
 
 class Card:
@@ -195,54 +213,84 @@ class Card:
         border = style.border_hover if raised and enabled else style.border
         face = style.face_hover if raised and enabled else style.face
         accent = style.accent_hover if raised and enabled else style.accent
-        alpha_scale = 1.0 if enabled else 0.55
-
-        def scaled(color):
-            return (color[0], color[1], color[2], color[3] * alpha_scale)
+        scale = min(w / 150.0, h / 207.0)
+        edge = 10.0 * scale
+        header_y = y + edge
+        header_h = 28.0 * scale
+        art_y = header_y + header_h + 6.0 * scale
+        art_h = 66.0 * scale
+        footer_h = 22.0 * scale
+        footer_y = y + h - edge - footer_h
+        detail_y = art_y + art_h + 6.0 * scale
+        detail_h = max(1.0, footer_y - detail_y - 7.0 * scale)
+        emblem, emblem_color = self._emblem()
 
         glDisable(GL_TEXTURE_2D)
-        self._draw_rect(x + 6.0, y + 8.0, w, h, scaled(style.shadow))
-        self._draw_rect(x, y, w, h, scaled(border))
-        self._draw_rect(x + 4.0, y + 4.0, w - 8.0, h - 8.0, scaled(face))
-        self._draw_rect(x + 10.0, y + 34.0, w - 20.0, h * 0.44, scaled(style.panel))
-        self._draw_rect(x + 10.0, y + h - 32.0, w - 20.0, 18.0, scaled(accent))
+        self._draw_rect(x + 4.0 * scale, y + 6.0 * scale, w, h, style.shadow)
+        draw_frame(
+            (x, y, w, h), fill=face, border=border, light=style.trim,
+            shadow=False, inset=4.0 * scale,
+        )
+        self._draw_rect(x + edge, header_y, w - 2.0 * edge, header_h, accent)
+        self._draw_rect(x + edge, art_y, w - 2.0 * edge, art_h, style.panel)
+        # A small pixel emblem gives every action a readable visual identity.
+        icon_size = 44.0 * scale
+        icon_x = x + (w - icon_size) * 0.5
+        icon_y = art_y + (art_h - icon_size) * 0.5
+        draw_pixel_icon(emblem, (icon_x, icon_y, icon_size, icon_size), color=emblem_color)
+        for ornament_x in (x + edge + 9.0 * scale, x + w - edge - 13.0 * scale):
+            self._draw_rect(ornament_x, art_y + art_h * 0.5 - 2.0 * scale,
+                            4.0 * scale, 4.0 * scale, style.trim)
+        self._draw_rect(x + edge, art_y + art_h, w - 2.0 * edge, scale, style.border)
+        if self.footer:
+            self._draw_rect(x + edge, footer_y, w - 2.0 * edge, footer_h, style.mana)
         if not enabled:
-            self._draw_rect(x + 4.0, y + 4.0, w - 8.0, h - 8.0, style.disabled_tint)
+            self._draw_rect(x, y, w, h, style.disabled_tint)
 
         glEnable(GL_TEXTURE_2D)
-        text_alpha = 255 if enabled else 150
+        text_alpha = 255 if enabled else 175
         text.draw_text(
             self.title,
             x + w * 0.5,
-            y + 19.0,
-            color=(255, 242, 220, text_alpha),
+            header_y + header_h * 0.5,
+            color=(*CREAM_TEXT, text_alpha),
             align="center",
-            max_width=max(1.0, w - 16.0),
-            max_height=22.0,
+            max_width=max(1.0, w - 2.0 * edge - 8.0 * scale),
+            max_height=20.0 * scale,
         )
-        panel_y = y + 34.0
-        panel_h = h * 0.44
         text.draw_text_multiline(
             self.detail,
             x + w * 0.5,
-            panel_y + panel_h * 0.5,
-            color=(245, 238, 224, text_alpha),
+            detail_y + detail_h * 0.5,
+            color=(*INK_TEXT, text_alpha),
             align="center",
-            line_spacing=1.05,
-            max_width=max(1.0, w - 28.0),
-            max_height=max(1.0, panel_h - 10.0),
+            line_spacing=1.08,
+            max_width=max(1.0, w - 2.0 * edge - 6.0 * scale),
+            max_height=detail_h,
             wrap=True,
         )
         if self.footer:
             text.draw_text(
                 self.footer,
                 x + w * 0.5,
-                y + h - 23.0,
-                color=(255, 248, 232, text_alpha),
+                footer_y + footer_h * 0.5,
+                color=(*CREAM_TEXT, text_alpha),
                 align="center",
-                max_width=max(1.0, w - 28.0),
-                max_height=14.0,
+                max_width=max(1.0, w - 2.0 * edge - 8.0 * scale),
+                max_height=16.0 * scale,
             )
+
+    def _emblem(self) -> tuple[str, tuple[float, float, float, float]]:
+        action = self.action.lower()
+        if any(word in action for word in ("brace", "guard", "shell")):
+            return "shield", FOREST
+        if any(word in action for word in ("step", "scamper", "scrounge")):
+            return "boot", GOLD_DARK
+        if any(word in action for word in ("thought", "spell", "bomb")):
+            return "spark", BLUE
+        if any(word in action for word in ("strike", "swipe", "shiv", "attack")):
+            return "sword", GOLD_DARK
+        return "cards", FOREST
 
     def draw(self, text, *, enabled: bool = True) -> None:  # pragma: no cover - visual
         self.draw_at(
