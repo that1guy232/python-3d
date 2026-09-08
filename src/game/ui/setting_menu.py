@@ -13,7 +13,7 @@ from game.config import (
     WIDTH,
 )
 from game.settings import load_settings, save_settings
-from engine.render_style_state import update_render_vibrance_state
+from engine.rendering.style import update_render_vibrance_state
 from engine.sound.sound_utils import Sounds
 from engine.ui.menu import ButtonMenu, MenuItem, MenuOption, SliderOption
 

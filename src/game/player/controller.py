@@ -13,7 +13,7 @@ import pygame
 from pygame.math import Vector3
 from typing import Tuple
 
-from engine.collision import movement_blocked_by_wall, player_support_height_at
+from engine.physics.collision import movement_blocked_by_wall, player_support_height_at
 from game.config import (
     MOUSE_SENSITIVITY,
     SPRINT_SPEED,

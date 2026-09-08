@@ -51,10 +51,10 @@ from OpenGL.GL import (
 )
 from engine.config import WIDTH, HEIGHT, VIEWDISTANCE
 from engine.core.consts import FORWARD, RIGHT, WORLD_UP
-from engine.lighting_receiver import LightingReceiver
-from engine.core.gl_state import use_fixed_pipeline
-from engine.core.legacy_shader_adapter import get_legacy_texture_shader
-from engine.rendering.lighting import sprite_light_factor
+from engine.rendering.lighting.receiver import LightingReceiver
+from engine.rendering.state import use_fixed_pipeline
+from engine.rendering.shaders.legacy import get_legacy_texture_shader
+from engine.rendering.lighting.model import sprite_light_factor
 
 # Internal helpers for billboard math
 _EPS = 1e-6

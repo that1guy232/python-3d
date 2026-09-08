@@ -43,8 +43,8 @@ from OpenGL.GL import (
     glUseProgram,
 )
 
-from engine.core.mesh import BatchedMesh
-from engine.lighting_receiver import LightingReceiver
+from engine.rendering.mesh import BatchedMesh
+from engine.rendering.lighting.receiver import LightingReceiver
 from engine.rendering.decal import DECAL_LIGHTING_RECEIVER, Decal
 from engine.config import HEIGHT, VIEWDISTANCE, WIDTH
 

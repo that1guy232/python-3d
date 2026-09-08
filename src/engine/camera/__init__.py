@@ -1,8 +1,8 @@
 """Camera package exports for view movement and first-person motion effects."""
 
-from .camera import Camera, CameraBrightnessArea
-from .headbob import HeadBob
-from .sway_controller import SwayController
+from engine.camera.camera import Camera, CameraBrightnessArea
+from engine.camera.headbob import HeadBob
+from engine.camera.sway_controller import SwayController
 
 __all__ = [
     "Camera",

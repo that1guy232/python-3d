@@ -26,8 +26,8 @@ from OpenGL.GL import (
     GL_ONE_MINUS_SRC_ALPHA,
 )
 
-from engine.core.mesh import BatchedMesh
-from engine.lighting_receiver import LightingReceiver
+from engine.rendering.mesh import BatchedMesh
+from engine.rendering.lighting.receiver import LightingReceiver
 
 HeightFn = Callable[[float, float], float]
 ReceiverFn = Callable[[float, float], bool]

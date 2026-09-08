@@ -7,7 +7,7 @@ inflating this file again. The previous monolithic loop now lives in
 """
 
 from engine.core.engine import Engine  # noqa: E402 (local import order)
-from game.main_menu import MainMenuScene  # noqa: E402 (local import order)
+from game.scenes.main_menu import MainMenuScene  # noqa: E402 (local import order)
 
 
 def make_initial_scene() -> MainMenuScene:

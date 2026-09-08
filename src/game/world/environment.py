@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-from engine.rendering.render_environment import (
+from engine.rendering.environment.state import (
     RenderEnvironmentPortal,
     RenderEnvironmentRegion,
     RenderEnvironmentSnapshot,

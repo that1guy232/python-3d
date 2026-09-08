@@ -7,7 +7,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from pygame.math import Vector3
 
-from engine.entity import Entity
+from engine.core.entity import Entity
 
 
 CombatIntent = dict[str, str | int]

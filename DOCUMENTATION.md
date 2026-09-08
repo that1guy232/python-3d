@@ -53,12 +53,12 @@ omits the normal world's jump, inventory, minimap, battle, and pause systems.
 
 1. `src/main.py` is the entry point. `main()` creates an `Engine` with
    `make_initial_scene()` as the first-scene factory.
-2. `make_initial_scene()` creates `game.main_menu.MainMenuScene`, which is the
+2. `make_initial_scene()` creates `game.scenes.main_menu.MainMenuScene`, which is the
    first active scene at boot.
 3. The main menu keeps the mouse cursor visible. **Start Game** creates
-   `game.world.worldscene.WorldScene(defer_setup=True)`; **Object Test Scene**
-   creates `game.object_test_scene.ObjectTestScene`; **Under sea Crypt** creates
-   `game.undersea_crypt_scene.UnderseaCryptScene` for level testing. All targets are wrapped in
+   `game.world.scene.WorldScene(defer_setup=True)`; **Object Test Scene**
+   creates `game.scenes.object_test.ObjectTestScene`; **Under sea Crypt** creates
+   `game.levels.crypt.scene.UnderseaCryptScene` for level testing. All targets are wrapped in
    `engine.core.loading_scene.LoadingScene`.
 4. `engine.core.engine.Engine` initializes Pygame/OpenGL, attaches the performance
    logger, forwards input to the active scene, calls scene update/render hooks,
@@ -66,17 +66,14 @@ omits the normal world's jump, inventory, minimap, battle, and pause systems.
 5. `engine.core.loading_scene.LoadingScene` advances
    the target's `initialize_steps()` over multiple frames so construction can show
    progress instead of blocking on a blank screen.
-6. `game.world.worldscene.WorldScene` orchestrates three explicit mutable state
-   owners from `world_state.py`: build state, render resources, and UI state. It
-   keeps temporary compatibility aliases for older callers and delegates most work:
-   setup to `world_setup.py`, object construction orchestration to `world_builder.py`,
-   runtime behavior to `world_runtime.py`, combat to `game.combat.controller`, entity
-   registration to `entity_registry.py`, collision indexing to
-   `collision_index.py`, static lighting refresh to `lighting_controller.py`,
-   UI event routing to `game.ui.interactions`, resource cleanup to
-   `scene_resources.py`, road planning to `world_road_planner.py`, and drawing to
-   `world_renderer.py`.
-7. `game.object_test_scene.ObjectTestScene` is a separate, flat showroom. It owns
+6. `game.world.scene.WorldScene` coordinates world lifecycle. `world/runtime`
+   owns setup, gameplay updates, entity registration, resource cleanup and the
+   build/render/UI state containers. `world/generation/builder.py` coordinates
+   construction in the architecture, terrain and roads packages.
+   `world/rendering` owns world draw order and game lighting policy; reusable
+   rendering and spatial collision indexing belong to `engine`.
+   Combat and UI routing remain in `game.combat` and `game.ui`.
+7. `game.scenes.object_test.ObjectTestScene` is a separate, flat showroom. It owns
    its camera, movement, collision list, deterministic exhibits, render pipeline,
    interaction scan, and GPU-resource cleanup without using the world scene's
    builders, mutable state containers, renderer, or runtime systems.
@@ -147,7 +144,7 @@ packet shader caches uniform values for its program, so switching receiver
 families only uploads changed values. Matrix values are copied into cache keys
 to detect in-place edits, and a new shader instance starts with an empty cache.
 
-`engine.rendering.scene_lighting.SceneLightingRenderer` provides reusable packet
+`engine.rendering.lighting.renderer.SceneLightingRenderer` provides reusable packet
 lighting and shadow ownership without a dependency on a world scene. Register
 receiver policies and a callable that supplies shadow-casting objects, then call
 `begin_frame(camera=..., lighting=...)`. Pass `batch_draw_args()` to mesh batches
@@ -165,17 +162,17 @@ from switching off as camera priorities change. Geometry changes still trigger
 staged refreshes, so the opening reliquary updates its affected shadows.
 
 The crypt reuses world movement, collision, combat, inventory and UI.
-`crypt_layout.py` generates a procession through enclosed halls and four side
+`game/levels/crypt/layout.py` generates a procession through enclosed halls and four side
 chapels, joined by seven narrow burial walks. The main route includes three long
 passages; their 76–92 unit width and 70 unit barrel-vault crown contrast with the
 larger chambers. Chamber dimensions, passage lengths and contents vary by seed.
 Pass `world_random_seed` to `UnderseaCryptScene` to reproduce a plan; menu entry
 chooses a fresh seed. No maze carving is used.
 
-`crypt_geometry.py` owns shared columns and solid arch supports, recessed niches,
+`game/levels/crypt/geometry.py` owns shared columns and solid arch supports, recessed niches,
 arched passage portals, collision shapes and wall-mounted iron torch brackets.
 Floor borders and burial inlays partition surfaces instead of overlapping them;
-mipmapped masonry reduces shimmer in long views. `crypt_water.py` adds translucent
+mipmapped masonry reduces shimmer in long views. The level's `water.py` adds translucent
 animated water over the disjoint room and passage floors. The level does not
 grant a starter loadout or change player movement and encounter defaults.
 
@@ -222,9 +219,10 @@ titles and footers scale to remain within their assigned card regions.
 ### Cleanup
 
 `Engine.run()` disposes the active scene before quitting Pygame. `WorldScene`
-delegates cleanup to `SceneResourceDisposer`, which releases OpenGL-backed
+delegates cleanup to `WorldResourceDisposer`, which releases OpenGL-backed
 meshes, batches, roads, decals, entities, HUD resources, ambient audio, and
-cached collision data while the GL context still exists. `WorldRenderer`
+render references while the GL context still exists. The scene invalidates its
+engine-owned collision index afterward. `WorldRenderer`
 separately releases its directional and point-shadow GPU resources.
 
 ## Source Map
@@ -235,12 +233,12 @@ separately releases its directional and point-shadow GPU resources.
 | --- | --- |
 | `src/main.py` | Minimal launch file. Builds the first scene and starts `Engine.run()`. |
 | `src/game/__init__.py` | Game package marker for actors, combat, inventory, player systems, UI, resources, and worlds. |
-| `src/game/main_menu.py` | Boot menu with entries for the normal world, crypt level testing and the standalone object test scene. |
-| `src/game/undersea_crypt_scene.py` | Flooded dungeon orchestration, torch lighting, skeleton encounters and interactive reliquary. |
-| `src/game/world/crypt_layout.py` | Seeded enclosed chambers, narrow connecting passages and encounter placement. |
-| `src/game/world/crypt_geometry.py` | Shared masonry, vaults, columns, recessed burial niches, torch mounts and collision shapes. |
-| `src/game/world/crypt_water.py` | Translucent tide with animated caustics, highlights and fog. |
-| `src/game/object_test_scene.py` | Independent flat showroom scene with its own loading, first-person movement, collision, exhibit layout, rendering, interactions, and cleanup. |
+| `src/game/scenes/main_menu.py` | Boot menu with entries for the normal world, crypt level testing and the standalone object test scene. |
+| `src/game/levels/crypt/scene.py` | Flooded dungeon orchestration, torch lighting, skeleton encounters and interactive reliquary. |
+| `src/game/levels/crypt/layout.py` | Seeded enclosed chambers, narrow connecting passages and encounter placement. |
+| `src/game/levels/crypt/geometry.py` | Shared masonry, vaults, columns, recessed burial niches, torch mounts and collision shapes. |
+| `src/game/levels/crypt/water.py` | Translucent tide with animated caustics, highlights and fog. |
+| `src/game/scenes/object_test.py` | Independent flat showroom scene with its own loading, first-person movement, collision, exhibit layout, rendering, interactions, and cleanup. |
 | `src/engine/config.py` | Engine display, view, audio mute, and performance defaults. Reads `PY3D_*` environment flags. |
 | `src/game/config.py` | Game movement, sky, island shoreline/water, player, and goblin tuning. Re-exports engine defaults for game modules. |
 
@@ -253,11 +251,11 @@ separately releases its directional and point-shadow GPU resources.
 | `src/engine/core/loading_scene.py` | Loading/progress scene that advances another scene's setup iterator over frames. |
 | `src/engine/core/scene.py` | Base scene protocol: optional camera plus event, render, and dispose hooks. |
 | `src/engine/core/performance.py` | Lightweight named-section profiler used by engine and world code. |
-| `src/engine/core/object3d.py` | Base local-vertex object with cached world vertices, XZ/XYZ bounds, and bounding spheres. |
-| `src/engine/core/mesh.py` | VBO-backed `BatchedMesh`, static and dynamic vertex uploads, explicit lighting-receiver projection with a legacy fallback, and `GroundHeightSampler`. |
-| `src/engine/core/compat_shader.py` | Compatibility-profile shader helpers for textured exposure, lighting, fog, vibrance, shine state, and fixed-capacity overflow warnings. |
-| `src/engine/core/gl_state.py` | Restores the fixed-function pipeline after programmable packet, shadow, or compatibility draws. |
-| `src/engine/core/legacy_shader_adapter.py` | Lazy boundary for loading the deprecated compatibility lighting shader only when a legacy draw requests it. |
+| `src/engine/geometry/object3d.py` | Base local-vertex object with cached world vertices, XZ/XYZ bounds, and bounding spheres. |
+| `src/engine/rendering/mesh.py` | VBO-backed `BatchedMesh`, static and dynamic vertex uploads, explicit lighting-receiver projection with a legacy fallback, and `GroundHeightSampler`. |
+| `src/engine/rendering/shaders/compat.py` | Compatibility-profile shader helpers for textured exposure, lighting, fog, vibrance, shine state, and fixed-capacity overflow warnings. |
+| `src/engine/rendering/state.py` | Restores the fixed-function pipeline after programmable packet, shadow, or compatibility draws. |
+| `src/engine/rendering/shaders/legacy.py` | Lazy boundary for loading the deprecated compatibility lighting shader only when a legacy draw requests it. |
 | `src/engine/core/consts.py` | Shared direction vectors used by older movement/render helpers. |
 
 ### Engine Runtime Helpers
@@ -265,10 +263,10 @@ separately releases its directional and point-shadow GPU resources.
 | File | Quick docs |
 | --- | --- |
 | `src/engine/__init__.py` | Engine-layer public exports. |
-| `src/engine/entity.py` | Runtime entity base class for update/draw/interact/collision hooks. |
-| `src/engine/collision.py` | Mesh collision helpers for wall blocking, floor support, and vertical collision resolution. |
-| `src/engine/lighting_receiver.py` | Immutable lighting receiver contract, local-light evaluation policy, sun-shadow reception, material clamps, and compatibility-shader projection. |
-| `src/engine/render_style_state.py` | Process-wide fog and vibrance state shared by fixed-function and programmable render paths. |
+| `src/engine/core/entity.py` | Runtime entity base class for update/draw/interact/collision hooks. |
+| `src/engine/physics/collision.py` | Mesh collision helpers for wall blocking, floor support, and vertical collision resolution. |
+| `src/engine/rendering/lighting/receiver.py` | Immutable lighting receiver contract, local-light evaluation policy, sun-shadow reception, material clamps, and compatibility-shader projection. |
+| `src/engine/rendering/style.py` | Process-wide fog and vibrance state shared by fixed-function and programmable render paths. |
 
 ### Lighting Backends
 
@@ -281,23 +279,23 @@ the lighting implementation is being changed.
 | File | Quick docs |
 | --- | --- |
 | `src/engine/rendering/__init__.py` | Rendering package exports. |
-| `src/engine/rendering/lighting.py` | Authoritative revisioned scene-lighting owner with immutable typed local-light exposure, CPU lighting math, and textured-normal data. It stores neither local-light dictionaries nor covered regions. |
-| `src/engine/rendering/lighting_state.py` | Immutable revisioned lighting snapshots plus typed directional and local scalar-light records. |
-| `src/engine/rendering/lighting_adapter.py` | Builds uncapped backend-neutral receiver packets and explicit legacy projections. |
-| `src/engine/rendering/packet_shader.py` | Packet-driven lighting program, receiver-policy binding, local-to-world model transforms, and device-capacity validation. |
-| `src/engine/rendering/packet_shader_source.py` | Standalone packet GLSL, including model-transformed vertices/normals, fragment surface lighting, and vertex-interpolated polygon point queries. |
-| `src/engine/rendering/directional_shadow.py` | Directional depth-map ownership, light-space matrices, and the shared opaque/alpha-cutout caster shader. |
-| `src/engine/rendering/point_shadow.py` | Point-light depth cubemaps, six face matrices, bindings, and radial-depth caster shader. |
-| `src/engine/rendering/scene_lighting.py` | Reusable scene lighting packets, enable/disable controls and shadow ownership. |
-| `src/engine/rendering/scene_shadows.py` | Scene-independent sun and point-shadow selection, caching and staged refreshes. |
-| `src/engine/rendering/gl_program.py` | Shared GLSL compile/link helper used by packet and shadow programs. |
-| `src/engine/rendering/packet_gpu_storage.py` | Persistent RGBA32F record textures with revision-equivalent subimage updates plus fragment/vertex texture capability checks for local-light, region, and portal input. |
+| `src/engine/rendering/lighting/model.py` | Authoritative revisioned scene-lighting owner with immutable typed local-light exposure, CPU lighting math, and textured-normal data. It stores neither local-light dictionaries nor covered regions. |
+| `src/engine/rendering/lighting/state.py` | Immutable revisioned lighting snapshots plus typed directional and local scalar-light records. |
+| `src/engine/rendering/lighting/adapter.py` | Builds uncapped backend-neutral receiver packets and explicit legacy projections. |
+| `src/engine/rendering/shaders/packet.py` | Packet-driven lighting program, receiver-policy binding, local-to-world model transforms, and device-capacity validation. |
+| `src/engine/rendering/shaders/source.py` | Standalone packet GLSL, including model-transformed vertices/normals, fragment surface lighting, and vertex-interpolated polygon point queries. |
+| `src/engine/rendering/shadows/directional.py` | Directional depth-map ownership, light-space matrices, and the shared opaque/alpha-cutout caster shader. |
+| `src/engine/rendering/shadows/point.py` | Point-light depth cubemaps, six face matrices, bindings, and radial-depth caster shader. |
+| `src/engine/rendering/lighting/renderer.py` | Reusable scene lighting packets, enable/disable controls and shadow ownership. |
+| `src/engine/rendering/shadows/renderer.py` | Scene-independent sun and point-shadow selection, caching and staged refreshes. |
+| `src/engine/rendering/shaders/program.py` | Shared GLSL compile/link helper used by packet and shadow programs. |
+| `src/engine/rendering/shaders/storage.py` | Persistent RGBA32F record textures with revision-equivalent subimage updates plus fragment/vertex texture capability checks for local-light, region, and portal input. |
 | `src/engine/rendering/frame_comparison.py` | Stable-pixel masking and quantitative RGB parity metrics for renderer A/B gates. |
-| `src/engine/rendering/geometry_lighting.py` | Resolves explicit packet/legacy vertex representation, retaining lazy shader probing only for standalone compatibility callers. |
-| `src/engine/rendering/render_environment.py` | Immutable render-facing environment regions and portals. |
+| `src/engine/rendering/lighting/geometry.py` | Resolves explicit packet/legacy vertex representation, retaining lazy shader probing only for standalone compatibility callers. |
+| `src/engine/rendering/environment/state.py` | Immutable render-facing environment regions and portals. |
 | `src/engine/rendering/sprite.py` | Camera-facing world sprites and animated sprites, with billboard-safe sun-shadow reception policy. |
-| `src/engine/rendering/sky_renderer.py` | Sky, sun/moon/star, and cloud render orchestration. |
-| `src/engine/rendering/cloud_renderer.py` | Batched pixel-art cloud rendering. |
+| `src/engine/rendering/environment/sky.py` | Sky, sun/moon/star, and cloud render orchestration. |
+| `src/engine/rendering/environment/clouds.py` | Batched pixel-art cloud rendering. |
 | `src/engine/rendering/decal.py` | Terrain-conforming textured decal mesh. |
 | `src/engine/rendering/decal_batch.py` | Combines many static decals into one or more VBO batches. |
 
@@ -314,53 +312,52 @@ the lighting implementation is being changed.
 
 | File | Quick docs |
 | --- | --- |
-| `src/game/world/__init__.py` | Lazy public exports for world objects, `WorldScene`, `WorldContent`, and content helpers. |
-| `src/game/world/worldscene.py` | Scene lifecycle orchestrator. Delegates setup/build/runtime/rendering/combat/entity registration/collision indexing/static lighting/resource cleanup while keeping compatibility state aliases. |
-| `src/game/world/world_state.py` | Explicit `WorldBuildState`, `WorldRenderResources`, and `WorldUIState` containers plus compatibility alias descriptors. |
-| `src/game/world/world_setup.py` | Bootstrap helpers for brightness, controllers, fog/lighting, texture/sound loading, sky, HUD, menus, and tunable scene flags. |
-| `src/game/world/world_builder.py` | World construction orchestration: build-step metadata, incremental progress, and compatibility exports for construction helpers. |
-| `src/game/world/builder_support.py` | Shared construction-step and disposal helpers used by the construction pipeline modules. |
-| `src/game/world/building_pipeline.py` | Building/showcase construction: authored/generated building specs, collision shells, render-only architectural details, torches, doors, windows, showcase polygons, and showcase chest setup. |
-| `src/game/world/terrain_pipeline.py` | Terrain and boundary construction: ground mesh generation, island shoreline/water creation, and fence ring rebuilding. |
-| `src/game/world/island_boundary.py` | Exact terrain-render bounds, continuous irregular multi-ring beach geometry, a hidden-underlap flat ocean mesh, and the animated cellular GLSL 1.20 water renderer. |
-| `src/game/world/road_pipeline.py` | Road construction and batching for the main road plus building access roads. |
-| `src/game/world/spawn_pipeline.py` | Procedural nature and species-aware goblin/skeleton placement, registration and pose-atlas batching. |
-| `src/game/world/detail_pipeline.py` | Ground-detail/contact-shadow decal batching for procedural nature. |
-| `src/game/world/world_runtime.py` | Per-frame runtime helpers: bounds checks, road checks, height queries, entity updates, interaction, pause/inventory input, and mouse delta forwarding. |
-| `src/game/world/world_renderer.py` | World render pipeline: fog/projection/camera setup, sky, water/terrain/beach ordering, generated-goblin model/contact-shadow passes, object passes, and HUD text/panel delegation. |
-| `src/game/world/collision_index.py` | Spatial collision candidate index for wall and polygon meshes, including dynamic/fallback mesh handling. |
-| `src/game/world/entity_registry.py` | Runtime entity registry that keeps entity/creature lists, immediate draw lists, sprites, and collision meshes synchronized. |
+| `src/game/world/__init__.py` | Public world declarations and lazy `WorldScene` entry point. |
+| `src/game/world/scene.py` | Scene lifecycle orchestrator. Delegates setup/build/runtime/rendering/combat/entity registration/collision indexing/static lighting/resource cleanup while keeping compatibility state aliases. |
+| `src/game/world/runtime/state.py` | Explicit `WorldBuildState`, `WorldRenderResources`, and `WorldUIState` containers plus compatibility alias descriptors. |
+| `src/game/world/runtime/setup.py` | Bootstrap helpers for brightness, controllers, fog/lighting, texture/sound loading, sky, HUD, menus, and tunable scene flags. |
+| `src/game/world/generation/builder.py` | World construction orchestration: build-step metadata, incremental progress, and compatibility exports for construction helpers. |
+| `src/game/world/generation/support.py` | Shared construction-step and disposal helpers used by the construction pipeline modules. |
+| `src/game/world/architecture/generation.py` | Building/showcase construction: authored/generated building specs, collision shells, render-only architectural details, torches, doors, windows, showcase polygons, and showcase chest setup. |
+| `src/game/world/terrain/generation.py` | Terrain and boundary construction: ground mesh generation, island shoreline/water creation, and fence ring rebuilding. |
+| `src/game/world/terrain/boundary.py` | Exact terrain-render bounds, continuous irregular multi-ring beach geometry, a hidden-underlap flat ocean mesh, and the animated cellular GLSL 1.20 water renderer. |
+| `src/game/world/roads/generation.py` | Road construction and batching for the main road plus building access roads. |
+| `src/game/world/generation/spawns.py` | Procedural nature and species-aware goblin/skeleton placement, registration and pose-atlas batching. |
+| `src/game/world/generation/details.py` | Ground-detail/contact-shadow decal batching for procedural nature. |
+| `src/game/world/runtime/update.py` | Per-frame runtime helpers: bounds checks, road checks, height queries, entity updates, interaction, pause/inventory input, and mouse delta forwarding. |
+| `src/game/world/rendering/renderer.py` | World render pipeline: fog/projection/camera setup, sky, water/terrain/beach ordering, generated-goblin model/contact-shadow passes, object passes, and HUD text/panel delegation. |
+| `src/engine/physics/spatial.py` | Spatial collision candidate index for wall and polygon meshes, including dynamic/fallback mesh handling. |
+| `src/game/world/runtime/entities.py` | `WorldEntityRegistry` keeps entity/creature lists, immediate draw lists, sprites, and collision meshes synchronized. |
 | `src/game/world/environment.py` | Typed indoor volumes and portals, point queries, and legacy covered-region projection during lighting migration. |
-| `src/game/world/lighting_controller.py` | Lighting snapshot adapter, packet-runtime cache, alias-free packet operation, explicit backend transition, exact packet static-geometry validation, rollback-only request guard, and migration diagnostics. |
-| `src/game/world/legacy_lighting_bridge.py` | Lazily imported rollback-only owner for scene aliases, local-light/covered-region dictionaries, door-region bindings, compatibility uploads, CPU exposure, and ground/road/wall/fence rebuild policy. |
-| `src/game/world/lighting_receivers.py` | Complete receiver registry with disjoint packet-runtime and rollback-only CPU/untextured contract sets. |
-| `src/game/world/scene_resources.py` | Scene resource disposer for OpenGL-backed meshes, island water shader/VBO, batches, HUD resources, entities, ambient audio, and cached render/collision references. |
-| `src/game/world/world_content.py` | Declarative scene content. Converts hand-authored or generated building declarations into mutable runtime specs. |
-| `src/game/world/interior_layout.py` | Shared doorway, window, and interior-feature placement geometry used while authoring buildings. |
-| `src/game/world/world_lighting_plan.py` | Authors typed indoor environment and stable-ID opening-light records; projects compatibility dictionaries only for legacy construction. |
-| `src/game/world/world_road_planner.py` | Plans non-overlapping driveway routes from buildings to the road network. |
-| `src/game/world/world_spawner.py` | Deterministically places procedural nature and billboard props inside world bounds while avoiding roads, buildings, and layer peers. |
+| `src/game/world/rendering/lighting.py` | Lighting snapshot adapter, packet-runtime cache, alias-free packet operation, explicit backend transition, exact packet static-geometry validation, rollback-only request guard, and migration diagnostics. |
+| `src/game/world/rendering/legacy.py` | Lazily imported rollback-only owner for scene aliases, local-light/covered-region dictionaries, door-region bindings, compatibility uploads, CPU exposure, and ground/road/wall/fence rebuild policy. |
+| `src/game/world/rendering/receivers.py` | Complete receiver registry with disjoint packet-runtime and rollback-only CPU/untextured contract sets. |
+| `src/game/world/runtime/resources.py` | Scene resource disposer for OpenGL-backed meshes, island water shader/VBO, batches, HUD resources, entities, ambient audio, and cached render/collision references. |
+| `src/game/world/content.py` | Declarative scene content. Converts hand-authored or generated building declarations into mutable runtime specs. |
+| `src/game/world/architecture/interiors.py` | Shared doorway, window, and interior-feature placement geometry used while authoring buildings. |
+| `src/game/world/rendering/plan.py` | Authors typed indoor environment and stable-ID opening-light records; projects compatibility dictionaries only for legacy construction. |
+| `src/game/world/roads/planner.py` | Plans non-overlapping driveway routes from buildings to the road network. |
+| `src/game/world/generation/placement.py` | Deterministically places procedural nature and billboard props inside world bounds while avoiding roads, buildings, and layer peers. |
 
 ### Game World Objects
 
 | File | Quick docs |
 | --- | --- |
-| `src/game/world/objects/__init__.py` | Convenient exports for common world object classes. |
-| `src/game/world/objects/building.py` | Building authoring helper that turns one rectangular footprint into walls and a flat collision ceiling with door/window openings, plus batched gabled roofs, trim, sills, buttresses, and chimneys. |
-| `src/game/world/objects/tree.py` | Deterministic low-poly trunk, branch, and foliage generation plus spatially chunked static tree batching. |
-| `src/game/world/objects/grass.py` | Deterministic low-poly grass-clump generation plus spatially chunked static batching. |
-| `src/game/world/objects/rock.py` | Deterministic faceted boulder generation plus spatially chunked static batching. |
-| `src/game/world/objects/wall_tile.py` | Wall primitive and static wall batching helpers, including texture UVs and lighting data. |
-| `src/game/world/objects/ground.py` | Terrain grid builder that loads heightmaps, flattens typed environment footprints, generates vertex rows, and creates the ground batch. |
-| `src/game/world/objects/ground_tile.py` | Legacy flat ground quad primitive. |
-| `src/game/world/objects/road.py` | Road mesh builder, road object, point containment, lighting refresh, and road render batching. |
-| `src/game/world/objects/fence.py` | Textured fence-ring mesh generation around the playable ground bounds. |
-| `src/game/world/objects/door.py` | Interactive door entity with slab rendering, collision, doorway-light binding, and batching. |
-| `src/game/world/objects/chest.py` | Interactive chest with legacy CPU-baked and explicitly declared dynamic packet receiver representations. |
-| `src/game/world/objects/window.py` | Fixed window entity with slab rendering, wall backing, and batching. |
-| `src/game/world/objects/torch.py` | Building-mounted torch sprite plus typed local-light authoring and legacy modifier projections. |
-| `src/game/world/objects/polygon.py` | Extruded polygon primitive plus legacy CPU-baked and camera-independent packet render batching. |
-| `src/game/world/objects/slab.py` | Shared geometry, UV, collision, and draw helpers for textured rectangular slab entities. |
+| `src/game/world/architecture/building.py` | Building authoring helper that turns one rectangular footprint into walls and a flat collision ceiling with door/window openings, plus batched gabled roofs, trim, sills, buttresses, and chimneys. |
+| `src/game/world/terrain/tree.py` | Deterministic low-poly trunk, branch, and foliage generation plus spatially chunked static tree batching. |
+| `src/game/world/terrain/grass.py` | Deterministic low-poly grass-clump generation plus spatially chunked static batching. |
+| `src/game/world/terrain/rock.py` | Deterministic faceted boulder generation plus spatially chunked static batching. |
+| `src/engine/geometry/wall.py` | Wall primitive and static wall batching helpers, including texture UVs and lighting data. |
+| `src/game/world/terrain/ground.py` | Terrain grid builder that loads heightmaps, flattens typed environment footprints, generates vertex rows, and creates the ground batch. |
+| `src/engine/geometry/plane.py` | Legacy flat ground quad primitive. |
+| `src/game/world/roads/road.py` | Road mesh builder, road object, point containment, lighting refresh, and road render batching. |
+| `src/game/world/props/fence.py` | Textured fence-ring mesh generation around the playable ground bounds. |
+| `src/game/world/architecture/door.py` | Interactive door entity with slab rendering, collision, doorway-light binding, and batching. |
+| `src/game/world/props/chest.py` | Interactive chest with legacy CPU-baked and explicitly declared dynamic packet receiver representations. |
+| `src/game/world/architecture/window.py` | Fixed window entity with slab rendering, wall backing, and batching. |
+| `src/game/world/architecture/torch.py` | Building-mounted torch sprite plus typed local-light authoring and legacy modifier projections. |
+| `src/engine/geometry/polygon.py` | Extruded polygon primitive plus legacy CPU-baked and camera-independent packet render batching. |
+| `src/engine/geometry/slab.py` | Shared geometry, UV, collision, and draw helpers for textured rectangular slab entities. |
 
 ### Game Actors, Combat, Player, Inventory, and UI
 
@@ -414,10 +411,9 @@ the lighting implementation is being changed.
 
 - Add authored buildings through `WorldContent.with_buildings()` and pass the
   result to `WorldScene(world_content=...)`.
-- Add new loading-time world construction in the matching pipeline module:
-  buildings/showcase in `building_pipeline.py`, terrain/fences in
-  `terrain_pipeline.py`, roads in `road_pipeline.py`, sprites/enemies in
-  `spawn_pipeline.py`, and decals/details in `detail_pipeline.py`.
+- Add loading-time construction to its feature's `generation.py` in
+  `world/architecture`, `world/terrain`, or `world/roads`. Cross-feature placement
+  and decals live in `world/generation/spawns.py` and `details.py`.
 - Add per-frame behavior as an `Entity` when it needs update, interaction, or
   collision hooks.
 - Add a combat-capable enemy by subclassing `Creature` (or implementing its
@@ -425,14 +421,14 @@ the lighting implementation is being changed.
   detection, battle UI, attacks, and creature-owned rewards are generic.
 - Add player movement changes in `game.player.controller` when they affect
   input or collision.
-- Add rendering-only world pass changes in `game.world.world_renderer`.
+- Add rendering-only world pass changes in `game.world.rendering.renderer`.
 - Add screen-space UI input behavior in `game.ui.interactions` and visual
   presentation in the matching panel or overlay module.
 - Add minimap markers by registering a layer on `WorldHUD.minimap`; layer draw
   callbacks receive a `MiniMapContext` with world-to-map coordinate helpers.
-- Add static lighting rules in `world_lighting_plan.py`, refresh policy in
-  `game.world.lighting_controller`, and reusable lighting math in
-  `engine.rendering.lighting`.
+- Add static lighting rules in `game.world.rendering.plan`, refresh policy in
+  `game.world.rendering.lighting`, and reusable lighting math in
+  `engine.rendering.lighting.model`.
 
 ## Practical Notes
 
@@ -447,7 +443,7 @@ the lighting implementation is being changed.
   batch and which owner controls its lifetime.
 - Many rendering objects expose `dispose()`. Call or register disposal before
   replacing VBO-backed batches.
-- Collision candidate lookup is indexed in `collision_index.py`; invalidate or
+- Collision candidate lookup is indexed in `engine/physics/spatial.py`; invalidate or
   rebuild the index when collision shapes are added or removed after loading.
 - Camera brightness is cached by position buckets. World lighting changes must
   go through `SceneLighting` so its revision advances and the controller can

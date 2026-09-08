@@ -54,16 +54,44 @@ for inspection. Use Escape and **Exit to Main Menu** to leave.
 
 ## Project structure
 
-Runtime code is split by ownership:
+The engine supplies reusable capabilities; the game owns content and rules.
+Engine modules must be importable without the `game` package. Game modules may
+use engine APIs; the engine receives data or callbacks when it needs scene input.
 
-- `src/engine/` contains reusable loop, scene, camera, rendering, collision, UI,
-  texture, sound, and engine config code.
-- `src/game/world/` contains only world construction, content, objects,
-  rendering, lighting, runtime, and scene orchestration.
-- `src/game/actors/`, `combat/`, `player/`, and `ui/` contain their respective
-  game systems; `src/game/inventory.py` owns item and equipment state.
-- `src/game/resources/` and `src/game/config.py` contain asset catalogs and game
-  tuning.
+```text
+src/
+  engine/
+    core/             Loop, scenes, entities, loading, profiling
+    geometry/         Planes, walls, polygons, slabs, primitive materials
+    physics/          Collision queries and spatial index
+    rendering/
+      lighting/       Light state, receiver contracts, lighting renderer
+      shadows/        Point and directional shadow maps and caching
+      shaders/        GPU programs, packet storage, compatibility backend
+      environment/    Sky, clouds, render-facing environment records
+    camera/ ui/ textures/ sound/
+  game/
+    scenes/           Main menu and object inspection scene
+    levels/crypt/     Crypt scene, layout, masonry and water
+    world/
+      scene.py        Playable world lifecycle
+      content.py      World and building declarations
+      environment.py Game indoor volumes and portals
+      architecture/   Buildings, interiors, doors, windows and torches
+      terrain/        Ground, coastline, vegetation and nature LOD
+      roads/          Road geometry, planning and construction
+      props/          Chests and fences
+      generation/     Loading pipeline, placement and world details
+      runtime/        Setup, gameplay updates, state, entities and cleanup
+      rendering/      World draw order and game lighting policy
+    actors/ combat/ player/ ui/ resources/
+```
+
+Construction code lives with its feature (`architecture/generation.py`, for
+example); `world/generation/builder.py` coordinates those features. Level-specific
+content belongs under `game/levels`. Import primitives from `engine.geometry` and
+world objects from their feature package. `game.world` exports only `WorldScene`,
+`WorldContent`, `BuildingSpec`, and `building`.
 
 See [DOCUMENTATION.md](DOCUMENTATION.md) for runtime flow, subsystem ownership,
 extension points, lighting architecture, and a detailed source map.

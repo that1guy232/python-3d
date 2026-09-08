@@ -34,7 +34,7 @@ class PauseMenu(ButtonMenu):
         scene.showing_settings_menu = True
 
     def exit_to_main_menu(self, scene) -> None:
-        from game.main_menu import MainMenuScene
+        from game.scenes.main_menu import MainMenuScene
 
         Sounds.stop("ambient_birds")
         scene.paused = False

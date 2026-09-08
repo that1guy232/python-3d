@@ -1,12 +1,10 @@
-"""Core engine loop, scene, mesh, shader, and profiling helpers."""
+"""Engine loop, scene and entity lifecycle, loading and profiling."""
 
 __all__ = [
     "engine",
     "scene",
     "loading_scene",
-    "mesh",
-    "object3d",
+    "entity",
     "performance",
-    "compat_shader",
     "consts",
 ]

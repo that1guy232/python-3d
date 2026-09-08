@@ -15,7 +15,7 @@ from game.inventory import receive_inventory_item
 from game.player.stats import PlayerStats
 
 if TYPE_CHECKING:
-    from game.world.worldscene import WorldScene
+    from game.world.scene import WorldScene
 
 
 class BattleController:

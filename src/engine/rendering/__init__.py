@@ -1,12 +1,12 @@
 """Rendering systems owned by the engine layer."""
 
-from .decal import Decal
-from .decal_batch import DecalBatch
-from .lighting import SceneLighting
-from .lighting_state import LightingSnapshot, LocalBrightnessLight, PointLight
-from engine.lighting_receiver import LightingReceiver, ReceiverCompatibilityError
-from .sky_renderer import SkyRenderer
-from .sprite import AnimatedWorldSprite, WorldSprite, draw_sprites_batched
+from engine.rendering.decal import Decal
+from engine.rendering.decal_batch import DecalBatch
+from engine.rendering.lighting.model import SceneLighting
+from engine.rendering.lighting.state import LightingSnapshot, LocalBrightnessLight, PointLight
+from engine.rendering.lighting.receiver import LightingReceiver, ReceiverCompatibilityError
+from engine.rendering.environment.sky import SkyRenderer
+from engine.rendering.sprite import AnimatedWorldSprite, WorldSprite, draw_sprites_batched
 
 __all__ = [
     "Decal",

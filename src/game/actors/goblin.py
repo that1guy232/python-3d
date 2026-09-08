@@ -45,8 +45,8 @@ from OpenGL.GL import (
     glVertexPointer,
 )
 
-from engine.core.gl_state import use_fixed_pipeline
-from engine.core.mesh import BatchedMesh
+from engine.rendering.state import use_fixed_pipeline
+from engine.rendering.mesh import BatchedMesh
 from engine.sound.sound_utils import Sounds
 from game.actors.creature import Creature
 from game.actors.goblin_model import (
@@ -58,7 +58,7 @@ from game.actors.goblin_model import (
     transformed_cached_goblin_vertex_data,
 )
 from game.inventory import InventoryItem, goblin_equipment_set
-from game.world.lighting_receivers import GOBLIN_LIGHTING_RECEIVER
+from game.world.rendering.receivers import GOBLIN_LIGHTING_RECEIVER
 
 GOBLIN_MODEL_HEIGHT = 42.0
 # Source-compatible name for callers that used the old billboard height knob.

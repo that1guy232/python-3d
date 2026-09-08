@@ -1,5 +1,5 @@
 """Engine-level packages."""
 
-from .entity import Entity
+from engine.core.entity import Entity
 
 __all__ = ["Entity"]

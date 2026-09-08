@@ -11,7 +11,7 @@ from engine.config import WIDTH, HEIGHT
 import pygame
 
 if TYPE_CHECKING:
-    from engine.rendering.lighting_state import LocalBrightnessLight
+    from engine.rendering.lighting.state import LocalBrightnessLight
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,7 +175,7 @@ class Camera:
         cls,
         source: CameraBrightnessArea | LocalBrightnessLight,
     ) -> CameraBrightnessArea:
-        from engine.rendering.lighting_state import LocalBrightnessLight
+        from engine.rendering.lighting.state import LocalBrightnessLight
 
         if isinstance(source, CameraBrightnessArea):
             return source
