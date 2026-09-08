@@ -56,28 +56,28 @@ from engine.textures.texture_utils import get_texture_size
 from game.actors.goblin import Goblin, GoblinRenderBatch
 from game.actors.skeleton import Skeleton, SkeletonRenderBatch
 from game.resources.texture_manager import load_world_textures
-from game.world.rendering.receivers import (
+from game.gameplay.rendering.receivers import (
     GROUND_LIGHTING_RECEIVER,
     PACKET_RUNTIME_LIGHTING_RECEIVERS,
     ROAD_LIGHTING_RECEIVER,
     SPRITE_LIGHTING_RECEIVER,
 )
-from game.world.props.chest import Chest
-from game.world.architecture.door import Door
+from game.objects.chest import Chest
+from game.objects.architecture.door import Door
 from engine.geometry.plane import GroundTile
-from game.world.roads.road import Road
-from game.world.architecture.torch import Torch
-from game.world.architecture.window import Window
-from game.world.architecture.building import Building
-from game.world.architecture.door import build_door_render_batch
-from game.world.props.fence import build_textured_fence_ring
+from game.objects.road import Road
+from game.objects.architecture.torch import Torch
+from game.objects.architecture.window import Window
+from game.objects.architecture.building import Building
+from game.objects.architecture.door import build_door_render_batch
+from game.objects.fence import build_textured_fence_ring
 from engine.geometry.polygon import Polygon, build_polygon_render_batch
-from game.world.roads.road import ROAD_SURFACE_CLEARANCE, road_crown_elevation
-from game.world.terrain.grass import GRASS_VARIANT_COUNT, Grass, build_grass_meshes
-from game.world.terrain.rock import ROCK_VARIANT_COUNT, Rock, build_rock_meshes
-from game.world.terrain.tree import TREE_VARIANT_COUNT, Tree, build_tree_meshes
+from game.objects.road import ROAD_SURFACE_CLEARANCE, road_crown_elevation
+from game.objects.terrain.grass import GRASS_VARIANT_COUNT, Grass, build_grass_meshes
+from game.objects.terrain.rock import ROCK_VARIANT_COUNT, Rock, build_rock_meshes
+from game.objects.terrain.tree import TREE_VARIANT_COUNT, Tree, build_tree_meshes
 from engine.geometry.wall import build_wall_tile_batches
-from game.world.architecture.window import build_window_render_batch
+from game.objects.architecture.window import build_window_render_batch
 
 
 _OBJECT_TEST_TEXTURE_CACHE: dict[str, Any] | None = None

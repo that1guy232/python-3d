@@ -11,7 +11,7 @@ from game.actors.skeleton_model import (
     transformed_cached_skeleton_vertex_data,
 )
 from game.inventory import InventoryItem, ItemType
-from game.world.rendering.receivers import SKELETON_LIGHTING_RECEIVER
+from game.gameplay.rendering.receivers import SKELETON_LIGHTING_RECEIVER
 
 
 class Skeleton(Goblin):

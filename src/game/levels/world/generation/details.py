@@ -1,0 +1,276 @@
+"""Ground detail and decal construction pipeline for world scenes."""
+
+from __future__ import annotations
+
+
+import math
+
+import random
+
+import time
+
+from typing import Iterator
+
+
+from pygame.math import Vector3
+
+
+from engine.rendering.decal import Decal
+
+from engine.rendering.decal_batch import DecalBatch
+
+from engine.textures.texture_utils import (
+    create_forest_floor_texture,
+    create_shadow_texture,
+)
+
+from game.levels.world.generation.support import _dispose_value, _dispose_values
+
+SHADOW_BUILDING_CLIP_MARGIN = 2.0
+
+
+def _building_shadow_clip_bounds(scene) -> list[tuple[float, float, float, float]]:
+
+    bounds: list[tuple[float, float, float, float]] = []
+
+    margin = SHADOW_BUILDING_CLIP_MARGIN
+
+    for building in getattr(scene, "buildings", ()) or ():
+
+        try:
+
+            min_x, max_x, min_z, max_z = building.bounds
+
+        except (TypeError, ValueError, AttributeError):
+
+            continue
+
+        bounds.append(
+            (
+                float(min_x) - margin,
+                float(max_x) + margin,
+                float(min_z) - margin,
+                float(max_z) + margin,
+            )
+        )
+
+    return bounds
+
+
+def _outside_building_shadow_receiver(bounds: list[tuple[float, float, float, float]]):
+
+    if not bounds:
+
+        return None
+
+    def receives_shadow(x: float, z: float) -> bool:
+
+        px = float(x)
+
+        pz = float(z)
+
+        for min_x, max_x, min_z, max_z in bounds:
+
+            if min_x <= px <= max_x and min_z <= pz <= max_z:
+
+                return False
+
+        return True
+
+    return receives_shadow
+
+
+def _build_shadow_decals(scene) -> Iterator[float]:
+    """Build ground details cooperatively, yielding phase completion.
+
+    Decal construction is CPU-heavy but does not need to monopolize one frame.
+    The yielded fractions let the loading scene repaint between small batches.
+    """
+
+    tree_detail_subdiv = 4
+
+    start_time = time.perf_counter()
+
+    yield 0.03
+
+    tree_detail_textures = []
+    for seed in range(4):
+        tree_detail_textures.append(create_forest_floor_texture(
+            width_px=192,
+            height_px=192,
+            variant_seed=seed,
+            alpha_scale=0.86,
+            pixelated=False,
+        ))
+        yield 0.03 + 0.035 * (seed + 1)
+
+    contact_shadow_texture = create_shadow_texture(
+        width_px=128,
+        height_px=128,
+        max_alpha=0.34,
+        inner_ratio=0.18,
+        outer_ratio=0.98,
+        falloff_exp=1.55,
+        pixelated=False,
+    )
+
+    yield 0.20
+
+    print("Created ground detail and contact shadow textures.")
+
+    scene.log_timing("Create ground detail textures", start_time, time.perf_counter())
+
+    decals: list[Decal] = []
+
+    rng = random.Random(getattr(scene, "world_random_seed", None))
+
+    shadow_receiver = _outside_building_shadow_receiver(
+        _building_shadow_clip_bounds(scene)
+    )
+
+    def make_tree_detail_decal(tree) -> Decal:
+
+        w, h = tree.size
+
+        footprint = max(12.0, max(w * 0.58, h * 0.28))
+
+        final_w = max(18.0, min(72.0, footprint * rng.uniform(0.82, 1.28)))
+
+        final_h = max(14.0, min(58.0, footprint * rng.uniform(0.62, 1.04)))
+
+        rot = rng.uniform(0.0, 360.0)
+
+        offset_radius = min(final_w, final_h) * rng.uniform(0.0, 0.14)
+
+        offset_angle = rng.uniform(0.0, math.tau)
+
+        offset_x = math.cos(offset_angle) * offset_radius
+
+        offset_z = math.sin(offset_angle) * offset_radius
+
+        center_y = scene.ground_height_at(
+            tree.position.x + offset_x, tree.position.z + offset_z
+        )
+
+        return Decal(
+            center=Vector3(
+                tree.position.x + offset_x, center_y, tree.position.z + offset_z
+            ),
+            size=(final_w, final_h),
+            texture=rng.choice(tree_detail_textures),
+            rotation_deg=rot,
+            subdiv_u=tree_detail_subdiv,
+            subdiv_v=tree_detail_subdiv,
+            height_fn=scene.ground_height_at,
+            elevation=0.82,
+            uv_repeat=(1.0, 1.0),
+            color=(1.0, 1.0, 1.0),
+            receiver_fn=shadow_receiver,
+            # DecalBatch owns the final VBO; avoid building throwaway per-decal VBOs.
+            build_vbo=False,
+        )
+
+    def make_contact_decal(
+        model,
+        *,
+        scale_min: float,
+        scale_max: float,
+        min_size: float,
+        max_size: float,
+    ) -> Decal:
+
+        w, h = model.size
+
+        footprint = max(1.0, max(w, h))
+
+        diameter = max(
+            min_size, min(max_size, footprint * rng.uniform(scale_min, scale_max))
+        )
+
+        center_y = scene.ground_height_at(model.position.x, model.position.z)
+
+        return Decal(
+            center=Vector3(model.position.x, center_y, model.position.z),
+            size=(diameter, diameter),
+            texture=contact_shadow_texture,
+            rotation_deg=rng.uniform(0.0, 360.0),
+            subdiv_u=2,
+            subdiv_v=2,
+            height_fn=scene.ground_height_at,
+            elevation=0.75,
+            uv_repeat=(1.0, 1.0),
+            color=(1.0, 1.0, 1.0),
+            receiver_fn=shadow_receiver,
+            build_vbo=False,
+        )
+
+    start_time = time.perf_counter()
+
+    trees = list(scene.trees)
+    grasses = list(getattr(scene, "grasses", ()))
+    rocks = list(getattr(scene, "rocks", ()))
+    decal_count = len(trees) + len(grasses) + len(rocks)
+    completed_decals = 0
+
+    def batch_progress() -> float:
+        if decal_count <= 0:
+            return 0.90
+        return 0.20 + 0.70 * completed_decals / decal_count
+
+    for index, tree in enumerate(trees, 1):
+
+        decals.append(make_tree_detail_decal(tree))
+
+        completed_decals += 1
+        if index % 100 == 0:
+            yield batch_progress()
+
+    for index, grass in enumerate(grasses, 1):
+
+        decals.append(
+            make_contact_decal(
+                grass, scale_min=0.8, scale_max=1, min_size=8.0, max_size=28.0
+            )
+        )
+
+        completed_decals += 1
+        if index % 200 == 0:
+            yield batch_progress()
+
+    for index, rock in enumerate(rocks, 1):
+
+        decals.append(
+            make_contact_decal(
+                rock, scale_min=1, scale_max=1.05, min_size=10.0, max_size=42.0
+            )
+        )
+
+        completed_decals += 1
+        if index % 100 == 0:
+            yield batch_progress()
+
+    yield 0.90
+
+    print(
+        f"Created {len(scene.trees)} procedural-tree floor details, "
+        f"{len(getattr(scene, 'grasses', ()))} procedural-grass, "
+        f"and {len(getattr(scene, 'rocks', ()))} procedural-rock contact details."
+    )
+
+    scene.log_timing("Create decals", start_time, time.perf_counter())
+
+    _dispose_value(getattr(scene, "decal_batch", None))
+
+    _dispose_values(getattr(scene, "decal_batches", ()))
+
+    scene.decal_batches = []
+
+    scene.decal_batch = DecalBatch.build(decals)
+
+    scene.decal_batches.append(scene.decal_batch)
+
+    yield 0.98
+
+    start_time = time.perf_counter()
+
+    scene.log_timing("Build decal batch", start_time, time.perf_counter())

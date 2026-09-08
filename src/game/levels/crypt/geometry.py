@@ -13,7 +13,7 @@ from OpenGL import GL as gl
 
 from engine.rendering.mesh import BatchedMesh
 from engine.textures.texture_utils import _upload_texture_surface
-from game.world.rendering.receivers import (
+from game.gameplay.rendering.receivers import (
     GROUND_LIGHTING_RECEIVER,
     TEXTURED_STATIC_WALL_LIGHTING_RECEIVER,
 )

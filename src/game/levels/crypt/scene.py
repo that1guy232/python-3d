@@ -13,16 +13,16 @@ from engine.rendering.lighting.model import SceneLighting
 from engine.rendering.lighting.state import PointLight
 from game.actors.skeleton import Skeleton, SkeletonRenderBatch
 from game.inventory import InventoryItem, ItemType, receive_inventory_item
-from game.world.runtime import update as world_runtime
+from game.gameplay import runtime as world_runtime
 from game.levels.crypt.geometry import (
     build_crypt_steps, create_masonry_texture, create_mosaic_texture, crypt_fixtures,
 )
 from game.levels.crypt.layout import generate_crypt_layout
 from game.levels.crypt.water import CryptWater
-from game.world.props.chest import Chest
-from game.world.architecture.torch import Torch
-from game.world.rendering.renderer import WorldRenderer
-from game.world.scene import WorldScene
+from game.objects.chest import Chest
+from game.objects.architecture.torch import Torch
+from game.gameplay.rendering.renderer import GameplayRenderer
+from game.gameplay.scene import PlayableScene
 
 
 class CryptReliquary(Chest):
@@ -42,7 +42,7 @@ class CryptReliquary(Chest):
         return True
 
 
-class CryptRenderer(WorldRenderer):
+class CryptRenderer(GameplayRenderer):
     def draw_sky(self):
         pass
 
@@ -69,7 +69,7 @@ class CryptRenderer(WorldRenderer):
         text.end()
 
 
-class UnderseaCryptScene(WorldScene):
+class UnderseaCryptScene(PlayableScene):
     """A generated crypt. Construction stays CPU-only until loading begins."""
 
     def __init__(self, *, defer_setup=True, world_random_seed=None):
@@ -79,9 +79,7 @@ class UnderseaCryptScene(WorldScene):
         self.level_seed = seed
         self.rooms = self.layout.rooms
         self.fixtures = crypt_fixtures(self.layout)
-        super().__init__(defer_setup=True, tree_count=0, grass_count=0,
-                         rock_count=0, building_count=0, skeleton_count=len(self.layout.guardians),
-                         world_random_seed=seed)
+        super().__init__(world_random_seed=seed)
         self.ground_bounds = self.layout.bounds
         self.terrain_bounds = self.ground_bounds
         x0,x1,z0,z1 = self.ground_bounds

@@ -27,7 +27,7 @@ from engine.core.loading_scene import LoadingScene
 from engine.core.scene import Scene
 from engine.ui.menu import ButtonMenu, MenuOption
 from game.scenes.object_test import create_object_test_scene
-from game.world.scene import WorldScene
+from game.levels.world.scene import WorldScene
 
 
 def _draw_rect(
