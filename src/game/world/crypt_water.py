@@ -21,8 +21,8 @@ uniform float exposure;
 uniform float fogDensity;
 uniform vec3 fogColor;
 uniform int lightCount;
-uniform vec3 lightPosition[12];
-uniform vec3 lightColor[12];
+uniform vec3 lightPosition[16];
+uniform vec3 lightColor[16];
 void main() {
     vec2 p = world.xz;
     float a = sin(p.x * .10 + p.y * .071 + elapsed * .60);
@@ -38,7 +38,7 @@ void main() {
     vec3 color = vec3(.055,.29,.27) + crest*vec3(.20,.31,.23);
     color += fresnel*vec3(.04,.09,.10);
     color += caustic*vec3(.18,.32,.25);
-    for (int i=0; i<12; i++) {
+    for (int i=0; i<16; i++) {
         if (i >= lightCount) break;
         vec3 delta = lightPosition[i]-world;
         float falloff = max(0.,1.-length(delta)/220.);
@@ -80,7 +80,7 @@ class CryptWater:
             gl.glUniform1f(loc['exposure'],scene.camera.brightness_default)
             gl.glUniform1f(loc['fogDensity'],scene.fog_density if scene.fog_enabled else 0.)
             gl.glUniform3f(loc['fogColor'],*scene.renderer._sky_rgba()[:3])
-            lights = scene.lighting.point_lights[:12] if scene.lighting_controller.enabled else ()
+            lights = scene.lighting.point_lights[:16] if scene.lighting_controller.enabled else ()
             gl.glUniform1i(loc['lightCount'],len(lights))
             if lights:
                 gl.glUniform3fv(loc['lightPosition'],len(lights),[l.position for l in lights])

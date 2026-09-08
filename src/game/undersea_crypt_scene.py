@@ -14,7 +14,10 @@ from engine.rendering.lighting_state import PointLight
 from game.actors.skeleton import Skeleton, SkeletonRenderBatch
 from game.inventory import InventoryItem, ItemType, receive_inventory_item
 from game.world import world_runtime
-from game.world.crypt_geometry import CRYPT_ROOMS, Masonry, build_crypt, create_masonry_texture
+from game.world.crypt_geometry import (
+    build_crypt_steps, create_masonry_texture, create_mosaic_texture, crypt_fixtures,
+)
+from game.world.crypt_layout import generate_crypt_layout
 from game.world.crypt_water import CryptWater
 from game.world.objects.chest import Chest
 from game.world.objects.torch import Torch
@@ -55,7 +58,7 @@ class CryptRenderer(WorldRenderer):
         scene = self.scene
         if scene.paused or scene.inventory_open or scene.battle_mode:
             return
-        room = next((r.name for r in CRYPT_ROOMS if r.contains(
+        room = next((r.name for r in scene.rooms if r.contains(
             scene.camera.position.x,scene.camera.position.z)), "Drowned Hall")
         objective = ("Pearl recovered - explore the crypt or leave through the pause menu."
             if scene.relic_recovered else "Find the Pearl of the Deep in the reliquary.")
@@ -67,16 +70,24 @@ class CryptRenderer(WorldRenderer):
 
 
 class UnderseaCryptScene(WorldScene):
-    """A hand-authored dungeon. Construction stays CPU-only until loading begins."""
+    """A generated crypt. Construction stays CPU-only until loading begins."""
 
-    def __init__(self, *, defer_setup=True):
+    def __init__(self, *, defer_setup=True, world_random_seed=None):
+        seed = (random.SystemRandom().getrandbits(32) if world_random_seed is None
+                else int(world_random_seed))
+        self.layout = generate_crypt_layout(seed)
+        self.level_seed = seed
+        self.rooms = self.layout.rooms
+        self.fixtures = crypt_fixtures(self.layout)
         super().__init__(defer_setup=True, tree_count=0, grass_count=0,
-                         rock_count=0, building_count=0, skeleton_count=6,
-                         world_random_seed=712)
-        self.ground_bounds = (-460,180,-940,200)
+                         rock_count=0, building_count=0, skeleton_count=len(self.layout.guardians),
+                         world_random_seed=seed)
+        self.ground_bounds = self.layout.bounds
         self.terrain_bounds = self.ground_bounds
-        self.world_center = Vector3(-140,0,-370)
-        self.camera.position = Vector3(0,25,150)
+        x0,x1,z0,z1 = self.ground_bounds
+        self.world_center = Vector3((x0+x1)/2,0,(z0+z1)/2)
+        x,z = self.layout.entrance
+        self.camera.position = Vector3(x,25,z)
         self.camera.rotation = Vector3(0,0,0)
         self.camera.update_rotation(0)
         self._height_fn = lambda x,z: 0.
@@ -85,7 +96,7 @@ class UnderseaCryptScene(WorldScene):
         self.relic_recovered = False
         self.reliquary = None
         self._owned_texture_ids = []
-        self.water = CryptWater(CRYPT_ROOMS)
+        self.water = CryptWater(self.rooms)
         self.renderer = CryptRenderer(self)
         if not defer_setup:
             for _ in self.initialize_steps():
@@ -104,18 +115,22 @@ class UnderseaCryptScene(WorldScene):
             sun_position=Vector3(0,1000,0),sun_target=Vector3(0,0,0),
             sky_color=(.035,.075,.075,1.),ambient=.42,diffuse=0.,
             sun_tint=(.78,.89,.88),base_brightness=self.camera.brightness_default)
-        self.fog_density = .0015
+        self.fog_density = .00065
         self.clouds_enabled = False
-        self.buildings = list(CRYPT_ROOMS)
-        yield "Laying stone and carving the vaults",.22
+        self.buildings = list(self.rooms)
+        yield "Planning crypt chambers",.15
         stone = create_masonry_texture()
         self._owned_texture_ids.append(stone)
-        build_crypt(self,stone,self.building_material_tex)
-        yield "Lighting the flooded chambers",.55
+        mosaic = create_mosaic_texture(self.level_seed)
+        self._owned_texture_ids.append(mosaic)
+        for label, progress in build_crypt_steps(self,stone,mosaic):
+            yield label,.15+.55*progress
+        yield "Lighting the flooded chambers",.73
         self._place_lights()
-        yield "Waking the crypt guardians",.72
+        yield "Waking the crypt guardians",.80
         self._place_encounters()
-        self.reliquary = CryptReliquary(Vector3(0,8,-900),texture=self.chest_tex,
+        x,z = self.layout.reliquary
+        self.reliquary = CryptReliquary(Vector3(x,8,z),texture=self.chest_tex,
             width=56,depth=34,interaction_distance=82,side="north")
         self.chests.append(self.reliquary)
         self.add_entity(self.reliquary)
@@ -131,7 +146,7 @@ class UnderseaCryptScene(WorldScene):
         shadows.max_point_shadows = len(self.torches)
         shader = self.lighting_controller.shader
         if shadows.max_point_shadows > shader.point_shadow_capacity:
-            raise RuntimeError("Under sea Crypt requires seven point-shadow texture slots")
+            raise RuntimeError("Under sea Crypt requires eight point-shadow texture slots")
         shadow_steps = 6 * len(self.torches)
         for step in range(shadow_steps):
             shadows.render(camera=self.camera, lighting=self.lighting, packet_shader=shader)
@@ -140,58 +155,51 @@ class UnderseaCryptScene(WorldScene):
 
     def _place_lights(self):
         # Warm flames at the walls, with cool light entering below the sea.
-        positions = ((-170,52,100),(165,52,-70),(-170,52,-330),
-                     (-447,52,-140),(49,52,-500),(-160,52,-710),(160,52,-850))
+        _walls,windows,mounts = self.fixtures
         frames = Torch.texture_or_load(self.torch_tex)
-        for index,position in enumerate(positions):
+        for index,mount in enumerate(mounts):
+            position = mount.position
             torch = Torch(position=Vector3(position),texture=frames[0],
                           camera=self.camera,frames=frames,size=(10.,22.),frame_duration=1/9)
             self.torches.append(torch)
             self.sprite_items.append(torch)
             self.lighting.add_point_light(PointLight(f"crypt:torch:{index}",
-                position,(1.,.69,.32),2.5,210.,casts_shadows=True))
-        m = Masonry(self)
-        for index,(x,y,z) in enumerate(((0,76,198),(-320,76,-22),(0,76,-938))):
-            # Inset blue glass and iron bars suggest sealed openings to the sea.
-            m.box((x-26,x+26,y-24,y+24,z-1,z+1),(.20,.31,.29))
-            m.box((x-20,x+20,y-18,y+18,z-1.5,z+1.5),(.27,.80,.81))
-            for dx in (-13,0,13):
-                m.box((x+dx-1,x+dx+1,y-20,y+20,z-2,z+2),(.13,.19,.18))
-            m.box((x-22,x+22,y-1,y+1,z-2,z+2),(.13,.19,.18))
-            light_z = z+22 if z < -900 else z-22
+                position,(1.,.69,.32),2.8,520.,casts_shadows=True))
+        for index,site in enumerate(windows):
             self.lighting.add_point_light(PointLight(f"crypt:sea:{index}",
-                (x,y,light_z),(.24,.72,.83),3.0,280.,casts_shadows=False))
-        self.wall_tile_batches.append(m.upload(self.building_material_tex))
+                site.point(0,76,25),(.24,.72,.83),2.8,360.,casts_shadows=False))
 
     def _position_blocked(self, x, z, radius):
         if not self.contains_horizontal(Vector3(x,0,z)):
             return True
         for mesh in self.collision_meshes_at(x,z,radius=radius):
+            if not getattr(mesh,"navigation_obstacle",True):
+                continue
             x0,x1,z0,z1 = mesh.get_bounding_box()
             if x0-radius < x < x1+radius and z0-radius < z < z1+radius:
                 return True
         return False
 
     def _place_encounters(self):
-        for index,(x,z) in enumerate(((115,-220),(-330,-140),(0,-530),
-                                    (-105,-720),(105,-790),(0,-840))):
+        for index,(x,z) in enumerate(self.layout.guardians):
             skeleton = Skeleton(Vector3(x,0,z),camera=self.camera,
                 material_texture=self.building_material_tex,
                 ground_height_at=self.ground_height_at,position_blocked=self._position_blocked,
                 roam_radius=35.,chase_radius=135.,chase_give_up_radius=220.,
-                rng=random.Random(712+index))
+                rng=random.Random(self.level_seed+index))
             self.skeletons.append(skeleton)
             self.add_entity(skeleton)
         self.skeleton_batch = SkeletonRenderBatch(self.skeletons,
             material_texture=self.building_material_tex)
 
     def contains_horizontal(self, pos):
-        return any(room.contains(pos.x,pos.z) for room in CRYPT_ROOMS)
+        return any(room.contains(pos.x,pos.z) for room in self.rooms)
 
     def ground_height_at(self, x, z):
-        if -46 <= x <= 46 and -924 <= z <= -862:
+        cx,cz = self.layout.reliquary
+        if abs(x-cx) <= 46 and abs(z-cz) <= 32:
             return 8.
-        if -64 <= x <= 64 and -930 <= z <= -850:
+        if abs(x-cx) <= 64 and abs(z-cz) <= 40:
             return 4.
         return 0.
 

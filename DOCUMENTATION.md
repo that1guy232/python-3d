@@ -159,15 +159,25 @@ this renderer with the world's rebuild and compatibility policies.
 `SceneShadowRenderer` keeps a two-cubemap budget by default. The packet shader
 supports up to eight point-shadow samplers, bounded by the context's available
 texture units. A compact scene can increase `max_point_shadows` to retain all its
-lights. The crypt retains all seven torch maps and completes their initial faces
+lights. The crypt retains all eight torch maps and completes their initial faces
 during loading. Traversal then reuses those maps, preventing distant torchlight
 from switching off as camera priorities change. Geometry changes still trigger
 staged refreshes, so the opening reliquary updates its affected shadows.
 
-The crypt reuses world movement, collision, combat, inventory and UI. Its room
-layout and masonry are authored in `crypt_geometry.py`; `crypt_water.py` adds
-translucent animated water over the mosaic floor. The level does not grant a
-starter loadout or change player movement and encounter defaults.
+The crypt reuses world movement, collision, combat, inventory and UI.
+`crypt_layout.py` generates a procession through enclosed halls and four side
+chapels, joined by seven narrow burial walks. The main route includes three long
+passages; their 76–92 unit width and 70 unit barrel-vault crown contrast with the
+larger chambers. Chamber dimensions, passage lengths and contents vary by seed.
+Pass `world_random_seed` to `UnderseaCryptScene` to reproduce a plan; menu entry
+chooses a fresh seed. No maze carving is used.
+
+`crypt_geometry.py` owns shared columns and solid arch supports, recessed niches,
+arched passage portals, collision shapes and wall-mounted iron torch brackets.
+Floor borders and burial inlays partition surfaces instead of overlapping them;
+mipmapped masonry reduces shimmer in long views. `crypt_water.py` adds translucent
+animated water over the disjoint room and passage floors. The level does not
+grant a starter loadout or change player movement and encounter defaults.
 
 ### Input
 
@@ -227,7 +237,8 @@ separately releases its directional and point-shadow GPU resources.
 | `src/game/__init__.py` | Game package marker for actors, combat, inventory, player systems, UI, resources, and worlds. |
 | `src/game/main_menu.py` | Boot menu with entries for the normal world, crypt level testing and the standalone object test scene. |
 | `src/game/undersea_crypt_scene.py` | Flooded dungeon orchestration, torch lighting, skeleton encounters and interactive reliquary. |
-| `src/game/world/crypt_geometry.py` | Authored rooms, procedural masonry, vaults, columns, burial niches and collision shapes. |
+| `src/game/world/crypt_layout.py` | Seeded enclosed chambers, narrow connecting passages and encounter placement. |
+| `src/game/world/crypt_geometry.py` | Shared masonry, vaults, columns, recessed burial niches, torch mounts and collision shapes. |
 | `src/game/world/crypt_water.py` | Translucent tide with animated caustics, highlights and fog. |
 | `src/game/object_test_scene.py` | Independent flat showroom scene with its own loading, first-person movement, collision, exhibit layout, rendering, interactions, and cleanup. |
 | `src/engine/config.py` | Engine display, view, audio mute, and performance defaults. Reads `PY3D_*` environment flags. |

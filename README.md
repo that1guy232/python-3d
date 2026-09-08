@@ -46,8 +46,9 @@ In that scene, use WASD, mouse look, Shift to sprint, E to interact, and Escape
 to return to the menu. Press `L` to toggle its shared scene lighting.
 
 Choose **Under sea Crypt** (or press `C` on the main menu) to test the flooded
-crypt level. It has connected vaulted chambers, burial niches, skeletons and
-an interactive reliquary. It uses the normal player controls, settings and
+crypt level. Each visit generates enclosed vaulted chambers connected by narrow,
+low burial corridors, with mounted torches, skeletons and an interactive reliquary.
+It uses the normal player controls, settings and
 starting inventory; entering the level grants no equipment. `L` toggles lighting
 for inspection. Use Escape and **Exit to Main Menu** to leave.
 
