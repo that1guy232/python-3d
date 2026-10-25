@@ -26,6 +26,7 @@ from OpenGL.GL import (
 )
 
 from engine.rendering.shaders.program import compile_program
+from engine.core.resources import ResourceScope
 from engine.rendering.shadows.directional import DirectionalShadowBinding
 from engine.rendering.shadows.point import PointShadowBinding
 from engine.rendering.lighting.receiver import LightingEvaluation, LocalLightPolicy
@@ -553,23 +554,43 @@ def get_packet_texture_lighting_shader() -> PacketTextureLightingShader | None:
         )
         return _packet_shader
     except Exception as exc:
-        if storage is not None:
-            storage.dispose()
+        cleanup = ResourceScope()
         if program is not None:
-            glDeleteProgram(program)
+            cleanup.defer(glDeleteProgram, program)
+        cleanup.own(storage)
+        try:
+            cleanup.dispose()
+        except Exception:
+            pass
         _packet_shader_failed = True
         print(f"Warning: packet lighting shader unavailable: {exc}")
         return None
 
 
-def reset_packet_texture_lighting_shader() -> None:
-    """Forget lazy shader state; intended for context recreation and tests."""
+def dispose_packet_texture_lighting_shader() -> None:
+    """Release shared GPU state before its context exits; repeated calls are safe.
+
+    A later getter creates a fresh shader and storage for the current context.
+    Clear lazy state first so a cleanup failure cannot retain obsolete GL IDs.
+    """
 
     global _packet_shader, _packet_shader_failed
-    if _packet_shader is not None:
-        try:
-            _packet_shader.storage.dispose()
-        except Exception:
-            pass
-    _packet_shader = None
+    shader, _packet_shader = _packet_shader, None
     _packet_shader_failed = False
+    if shader is None:
+        return
+
+    cleanup = ResourceScope()
+    if shader.program:
+        cleanup.defer(glDeleteProgram, shader.program)
+    cleanup.own(shader.storage)
+    cleanup.dispose()
+
+
+def reset_packet_texture_lighting_shader() -> None:
+    """Best-effort disposal for context recreation and tests."""
+
+    try:
+        dispose_packet_texture_lighting_shader()
+    except Exception:
+        pass

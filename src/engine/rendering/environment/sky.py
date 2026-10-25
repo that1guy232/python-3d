@@ -56,6 +56,10 @@ class SkyRenderer:
         self.sun_half_size = 6000.0
         self.moon_half_size = 2200.0
 
+    def dispose(self) -> None:
+        """Release sky geometry; file textures are shared by the engine context."""
+        self._clouds.dispose()
+
     @staticmethod
     def _clamp01(value: float) -> float:
         return max(0.0, min(1.0, float(value)))

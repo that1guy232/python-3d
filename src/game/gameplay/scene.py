@@ -23,6 +23,7 @@ from game.config import (
 from engine.camera import Camera
 from engine.core.scene import Scene
 from engine.core.entity import Entity
+from engine.core.resources import ResourceScope
 from game.gameplay import runtime as world_runtime, setup as world_setup
 from game.combat.controller import BattleController
 from engine.physics.spatial import SceneCollisionIndex
@@ -209,6 +210,11 @@ class PlayableScene(Scene):
             set_projection(fov=self.fov, width=WIDTH, height=HEIGHT)
 
         self.world_random_seed = world_random_seed
+        self._resources = ResourceScope()
+        self._resources.defer(self.collision_index.invalidate)
+        self._resources.own(self.resource_disposer)
+        # Levels may replace the renderer after shared construction.
+        self._resources.defer(lambda: self.renderer.dispose())
 
     def set_lighting_backend(self, backend: str) -> str:
         """Transition lighting backends through the compatibility boundary."""
@@ -463,13 +469,7 @@ class PlayableScene(Scene):
 
 
     def dispose(self) -> None:
-        try:
-            self.renderer.dispose()
-        finally:
-            try:
-                self.resource_disposer.dispose()
-            finally:
-                self.collision_index.invalidate()
+        self._resources.dispose()
 
 
     def rebuild_legacy_road_batches(self):

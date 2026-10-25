@@ -776,6 +776,7 @@ def get_texture_color_exposure_shader() -> TextureColorExposureShader | None:
     if _texture_color_exposure_failed:
         return None
 
+    program = 0
     try:
         program = _compile_program(
             _TEXTURE_COLOR_EXPOSURE_VERTEX,
@@ -920,9 +921,29 @@ def get_texture_color_exposure_shader() -> TextureColorExposureShader | None:
         set_texture_shine_state(compile_shader=False)
         return _texture_color_exposure_shader
     except Exception as exc:
+        _texture_color_exposure_shader = None
+        if program:
+            try:
+                glDeleteProgram(program)
+            except Exception:
+                pass
         _texture_color_exposure_failed = True
         print(f"Warning: compatibility shader unavailable: {exc}")
         return None
+
+
+def dispose_texture_color_exposure_shader() -> None:
+    """Release the shared program before context exit, preserving CPU settings.
+
+    Repeated calls are safe. A subsequent getter retries compilation, including
+    when the shader was unavailable in the previous context.
+    """
+
+    global _texture_color_exposure_shader, _texture_color_exposure_failed
+    shader, _texture_color_exposure_shader = _texture_color_exposure_shader, None
+    _texture_color_exposure_failed = False
+    if shader is not None and shader.program:
+        glDeleteProgram(shader.program)
 
 
 def texture_color_exposure_shader_available() -> bool:

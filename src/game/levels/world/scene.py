@@ -71,8 +71,9 @@ class WorldScene(PlayableScene):
         )
 
         if not defer_setup:
-            for _label, _progress in self.initialize_steps():
-                pass
+            with self._resources.rollback_on_error():
+                for _label, _progress in self.initialize_steps():
+                    pass
 
 
     def initialize_steps(self) -> Iterator[tuple[str, float]]:

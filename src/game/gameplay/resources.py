@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from engine.core.resources import ResourceScope
 from game.gameplay import runtime as world_runtime
 from game.gameplay.state import GameplayState, GameplayResources, GameplayUIState
 
@@ -61,6 +62,7 @@ class GameplayResourceDisposer:
         self.resources = getattr(owner, "render_resources", owner)
         self.ui_state = ui_state or getattr(owner, "ui_state", owner)
         self.build_state = build_state or getattr(owner, "build_state", owner)
+        self._disposed = False
 
     @staticmethod
     def dispose_renderable(obj) -> None:
@@ -78,18 +80,16 @@ class GameplayResourceDisposer:
 
     def dispose(self) -> None:
         """Release scene-owned VBOs before the OpenGL context is destroyed."""
+        if self._disposed:
+            return
+        self._disposed = True
         resources = self.resources
-        world_runtime.stop_ambient_birds()
-        disposed: set[int] = set()
+        scope = ResourceScope()
+        scope.defer(world_runtime.stop_ambient_birds)
 
         def dispose_once(obj) -> None:
-            if obj is None:
-                return
-            obj_id = id(obj)
-            if obj_id in disposed:
-                return
-            disposed.add(obj_id)
-            self.dispose_renderable(obj)
+            if obj is not None and callable(getattr(obj, "dispose", None)):
+                scope.own(obj)
 
         for attr_name in self.SINGLE_RESOURCE_ATTRS:
             dispose_once(getattr(resources, attr_name, None))
@@ -126,6 +126,13 @@ class GameplayResourceDisposer:
                 for obj in getattr(self.build_state, attr_name, ()) or ():
                     dispose_once(obj)
 
+        try:
+            scope.dispose()
+        finally:
+            self._clear_references()
+
+    def _clear_references(self) -> None:
+        resources = self.resources
         resources.ground_mesh = None
         resources.island_boundary = None
         resources.sky = None

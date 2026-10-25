@@ -29,6 +29,7 @@ from OpenGL.GL import (
     glBufferData,
     glColor4f,
     glDisableClientState,
+    glDeleteBuffers,
     glDrawArrays,
     glEnable,
     glEnableClientState,
@@ -106,10 +107,28 @@ class PixelCloudRenderer:
         )
         vbo = glGenBuffers(1)
         vbo_id = int(np.asarray(vbo).reshape(-1)[0])
-        glBindBuffer(GL_ARRAY_BUFFER, vbo_id)
-        glBufferData(GL_ARRAY_BUFFER, vertex_data.nbytes, vertex_data, GL_STATIC_DRAW)
-        glBindBuffer(GL_ARRAY_BUFFER, 0)
+        try:
+            glBindBuffer(GL_ARRAY_BUFFER, vbo_id)
+            glBufferData(GL_ARRAY_BUFFER, vertex_data.nbytes, vertex_data, GL_STATIC_DRAW)
+            glBindBuffer(GL_ARRAY_BUFFER, 0)
+        except BaseException:
+            # Rollback must not replace the allocation/upload error.
+            for release in (
+                lambda: glDeleteBuffers(1, [vbo_id]),
+                lambda: glBindBuffer(GL_ARRAY_BUFFER, 0),
+            ):
+                try:
+                    release()
+                except BaseException:
+                    pass
+            raise
         return vbo_id
+
+    def dispose(self) -> None:
+        """Release the scene's cloud mesh; its shared atlas belongs to the context."""
+        vbo, self._vbo = self._vbo, 0
+        if vbo:
+            glDeleteBuffers(1, [vbo])
 
     def _build_vertex_data(self) -> np.ndarray:
         vertex_data = np.empty((self._vertex_count, 5), dtype=np.float32)

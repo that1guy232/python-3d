@@ -218,11 +218,30 @@ titles and footers scale to remain within their assigned card regions.
 
 ### Cleanup
 
-`Engine.run()` disposes the active scene before quitting Pygame. `WorldScene`
-delegates cleanup to `WorldResourceDisposer`, which releases OpenGL-backed
-meshes, batches, roads, decals, entities, HUD resources, ambient audio, and
+`Engine.close()` disposes the active scene and any pending successor, cached text,
+shared shaders, and engine textures before quitting Pygame. Normal exit, failed
+startup, and failed update/render hooks all use this shutdown path. Closing an
+engine repeatedly is harmless.
+
+`engine.core.resources.ResourceScope` supplies identity-deduplicated, reverse-order
+cleanup. Register scene resources with `scope.own(resource)` as they are acquired;
+use `scope.rollback_on_error()` around initialization to release partial builds
+while preserving the original exception. Disposal attempts every registered
+release even if one fails. Galaxy scenes and the object showroom use scopes;
+the gameplay disposer uses one for the level's resource collections.
+
+File textures and atlases loaded through `engine.textures.texture_utils` are
+shared for the lifetime of the current OpenGL context, keyed by source paths and
+loading options. Scene exit must not delete these shared assets. Dedicated
+procedural textures, such as the crypt's masonry, can use `release_texture()` or
+`release_textures()` when their last user is gone; these functions also invalidate
+size metadata and referring caches. `dispose_textures()` releases all remaining
+managed textures and clears caches at context shutdown.
+
+`WorldScene` delegates cleanup to `GameplayResourceDisposer`, which releases
+OpenGL-backed meshes, batches, roads, decals, entities, HUD resources, ambient audio, and
 render references while the GL context still exists. The scene invalidates its
-engine-owned collision index afterward. `WorldRenderer`
+engine-owned collision index afterward. `GameplayRenderer`
 separately releases its directional and point-shadow GPU resources.
 
 ## Source Map

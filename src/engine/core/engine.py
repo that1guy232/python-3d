@@ -41,6 +41,10 @@ from engine.config import (
     WIDTH,
 )
 from engine.core.performance import PerformanceLogger
+from engine.core.resources import ResourceScope
+from engine.rendering.shaders.compat import dispose_texture_color_exposure_shader
+from engine.rendering.shaders.packet import dispose_packet_texture_lighting_shader
+from engine.textures.texture_utils import dispose_textures
 from engine.ui.text_renderer import TextRenderer
 
 
@@ -82,6 +86,19 @@ def tick_frame_clock(clock, frame_cap: int, *, precise: bool = False) -> float:
 # ---------------------------------------------------------------------------
 class Engine:
     def __init__(self, *, initial_scene=None, initial_scene_factory=None):
+        self.scene = None
+        self.text = None
+        self._closed = False
+        try:
+            self._initialize(initial_scene, initial_scene_factory)
+        except BaseException:
+            try:
+                self.close()
+            except BaseException:
+                traceback.print_exc()
+            raise
+
+    def _initialize(self, initial_scene, initial_scene_factory) -> None:
         pygame.init()
         pygame.display.gl_set_attribute(pygame.GL_DEPTH_SIZE, 24)
         pygame.display.gl_set_attribute(pygame.GL_MULTISAMPLEBUFFERS, 1)
@@ -204,8 +221,12 @@ class Engine:
         if next_scene is not None:
             old_scene = self.scene
             self.scene = next_scene
-            self._attach_profiler(self.scene)
-            self._dispose_scene(old_scene)
+            # Ownership of the pending scene has transferred to the engine.
+            old_scene.next_scene = None
+            try:
+                self._attach_profiler(self.scene)
+            finally:
+                self._dispose_scene(old_scene)
             self._apply_scene_mouse_state(self.scene)
             pygame.mouse.get_rel()
 
@@ -221,6 +242,19 @@ class Engine:
 
     # ------------------------------------------------------------------
     def run(self):  # pragma: no cover - visual
+        """Run until quit, releasing resources on normal exit and failed hooks."""
+        try:
+            self._run_loop()
+        except BaseException:
+            try:
+                self.close()
+            except BaseException:
+                traceback.print_exc()
+            raise
+        else:
+            self.close()
+
+    def _run_loop(self):  # pragma: no cover - visual
         running = True
         previous_frame_s = time.perf_counter()
         while running:
@@ -249,7 +283,26 @@ class Engine:
             self.profiler.end_frame()
             if not running:
                 break
-        self._dispose_scene(self.scene)
-        pygame.quit()
+
+    def close(self) -> None:
+        """Dispose scenes and context-owned assets before destroying the window."""
+        if self._closed:
+            return
+        self._closed = True
+        cleanup = ResourceScope()
+        cleanup.defer(pygame.quit)
+        cleanup.defer(dispose_textures)
+        cleanup.defer(dispose_texture_color_exposure_shader)
+        cleanup.defer(dispose_packet_texture_lighting_shader)
+        cleanup.own(self.text)
+        # A quit event can arrive after a scene has constructed its successor,
+        # before update() transfers it. That pending scene also owns resources.
+        scene = self.scene
+        seen = set()
+        while scene is not None and id(scene) not in seen:
+            seen.add(id(scene))
+            cleanup.own(scene, self._dispose_scene)
+            scene = getattr(scene, "next_scene", None)
+        cleanup.dispose()
 
     # ------------------------------------------------------------------

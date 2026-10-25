@@ -13,6 +13,7 @@ from typing import Dict, Tuple, Optional
 import pygame
 from OpenGL.GL import (
     glGenTextures,
+    glDeleteTextures,
     glBindTexture,
     glTexImage2D,
     glTexParameteri,
@@ -153,6 +154,14 @@ class TextRenderer:
         self._slots: Dict[str, _TexSlot] = {}
         self._in_overlay = False
 
+    def dispose(self) -> None:
+        """Release cached text textures while their OpenGL context still exists."""
+        textures = {slot.id for slot in (*self._cache.values(), *self._slots.values())}
+        self._cache.clear()
+        self._slots.clear()
+        if textures:
+            glDeleteTextures(sorted(textures))
+
     # --------------------------- overlay state ---------------------------
     def begin(self) -> None:  # pragma: no cover - visual
         if self._in_overlay:
@@ -219,9 +228,15 @@ class TextRenderer:
         if slot is None:
             tex_id = glGenTextures(1)
             slot = _TexSlot(id=tex_id, size=(0, 0), last_text=text)
-            # pre-upload
-            surf = self.font.render(text, True, color)
-            self._upload_surface(slot, surf)
+            try:
+                surf = self.font.render(text, True, color)
+                self._upload_surface(slot, surf)
+            except BaseException:
+                try:
+                    glDeleteTextures([tex_id])
+                except BaseException:
+                    pass
+                raise
             self._cache[cache_key] = slot
         return slot
 

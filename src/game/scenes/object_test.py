@@ -16,20 +16,15 @@ from OpenGL.GL import (
     GL_FOG,
     GL_MODELVIEW,
     GL_PROJECTION,
-    GL_REPEAT,
     GL_TEXTURE_2D,
-    GL_TEXTURE_WRAP_S,
-    GL_TEXTURE_WRAP_T,
     glBindTexture,
     glClear,
     glClearColor,
     glDisable,
     glEnable,
-    glIsTexture,
     glLoadIdentity,
     glMatrixMode,
     glRotatef,
-    glTexParameteri,
     glTranslatef,
 )
 from OpenGL.GLU import gluPerspective
@@ -41,6 +36,7 @@ from engine.config import HEIGHT, WIDTH
 from engine.rendering.state import use_fixed_pipeline
 from engine.rendering.mesh import BatchedMesh
 from engine.core.scene import Scene
+from engine.core.resources import ResourceScope
 from engine.rendering.style import (
     get_render_fog_state,
     get_render_shine_state,
@@ -52,7 +48,8 @@ from engine.rendering.style import (
 from engine.rendering.lighting.model import SceneLighting
 from engine.rendering.lighting.renderer import SceneLightingRenderer
 from engine.rendering.sprite import WorldSprite, draw_sprites_batched
-from engine.textures.texture_utils import get_texture_size
+from engine.textures.texture_utils import get_texture_size, load_texture
+from game.resources.paths import GRASS_TEXTURE_PATH
 from game.actors.goblin import Goblin, GoblinRenderBatch
 from game.actors.skeleton import Skeleton, SkeletonRenderBatch
 from game.resources.texture_manager import load_world_textures
@@ -78,25 +75,6 @@ from game.objects.terrain.rock import ROCK_VARIANT_COUNT, Rock, build_rock_meshe
 from game.objects.terrain.tree import TREE_VARIANT_COUNT, Tree, build_tree_meshes
 from engine.geometry.wall import build_wall_tile_batches
 from game.objects.architecture.window import build_window_render_batch
-
-
-_OBJECT_TEST_TEXTURE_CACHE: dict[str, Any] | None = None
-
-
-def _load_object_texture_catalog() -> dict[str, Any]:
-    """Reuse one texture catalog for repeated visits in the same GL context."""
-
-    global _OBJECT_TEST_TEXTURE_CACHE
-    cached = _OBJECT_TEST_TEXTURE_CACHE
-    if cached is not None:
-        try:
-            if glIsTexture(int(cached["ground_tex"])):
-                return dict(cached)
-        except (KeyError, TypeError, ValueError):
-            pass
-
-    _OBJECT_TEST_TEXTURE_CACHE = load_world_textures()
-    return dict(_OBJECT_TEST_TEXTURE_CACHE)
 
 
 class ObjectTestScene(Scene):
@@ -133,7 +111,7 @@ class ObjectTestScene(Scene):
         self.next_scene = None
         self._initialized = False
         self._disposed = False
-        self._owned_disposables: list[Any] = []
+        self._resources = ResourceScope()
         self._previous_render_style = None
         self._placed_variant_counts = {
             "trees": 0,
@@ -175,11 +153,11 @@ class ObjectTestScene(Scene):
             sun_target=center,
             sky_color=self.CLEAR_COLOR,
         )
-        self.lighting_renderer = SceneLightingRenderer(
+        self.lighting_renderer = self._resources.own(SceneLightingRenderer(
             receivers=PACKET_RUNTIME_LIGHTING_RECEIVERS,
             shadow_sources=self._shadow_sources,
             view_distance=self.VIEW_DISTANCE,
-        )
+        ))
         self.lighting_renderer.shadows.sun_shadow_extent = 1400.0
 
     def initialize_steps(self) -> Iterator[tuple[str, float]]:
@@ -215,7 +193,7 @@ class ObjectTestScene(Scene):
         yield ("Object test scene ready", 1.0)
 
     def _load_textures(self) -> None:
-        textures = _load_object_texture_catalog()
+        textures = load_world_textures()
         required = (
             "ground_tex",
             "road_tex",
@@ -266,7 +244,7 @@ class ObjectTestScene(Scene):
 
     def _own(self, value: Any) -> Any:
         if value is not None and callable(getattr(value, "dispose", None)):
-            self._owned_disposables.append(value)
+            self._resources.own(value)
         return value
 
     @staticmethod
@@ -298,10 +276,7 @@ class ObjectTestScene(Scene):
                  0.0, 1.0, 0.0, u, v)
             )
 
-        ground_texture = int(self.textures["ground_tex"])
-        glBindTexture(GL_TEXTURE_2D, ground_texture)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
+        ground_texture = load_texture(GRASS_TEXTURE_PATH, repeat=True)
         self.floor_mesh = self._own(
             BatchedMesh.from_vertex_data(
                 np.asarray(rows, dtype=np.float32),
@@ -1095,22 +1070,16 @@ class ObjectTestScene(Scene):
         if self._disposed:
             return
         self._disposed = True
-        self.lighting_renderer.dispose()
-        if self.goblin is not None:
-            self.goblin.kill()
-
-        disposed_ids: set[int] = set()
-        for resource in reversed(self._owned_disposables):
-            resource_id = id(resource)
-            if resource_id in disposed_ids:
-                continue
-            disposed_ids.add(resource_id)
+        try:
             try:
-                resource.dispose()
-            except Exception:
-                pass
+                if self.goblin is not None:
+                    self.goblin.kill()
+            finally:
+                self._resources.dispose()
+        finally:
+            self._clear_references()
 
-        self._owned_disposables.clear()
+    def _clear_references(self) -> None:
         self.roads.clear()
         self.buildings.clear()
         self.wall_tiles.clear()

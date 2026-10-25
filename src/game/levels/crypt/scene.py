@@ -7,7 +7,7 @@ import time
 
 import pygame
 from pygame.math import Vector3
-from OpenGL.GL import glDeleteTextures
+from engine.textures.texture_utils import release_texture
 
 from engine.rendering.lighting.model import SceneLighting
 from engine.rendering.lighting.state import PointLight
@@ -93,12 +93,12 @@ class UnderseaCryptScene(PlayableScene):
         self.elapsed = 0.
         self.relic_recovered = False
         self.reliquary = None
-        self._owned_texture_ids = []
-        self.water = CryptWater(self.rooms)
+        self.water = self._resources.own(CryptWater(self.rooms))
         self.renderer = CryptRenderer(self)
         if not defer_setup:
-            for _ in self.initialize_steps():
-                pass
+            with self._resources.rollback_on_error():
+                for _ in self.initialize_steps():
+                    pass
 
     def initialize_steps(self):
         if self._initialized:
@@ -117,10 +117,8 @@ class UnderseaCryptScene(PlayableScene):
         self.clouds_enabled = False
         self.buildings = list(self.rooms)
         yield "Planning crypt chambers",.15
-        stone = create_masonry_texture()
-        self._owned_texture_ids.append(stone)
-        mosaic = create_mosaic_texture(self.level_seed)
-        self._owned_texture_ids.append(mosaic)
+        stone = self._resources.own(create_masonry_texture(), release_texture)
+        mosaic = self._resources.own(create_mosaic_texture(self.level_seed), release_texture)
         for label, progress in build_crypt_steps(self,stone,mosaic):
             yield label,.15+.55*progress
         yield "Lighting the flooded chambers",.73
@@ -217,12 +215,3 @@ class UnderseaCryptScene(PlayableScene):
         if not self.paused and not self.inventory_open and not self.battle_mode:
             self.elapsed += max(0.,float(dt))
         super().update(dt)
-
-    def dispose(self):
-        try:
-            self.water.dispose()
-            super().dispose()
-        finally:
-            if self._owned_texture_ids:
-                glDeleteTextures(self._owned_texture_ids)
-                self._owned_texture_ids.clear()

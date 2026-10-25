@@ -19,6 +19,10 @@ lib64/
 parts/
 sdist/
 var/
+sandbox_3d/
+sandbox_main.py
+empty_main.py
+empty_game/
 *.egg-info/
 *.egg
 pip-wheel-metadata/

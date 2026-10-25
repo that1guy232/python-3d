@@ -1,17 +1,21 @@
 """Texture loading utilities for OpenGL.
 
-This module keeps a tiny registry of texture sizes so other systems can
-query width/height or aspect ratio from a texture ID without tracking
-pygame surfaces.
+Textures created here belong to the current OpenGL context. File images and
+atlases are shared until explicitly released or dispose_textures() runs before
+context shutdown. A size registry lets callers query dimensions without
+retaining pygame surfaces.
 """
 
 import math
+import os
 import random
 import pygame
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Optional, Tuple, Dict
 from OpenGL.GL import (
     glGenTextures,
+    glDeleteTextures,
     glBindTexture,
     glTexImage2D,
     glTexParameteri,
@@ -30,12 +34,29 @@ from OpenGL.GL import (
 )
 
 _TEXTURE_SIZES: Dict[int, Tuple[int, int]] = {}
+_MANAGED_TEXTURES: set[int] = set()
+_FILE_TEXTURE_CACHE: Dict[Tuple[str, bool, bool], int] = {}
+_FILE_ATLAS_CACHE: Dict[Tuple[object, ...], Tuple["TextureRegion", ...]] = {}
+_FALLBACK_FILE_ATLAS_CACHE: Dict[Tuple[object, ...], Tuple["TextureRegion", ...]] = {}
+_FALLBACK_TEX_CACHE: Dict[str, int] = {}
 _SHADOW_TEX_CACHE: Dict[Tuple[int, int, float, float, float, float], int] = {}
 _POLY_SHADOW_CACHE: Dict[Tuple[Tuple[float, float], ...], int] = {}
 _TREE_SHADOW_TEX_CACHE: Dict[Tuple[object, ...], int] = {}
 _FOREST_FLOOR_TEX_CACHE: Dict[Tuple[object, ...], int] = {}
 _PIXEL_CLOUD_ATLAS_CACHE: Dict[Tuple[object, ...], Tuple["TextureRegion", ...]] = {}
 _SOLID_COLOR_TEX_CACHE: Dict[Tuple[int, int, int, int], int] = {}
+_TEXTURE_CACHES = (
+    _FILE_TEXTURE_CACHE,
+    _FILE_ATLAS_CACHE,
+    _FALLBACK_FILE_ATLAS_CACHE,
+    _FALLBACK_TEX_CACHE,
+    _SHADOW_TEX_CACHE,
+    _POLY_SHADOW_CACHE,
+    _TREE_SHADOW_TEX_CACHE,
+    _FOREST_FLOOR_TEX_CACHE,
+    _PIXEL_CLOUD_ATLAS_CACHE,
+    _SOLID_COLOR_TEX_CACHE,
+)
 
 
 @dataclass(frozen=True)
@@ -45,6 +66,70 @@ class TextureRegion:
     texture: int
     uv_rect: Tuple[float, float, float, float]
     size: Tuple[int, int]
+
+
+def _cached_texture_ids(value) -> set[int]:
+    if isinstance(value, TextureRegion):
+        return {value.texture}
+    if isinstance(value, int):
+        return {value}
+    return {
+        texture_id
+        for item in value
+        for texture_id in _cached_texture_ids(item)
+    }
+
+
+def release_textures(textures: Iterable[int | TextureRegion]) -> None:
+    """Release managed textures once and evict every cache entry using them.
+
+    File and procedural textures can be shared by multiple scenes; release
+    them only after all users are finished. Unknown IDs are not owned here and
+    are ignored. Atlas regions refer to their entire shared texture.
+    """
+    texture_ids = {
+        int(texture.texture if isinstance(texture, TextureRegion) else texture)
+        for texture in textures
+    } & _MANAGED_TEXTURES
+    if not texture_ids:
+        return
+    glDeleteTextures(len(texture_ids), sorted(texture_ids))
+    _MANAGED_TEXTURES.difference_update(texture_ids)
+    for texture_id in texture_ids:
+        _TEXTURE_SIZES.pop(texture_id, None)
+    for cache in _TEXTURE_CACHES:
+        for key, value in tuple(cache.items()):
+            if texture_ids.intersection(_cached_texture_ids(value)):
+                del cache[key]
+
+
+def release_texture(texture: int | TextureRegion) -> None:
+    """Release a managed texture or atlas region while its GL context exists."""
+    release_textures((texture,))
+
+
+def dispose_textures() -> None:
+    """Release this context's textures and reset caches before context shutdown."""
+    try:
+        release_textures(tuple(_MANAGED_TEXTURES))
+    finally:
+        _MANAGED_TEXTURES.clear()
+        _TEXTURE_SIZES.clear()
+        for cache in _TEXTURE_CACHES:
+            cache.clear()
+
+
+def _canonical_texture_path(filename) -> str:
+    return os.path.normcase(os.path.realpath(os.path.expanduser(os.fspath(filename))))
+
+
+def _texture_source_signature(filename: str) -> tuple:
+    """Detect changed fallback sources without decoding an image every visit."""
+    try:
+        stat = os.stat(filename)
+    except OSError as exc:
+        return ("unavailable", exc.errno)
+    return ("file", stat.st_mtime_ns, stat.st_size)
 
 
 def get_texture_size(tex_id: int) -> Optional[Tuple[int, int]]:
@@ -75,33 +160,42 @@ def _upload_texture_surface(
     texture_data = pygame.image.tostring(surface, "RGBA", True)
     width, height = surface.get_size()
 
-    texture_id = glGenTextures(1)
-    glBindTexture(GL_TEXTURE_2D, texture_id)
-    glTexImage2D(
-        GL_TEXTURE_2D,
-        0,
-        GL_RGBA,
-        width,
-        height,
-        0,
-        GL_RGBA,
-        GL_UNSIGNED_BYTE,
-        texture_data,
-    )
+    texture_id = int(glGenTextures(1))
+    try:
+        glBindTexture(GL_TEXTURE_2D, texture_id)
+        glTexImage2D(
+            GL_TEXTURE_2D,
+            0,
+            GL_RGBA,
+            width,
+            height,
+            0,
+            GL_RGBA,
+            GL_UNSIGNED_BYTE,
+            texture_data,
+        )
 
-    filt = GL_NEAREST if nearest else GL_LINEAR
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filt)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filt)
-    wrap = GL_REPEAT if repeat else GL_CLAMP_TO_EDGE
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap)
+        filt = GL_NEAREST if nearest else GL_LINEAR
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filt)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filt)
+        wrap = GL_REPEAT if repeat else GL_CLAMP_TO_EDGE
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap)
+    except BaseException:
+        try:
+            glDeleteTextures(1, [texture_id])
+        except BaseException:
+            # Rollback must preserve the upload failure, including interrupts.
+            pass
+        raise
 
-    _TEXTURE_SIZES[int(texture_id)] = (int(width), int(height))
-    return int(texture_id)
+    _MANAGED_TEXTURES.add(texture_id)
+    _TEXTURE_SIZES[texture_id] = (int(width), int(height))
+    return texture_id
 
 
-def load_texture(filename):
-    """Load a texture from an image file.
+def load_texture(filename, *, nearest: bool = True, repeat: bool = False):
+    """Load a context-shared texture from an image file.
 
     Parameters
     ----------
@@ -114,13 +208,19 @@ def load_texture(filename):
         OpenGL texture ID
     """
     try:
+        path = _canonical_texture_path(filename)
+        cache_key = (path, bool(nearest), bool(repeat))
+        cached = _FILE_TEXTURE_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
         # Load image with pygame
-        surface = pygame.image.load(filename)
+        surface = pygame.image.load(path)
 
         # Convert to RGBA format
         surface = surface.convert_alpha()
 
-        texture_id = _upload_texture_surface(surface, nearest=True, repeat=False)
+        texture_id = _upload_texture_surface(surface, nearest=nearest, repeat=repeat)
+        _FILE_TEXTURE_CACHE[cache_key] = texture_id
 
         # print(f"Loaded texture: {filename} (ID: {texture_id}, Size: {width}x{height})")
         return texture_id
@@ -134,9 +234,9 @@ def _load_surface_or_fallback(filename: str):
     try:
         surface = pygame.image.load(filename)
         try:
-            return surface.convert_alpha()
+            return surface.convert_alpha(), True
         except pygame.error:
-            return surface.copy()
+            return surface.copy(), True
     except Exception as e:
         print(f"Failed to load atlas texture {filename}: {e}")
         size = 64
@@ -147,7 +247,7 @@ def _load_surface_or_fallback(filename: str):
             for x in range(size):
                 color = red if ((x // 8) + (y // 8)) % 2 == 0 else transparent
                 surface.set_at((x, y), color)
-        return surface
+        return surface, False
 
 
 def load_texture_atlas(
@@ -162,7 +262,20 @@ def load_texture_atlas(
 
     padding = max(0, int(padding))
     max_width = max(64, int(max_width))
-    surfaces = [_load_surface_or_fallback(filename) for filename in filenames]
+    paths = tuple(_canonical_texture_path(filename) for filename in filenames)
+    cache_key = (paths, padding, max_width)
+    cached = _FILE_ATLAS_CACHE.get(cache_key)
+    if cached is not None:
+        return list(cached)
+    fallback_key = (
+        *cache_key,
+        tuple(_texture_source_signature(path) for path in paths),
+    )
+    cached = _FALLBACK_FILE_ATLAS_CACHE.get(fallback_key)
+    if cached is not None:
+        return list(cached)
+    surface_results = [_load_surface_or_fallback(path) for path in paths]
+    surfaces = [surface for surface, _loaded in surface_results]
 
     placements: list[tuple[int, int, int, int]] = []
     x = padding
@@ -204,6 +317,12 @@ def load_texture_atlas(
             )
         )
 
+    # Stable missing/corrupt sources share one fallback atlas. Changed source
+    # metadata retries decoding; older atlases remain valid for live scenes.
+    if all(loaded for _surface, loaded in surface_results):
+        _FILE_ATLAS_CACHE[cache_key] = tuple(regions)
+    else:
+        _FALLBACK_FILE_ATLAS_CACHE[fallback_key] = tuple(regions)
     return regions
 
 
@@ -213,6 +332,9 @@ def create_test_texture():
     Produces a circular spot with a radial alpha falloff so overlapping
     looks correct when alpha blended over the ground.
     """
+    cached = _FALLBACK_TEX_CACHE.get("checkerboard")
+    if cached is not None:
+        return cached
     # Create a red/blue checkerboard test texture (opaque)
     size = 64
     surface = pygame.Surface((size, size), pygame.SRCALPHA)
@@ -232,31 +354,9 @@ def create_test_texture():
             else:
                 surface.set_at((x, y), transparent)
 
-    # Convert to RGBA texture
-    texture_data = pygame.image.tostring(surface, "RGBA", True)
-
-    texture_id = glGenTextures(1)
-    glBindTexture(GL_TEXTURE_2D, texture_id)
-    glTexImage2D(
-        GL_TEXTURE_2D,
-        0,
-        GL_RGBA,
-        size,
-        size,
-        0,
-        GL_RGBA,
-        GL_UNSIGNED_BYTE,
-        texture_data,
-    )
-
-    # Use nearest filtering to keep the checkerboard crisp and allow tiling
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
-    # Allow the test texture to repeat so uv_repeat on walls tiles it instead
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
-
-    _TEXTURE_SIZES[int(texture_id)] = (size, size)
+    # Nearest filtering preserves crisp checks; repeat supports tiled walls.
+    texture_id = _upload_texture_surface(surface, nearest=True, repeat=True)
+    _FALLBACK_TEX_CACHE["checkerboard"] = texture_id
 
     print(f"Created checkerboard test texture (ID: {texture_id})")
     return texture_id
@@ -397,34 +497,8 @@ def create_shadow_texture(
         # Use nearest neighbor upscale to preserve blocky pixels
         surface = pygame.transform.scale(surface, (width_px, height_px))
 
-    texture_data = pygame.image.tostring(surface, "RGBA", True)
-
-    tex_id = glGenTextures(1)
-    glBindTexture(GL_TEXTURE_2D, tex_id)
-    glTexImage2D(
-        GL_TEXTURE_2D,
-        0,
-        GL_RGBA,
-        width_px,
-        height_px,
-        0,
-        GL_RGBA,
-        GL_UNSIGNED_BYTE,
-        texture_data,
-    )
-
-    # Use nearest filtering for pixelated shadows to preserve blockiness,
-    # otherwise use linear filtering for smooth soft shadows.
-    if pixelated:
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
-    else:
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
-
-    _TEXTURE_SIZES[int(tex_id)] = (width_px, height_px)
+    # Nearest filtering preserves pixelation; linear keeps soft shadows smooth.
+    tex_id = _upload_texture_surface(surface, nearest=pixelated, repeat=False)
     _SHADOW_TEX_CACHE[cache_key] = int(tex_id)
 
     # print(f"Created shadow texture {width_px}x{height_px}, id={tex_id}")
@@ -844,29 +918,7 @@ def create_forest_floor_texture(
     if (render_w, render_h) != (width_px, height_px):
         surface = pygame.transform.scale(surface, (width_px, height_px))
 
-    texture_data = pygame.image.tostring(surface, "RGBA", True)
-
-    tex_id = glGenTextures(1)
-    glBindTexture(GL_TEXTURE_2D, tex_id)
-    glTexImage2D(
-        GL_TEXTURE_2D,
-        0,
-        GL_RGBA,
-        width_px,
-        height_px,
-        0,
-        GL_RGBA,
-        GL_UNSIGNED_BYTE,
-        texture_data,
-    )
-
-    filt = GL_NEAREST if pixelated else GL_LINEAR
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filt)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filt)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
-
-    _TEXTURE_SIZES[int(tex_id)] = (width_px, height_px)
+    tex_id = _upload_texture_surface(surface, nearest=pixelated, repeat=False)
     _FOREST_FLOOR_TEX_CACHE[cache_key] = int(tex_id)
     return int(tex_id)
 
@@ -989,29 +1041,7 @@ def create_tree_shadow_texture(
     if (render_w, render_h) != (width_px, height_px):
         surface = pygame.transform.scale(surface, (width_px, height_px))
 
-    texture_data = pygame.image.tostring(surface, "RGBA", True)
-
-    tex_id = glGenTextures(1)
-    glBindTexture(GL_TEXTURE_2D, tex_id)
-    glTexImage2D(
-        GL_TEXTURE_2D,
-        0,
-        GL_RGBA,
-        width_px,
-        height_px,
-        0,
-        GL_RGBA,
-        GL_UNSIGNED_BYTE,
-        texture_data,
-    )
-
-    filt = GL_NEAREST if pixelated else GL_LINEAR
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filt)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filt)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
-
-    _TEXTURE_SIZES[int(tex_id)] = (width_px, height_px)
+    tex_id = _upload_texture_surface(surface, nearest=pixelated, repeat=False)
     _TREE_SHADOW_TEX_CACHE[cache_key] = int(tex_id)
     return int(tex_id)
 
@@ -1192,32 +1222,7 @@ def create_polygon_shadow_texture(
     if (render_w, render_h) != (width_px, height_px):
         surface = pygame.transform.scale(surface, (width_px, height_px))
 
-    texture_data = pygame.image.tostring(surface, "RGBA", True)
-
-    tex_id = glGenTextures(1)
-    glBindTexture(GL_TEXTURE_2D, tex_id)
-    glTexImage2D(
-        GL_TEXTURE_2D,
-        0,
-        GL_RGBA,
-        width_px,
-        height_px,
-        0,
-        GL_RGBA,
-        GL_UNSIGNED_BYTE,
-        texture_data,
-    )
-
-    if pixelated:
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
-    else:
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
-
-    _TEXTURE_SIZES[int(tex_id)] = (width_px, height_px)
+    tex_id = _upload_texture_surface(surface, nearest=pixelated, repeat=False)
     _POLY_SHADOW_CACHE[cache_key] = int(tex_id)
 
     return int(tex_id)
