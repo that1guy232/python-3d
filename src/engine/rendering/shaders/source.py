@@ -362,6 +362,19 @@ float sun_visibility(vec3 surface_normal)
     }
     vec3 shadow_coord = v_sun_shadow_coord.xyz / v_sun_shadow_coord.w;
     shadow_coord = shadow_coord * 0.5 + 0.5;
+    // PCF taps sample different points on the receiver's plane. Compare each
+    // one with that plane's depth, rather than making the lit ground shadow
+    // itself throughout the shadow camera's footprint.
+    vec3 shadow_dx = dFdx(shadow_coord);
+    vec3 shadow_dy = dFdy(shadow_coord);
+    float determinant = shadow_dx.x * shadow_dy.y - shadow_dx.y * shadow_dy.x;
+    vec2 receiver_depth_gradient = vec2(0.0);
+    if (abs(determinant) > 1e-12) {
+        receiver_depth_gradient = vec2(
+            shadow_dy.y * shadow_dx.z - shadow_dx.y * shadow_dy.z,
+            shadow_dx.x * shadow_dy.z - shadow_dy.x * shadow_dx.z
+        ) / determinant;
+    }
     if (
         shadow_coord.x < 0.0 || shadow_coord.x > 1.0 ||
         shadow_coord.y < 0.0 || shadow_coord.y > 1.0 ||
@@ -380,10 +393,15 @@ float sun_visibility(vec3 surface_normal)
                 u_sun_shadow_map,
                 shadow_coord.xy + offset
             ).r;
-            visibility += shadow_coord.z - bias <= closest_depth ? 1.0 : 0.0;
+            float receiver_depth = shadow_coord.z + dot(receiver_depth_gradient, offset);
+            visibility += receiver_depth - bias <= closest_depth ? 1.0 : 0.0;
         }
     }
-    return visibility / 9.0;
+    // A local map has finite coverage. Blend only its outer rim to daylight
+    // so distant scenery cannot reveal a hard rectangle around the vehicle.
+    float border = min(min(shadow_coord.x, shadow_coord.y),
+                       min(1.0 - shadow_coord.x, 1.0 - shadow_coord.y));
+    return mix(1.0, visibility / 9.0, smoothstep(0.0, 0.08, border));
 }
 
 float sunlight_factor(vec3 surface_normal, float visibility)

@@ -263,10 +263,11 @@ class Engine:
             # Pygame's Clock reports integer milliseconds, which visibly
             # quantizes movement at high refresh rates, so it is used only for
             # pacing/FPS statistics. Simulation time comes from perf_counter.
+            frame_limit = max(0, int(getattr(self.scene, "frame_limit", FPS)))
             tick_frame_clock(
                 self.clock,
-                FPS,
-                precise=bool(FPS and not VSYNC),
+                frame_limit,
+                precise=bool(frame_limit and not VSYNC),
             )
             frame_s = time.perf_counter()
             raw_dt = frame_s - previous_frame_s

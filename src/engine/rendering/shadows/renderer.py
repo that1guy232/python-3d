@@ -102,6 +102,9 @@ class SceneShadowRenderer:
         self._point_shadow_update_cursor = 0
         self.sun_shadow_map_size = 2048
         self.sun_shadow_extent = min(float(view_distance), 1000.0)
+        self.sun_shadow_min_extent = 50.0
+        self.sun_shadow_near = 1.0
+        self.sun_shadow_bias_world_units = 0.2
         self.sun_shadow_camera_threshold = 16.0
         self.sun_shadow_direction_threshold_degrees = 0.25
         self.sun_shadow_vertex_budget = 180_000
@@ -109,6 +112,12 @@ class SceneShadowRenderer:
         self.point_shadow_map_size = 256
         self.max_point_shadows = 2
         self.point_shadow_faces_per_frame = 1
+
+    def invalidate_sun_shadow(self) -> None:
+        """Refresh after changing the directional shadow volume or bias."""
+        self._sun_shadow_cache = None
+        self._sun_shadow_refresh = None
+        self._sun_shadow_pending = None
 
     def render(self, *, camera, lighting, packet_shader, profiler=None) -> None:
         """Bind this scene's complete maps; None lighting selects an unlit view."""
@@ -271,9 +280,13 @@ class SceneShadowRenderer:
     ) -> _SunShadowRefresh:
         """Freeze one coherent target so movement cannot restart it forever."""
 
-        extent = max(50.0, float(self.sun_shadow_extent))
-        shadow_near = 1.0
-        shadow_far = extent * 4.0
+        extent = max(
+            1e-6,
+            float(self.sun_shadow_min_extent),
+            float(self.sun_shadow_extent),
+        )
+        shadow_near = max(1e-6, float(self.sun_shadow_near))
+        shadow_far = max(extent * 4.0, shadow_near * 2.0)
         return _SunShadowRefresh(
             caster_revision=caster_revision,
             center=center,
@@ -288,6 +301,7 @@ class SceneShadowRenderer:
             bias=directional_shadow_bias(
                 near=shadow_near,
                 far=shadow_far,
+                world_units=self.sun_shadow_bias_world_units,
             ),
             casters=casters,
         )
