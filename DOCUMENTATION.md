@@ -1,5 +1,169 @@
 # Program Documentation
 
+## Sandbox package structure
+
+The separate sandbox uses feature packages under [src/sandbox_3d](src/sandbox_3d).
+Its scenes coordinate simulation, worksite construction, progression and UI.
+
+| Package | Ownership |
+| --- | --- |
+| [scenes](src/sandbox_3d/scenes) | Title/pause flow, shared vehicle scene and bulk career scene |
+| [ui](src/sandbox_3d/ui) | Frontend drawing, garage and business screens, dashboard and telemetry |
+| [vehicles](src/sandbox_3d/vehicles) | Machine models, dimensions, actuator strength, ride, collision and contact adapters |
+| [sand](src/sandbox_3d/sand) | Particle/bulk simulation, material cargo, tool and wheel contacts, native kernels and material drawing |
+| [world](src/sandbox_3d/world) | Worksite terrain, construction routes, yard/site geometry, road surface and business facilities |
+| [gameplay](src/sandbox_3d/gameplay) | Career state, contracts, placement and road objectives, quarry business rules |
+| [persistence](src/sandbox_3d/persistence) | Atomic career/bulk saves, migrations, named save slots and preferences |
+| [rendering](src/sandbox_3d/rendering) | Shared mesh/lighting support, surface materials and road survey drawing |
+
+Import modules from their owning package, for example
+`sandbox_3d.scenes.bulk_scene` or `sandbox_3d.vehicles.loader`. Package
+initializers stay small; scenes assemble the systems they need. Sandbox code
+uses shared engine APIs, and the engine remains independent of game packages.
+
+Run `py src/sandbox_main.py` from the repository root. From inside `src`, both
+`py sandbox_3d` and `py -m sandbox_3d` still launch the same frontend through
+the package's root [entry point](src/sandbox_3d/__main__.py). Save locations and
+formats are independent of this source layout.
+
+## Independent editable terrain world
+
+The title screen's **New terrain world** creates a separate terrain save slot.
+[TerrainSandboxScene](src/sandbox_3d/scenes/terrain_scene.py) shares vehicle
+driving, articulation, collision, camera and menu infrastructure with the
+career, but supplies an independent landscape and no career jobs or scenery.
+All five machines are available immediately: dozer, loader, truck, paver and
+road roller. Tab cycles to the next machine; Shift+Tab cycles to the previous
+one. V or the HUD's **FLEET** button opens a clickable machine menu, and O
+toggles the overview camera. Number keys 1–5 remain optional direct shortcuts
+in that order. WASD drives and steers, and Shift selects faster travel.
+The paver and roller are travel-only; paving and compaction are not active.
+Older terrain saves gain the two road machines at their parking spots.
+A first-stage road alignment editor is available: **P / PLAN ROAD** opens a
+top-down map. Click to add route points, drag to reshape the curve, and use
+the width buttons to set the corridor. Delete/right-click removes a point;
+Backspace/Ctrl+Z undoes an edit. Wheel zooms and middle-mouse pans. Enter
+confirms the plan; Escape leaves a draft. Plans save with the terrain world
+and remain visible as terrain-following guides, without altering the ground.
+Confirmed routes show a **BUILD YOUR ROAD** card with a recommended machine,
+current earthmoving action and measured readiness. **B / SHOW WORK** displays
+orange strip/cut areas, blue fill areas, green ready areas and fixed grade
+stakes. A near-surface blade clears vegetation through the existing saved
+disturbance mask without requiring native excavation. The player finds and
+excavates subsoil, sand or gravel, hauls it in the bucket or truck, dumps it
+along the route and spreads it with the dozer. There is no authored quarry or
+automatic loading source. The raised base follows natural hills and cross
+slopes; readiness requires real deposited base material and a broad surface
+height tolerance. Positive blade lift spreads loose material without accidental
+native cuts as the chassis pitches. A distant failed terrain probe permits a
+legal immediate crawl, while actual footprint and cliff checks still apply.
+Paving and rolling follow the earth and aggregate base later.
+Construction profile version 3 retains pinned raised grades. Version 1 and 2
+profiles are validated and resurveyed when loading, without altering physical
+earthwork, cargo or route points.
+
+The default natural landscape
+uses [natural_landscape.py](src/sandbox_3d/world/natural_landscape.py), with
+continuous terrain generation across the map and its visual surroundings.
+Broad regional variation distributes rolling ground, hills, ridges and saddles
+without an origin-centred terrain feature mask, prescribed roads or jobs.
+
+[DeformableTerrain](src/sandbox_3d/sand/deformable_terrain.py) stores stable
+native earth, loose spoil and finite bedrock in lazy 64 × 64 chunks on a
+2.5 cm grid. Surface-connected cutting previews are limited by bucket space
+and available actuator work before the corresponding movement is committed.
+Cut depth also depends on cutting-edge travel; holding a tool still does not
+produce material. [DozerEarth](src/sandbox_3d/sand/dozer_earth.py) instead cuts
+to the actual blade plane, advects a physical rolling wedge, and sheds excess
+around the blade. Cut cross-section and soil weight determine traction; reverse
+backdragging moves only loose soil. Blade barriers prevent settling through the
+steel while allowing material to flow under a raised blade or around its ends.
+Native cuts become cargo or loose spoil, and dumping,
+backfilling and local loose-soil relaxation conserve bulk cubic metres.
+
+[TerrainWorldView](src/sandbox_3d/world/terrain_world.py) binds the same ground
+to support queries and the
+[chunk renderer](src/sandbox_3d/rendering/terrain_world.py). Local rendering
+and wheel sampling share the same triangle diagonal. The natural world's
+unchanged terrain uses a stable 5 cm mesh instead of moving focus-based LOD.
+Small 16 × 16 render patches retain the 2.5 cm simulation detail at edits;
+unchanged geometry stays cached while driving. Smooth halo-derived normals and
+continuous ground texture projection avoid triangle seams. Each cut updates
+only its affected patches and shared boundary vertices. Background triangles
+are removed wherever a fine patch replaces them.
+There is no static floor underneath a cut. Vehicles
+sample mutable ground, including negative excavated elevations; footprint
+probes reject steep banks without depending on render-frame movement distance.
+[Terrain drive](src/sandbox_3d/vehicles/terrain_drive.py) evaluates actual
+wheelbase, track width, grades, steps, cross slope, roughness and cargo loading.
+Grading a smooth route improves traversal without consulting road/job flags.
+
+[Terrain saves](src/sandbox_3d/persistence/terrain_save.py) use the independent
+`python3d.terrain-world` format with compressed modified chunks, disturbance
+masks, cargo, airborne parcels, vehicle poses and view state. The existing
+save browser recognizes these slots and routes them to the terrain scene.
+The current world is a finite 32 × 32 model-metre surface with 0.6 metres of
+excavatable native soil. Tunnels, overhangs and deep voxel excavation are not
+implemented.
+
+Stationary machines reuse ground samples until their pose or terrain changes,
+while suspension continues integrating gravity. Terrain lookups batch triangle
+vertices without sorting chunk coordinates. Immutable native-height tiles cache
+procedural generation separately from mutable material, and parked tools skip unchanged
+material scans. Material totals and compressed save chunks are cached, and the
+first settling-kernel compilation occurs during world loading.
+
+## Sandbox construction performance
+
+[ConstructionYard](src/sandbox_3d/world/construction_yard.py) retains its terrain,
+mesh and ground texture when the site office is completed. Other projects reuse
+static quarry props, vegetation and cached surface colours, and update only
+affected ground-texture regions through
+[yard_material.py](src/sandbox_3d/rendering/yard_material.py). Bridge construction
+keeps the existing texture. Vehicle and sand support still follow the completed
+terrain and collision geometry.
+
+[RoadSurface](src/sandbox_3d/world/road_surface.py) tracks changes in its own
+supporting columns, including the boundary halo. Road objectives and survey
+meshes reuse that local revision, so moving sand elsewhere leaves their cached
+geometry and assessment intact.
+
+## Physical haul-road repair in the bulk sandbox
+
+The bulk career's east road approach contains two washouts. Its completion
+recognizes a connected, reasonably smooth, truck-wide surface through the
+work area. Repairs can follow an offset or bending path and vary in height.
+The player can use any machine and approach. Surface quality is assessed only
+for the objective; it never restricts vehicle movement or requires a test drive.
+
+- [road_surface.py](src/sandbox_3d/world/road_surface.py) builds and samples the same
+  continuous triangles from existing bulk columns. This patch replaces both
+  the ordinary yard surface and loose-fill rendering inside its bounds.
+- [road_goal.py](src/sandbox_3d/gameplay/road_goal.py) finds an undirected connected
+  surface with sufficient width and modest gradients. It accepts shallow dips
+  and raised routes without requiring a specific elevation or fill pattern.
+  Vehicle direction, load, bed position and ownership are irrelevant.
+- [road_survey.py](src/sandbox_3d/rendering/road_survey.py) draws thin lines directly on
+  the shared surface from immutable goal assessment masks: green for usable
+  truck-centre ground, orange for steep patches, blue for smooth areas needing
+  more width. Width failures caused only by fixed worksite boundaries are
+  omitted. F2 toggles the survey; it never changes movement or material.
+- [dashboard.py](src/sandbox_3d/ui/dashboard.py) keeps objectives in a compact
+  card above the lower-left instruments. The road card explains any fill
+  height is allowed, shows the slope limit and colour legend, and gives local
+  feedback near the active tool. The upper viewport stays clear; F1 and the
+  garage retain detailed help.
+- [bulk_jobs.py](src/sandbox_3d/gameplay/bulk_jobs.py) retains placement payment and
+  all other site goals, and checks this passive objective during work updates.
+- [bulk_save.py](src/sandbox_3d/persistence/bulk_save.py) validates an optional versioned
+  repair marker. Older completed roads retain their existing terrain; new and
+  unfinished bulk roads receive the repair. Existing material cells preserve
+  its shape and paid history. Road quality is rebuilt from that saved surface.
+
+Completing the repair keeps the player's approach intact and opens the
+existing ramp, landing and haul gearing. The particle comparison and free
+play retain their existing objectives and terrain.
+
 This project is a Pygame/OpenGL first-person 3D world. The code is organized
 around a small reusable engine package and focused game packages for the world,
 actors, combat, player state and movement, inventory, UI, and resources.
@@ -152,6 +316,14 @@ or `draw_args(receiver)` to individual objects. `set_enabled()` and `toggle()`
 switch lighting without mutating authored lights or rebuilding geometry. Dispose
 the renderer before releasing the GL context. `StaticLightingController` extends
 this renderer with the world's rebuild and compatibility policies.
+
+For scenes authored in meters or other small units, configure
+`SceneShadowRenderer.sun_shadow_min_extent`, `sun_shadow_near`, and
+`sun_shadow_bias_world_units` along with `sun_shadow_extent`. Their defaults
+retain the original world scale. Call `invalidate_sun_shadow()` after changing
+the shadow volume. Shadow caster batches contain world-space vertices; main
+packet draws can instead supply a local-to-world model matrix after binding
+the lighting packet.
 
 `SceneShadowRenderer` keeps a two-cubemap budget by default. The packet shader
 supports up to eight point-shadow samplers, bounded by the context's available

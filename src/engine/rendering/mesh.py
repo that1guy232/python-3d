@@ -131,12 +131,17 @@ class BatchedMesh:
         if positions.size == 0:
             return None, 0.0
 
-        finite = np.isfinite(positions).all(axis=1)
-        if not np.any(finite):
-            return None, 0.0
-        positions = positions[finite]
-        mins = positions.min(axis=0)
-        maxs = positions.max(axis=0)
+        # Ordinary uploaded geometry is entirely finite. Do not copy every
+        # XYZ row through boolean indexing just to discard no rows.
+        if not np.isfinite(positions).all():
+            finite = np.isfinite(positions).all(axis=1)
+            if not np.any(finite):
+                return None, 0.0
+            positions = positions[finite]
+        # Component reductions vectorize the strided streams instead of
+        # reducing a three-component accumulator once for every vertex.
+        mins = np.array([positions[:, axis].min() for axis in range(3)], dtype=np.float32)
+        maxs = np.array([positions[:, axis].max() for axis in range(3)], dtype=np.float32)
         center = (mins + maxs) * 0.5
         radius = float(np.linalg.norm((maxs - mins) * 0.5))
         return (float(center[0]), float(center[1]), float(center[2])), radius
